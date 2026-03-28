@@ -1,7 +1,7 @@
 """001 — Create non-temporal document collections.
 
 Collections: documents, chunks, extraction_runs, curation_decisions,
-notifications, organizations, users, _system_meta, ontology_registry.
+notifications, organizations, users, aoe_system_meta, ontology_registry.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ NON_TEMPORAL_COLLECTIONS = [
     "notifications",
     "organizations",
     "users",
-    "_system_meta",
+    "aoe_system_meta",
     "ontology_registry",
 ]
 

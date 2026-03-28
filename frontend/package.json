@@ -14,6 +14,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
     "next": "^15",
     "react": "^18",
     "react-dom": "^18",

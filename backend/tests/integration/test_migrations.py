@@ -28,7 +28,7 @@ EXPECTED_DOCUMENT_COLLECTIONS = {
     "notifications",
     "organizations",
     "users",
-    "_system_meta",
+    "aoe_system_meta",
     "ontology_registry",
 }
 
@@ -56,19 +56,16 @@ def test_apply_all_migrations_on_fresh_db(test_db: StandardDatabase) -> None:
     assert len(applied) == 8
 
     existing = {c["name"] for c in test_db.collections() if not c["name"].startswith("_")}
-    system_meta = {c["name"] for c in test_db.collections() if c["name"] == "_system_meta"}
 
     all_expected = (
         EXPECTED_DOCUMENT_COLLECTIONS
         | EXPECTED_VERSIONED_VERTEX_COLLECTIONS
         | EXPECTED_EDGE_COLLECTIONS
     )
-    non_system_expected = {n for n in all_expected if not n.startswith("_")}
 
-    assert non_system_expected.issubset(existing), (
-        f"Missing collections: {non_system_expected - existing}"
+    assert all_expected.issubset(existing), (
+        f"Missing collections: {all_expected - existing}"
     )
-    assert "_system_meta" in system_meta
 
 
 def test_migrations_are_idempotent(test_db: StandardDatabase) -> None:

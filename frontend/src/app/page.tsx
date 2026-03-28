@@ -21,10 +21,14 @@ export default function Home() {
   const [statsError, setStatsError] = useState(false);
 
   useEffect(() => {
-    api
-      .get<HealthStatus>("/health")
-      .then((data) => {
-        setHealth(data.status === "ok" ? "connected" : "error");
+    const backendRoot = (
+      process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001/api/v1"
+    ).replace(/\/api\/v1$/, "");
+
+    fetch(`${backendRoot}/ready`)
+      .then((r) => r.json())
+      .then((data: HealthStatus) => {
+        setHealth(data.status === "ready" ? "connected" : "error");
         setHealthDetail(data.database ?? data.status);
       })
       .catch((err) => {
@@ -33,7 +37,7 @@ export default function Home() {
       });
 
     api
-      .get<LibraryStats>("/api/v1/ontology/library?limit=1")
+      .get<LibraryStats>("/ontology/library?limit=1")
       .then((data) => {
         setOntologyCount(data.total_count);
       })

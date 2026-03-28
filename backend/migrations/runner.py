@@ -1,6 +1,6 @@
 """Migration runner — applies pending migrations in numeric filename order.
 
-Tracks applied migrations in the ``_system_meta`` collection with a document
+Tracks applied migrations in the ``aoe_system_meta`` collection with a document
 keyed ``schema_state``.  Each migration is a Python module exposing an
 ``up(db: StandardDatabase)`` function.  The runner is idempotent: already-
 applied migrations are skipped.
@@ -25,7 +25,7 @@ from arango.database import StandardDatabase
 log = logging.getLogger(__name__)
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent
-META_COLLECTION = "_system_meta"
+META_COLLECTION = "aoe_system_meta"
 META_KEY = "schema_state"
 
 
@@ -63,7 +63,7 @@ def discover_migrations() -> list[str]:
 def apply_all(db: StandardDatabase) -> list[str]:
     """Apply all pending migrations and return list of newly-applied names.
 
-    Already-applied migrations (recorded in ``_system_meta``) are skipped.
+    Already-applied migrations (recorded in ``aoe_system_meta``) are skipped.
     """
     _ensure_meta_collection(db)
     state = _load_schema_state(db)
