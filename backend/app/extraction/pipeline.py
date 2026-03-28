@@ -1,7 +1,8 @@
 """LangGraph StateGraph for the ontology extraction pipeline.
 
-Nodes: strategy_selector → extractor → consistency_checker
+Nodes: strategy_selector → extractor → consistency_checker → er_agent → filter
 Conditional edges retry on failure. Checkpointed via MemorySaver.
+Human-in-the-loop breakpoint after pre-curation filter.
 """
 
 from __future__ import annotations
