@@ -31,10 +31,16 @@ WINDOW_SECONDS = 60
 
 
 def _get_redis():
-    """Lazy import and connect to Redis using the configured URL."""
-    import redis
+    """Lazy import and connect to Redis. Returns None if unavailable."""
+    try:
+        import redis
 
-    return redis.Redis.from_url(settings.redis_url, decode_responses=True)
+        return redis.Redis.from_url(
+            settings.redis_url, decode_responses=True, socket_connect_timeout=2,
+        )
+    except Exception:
+        log.warning("redis_unavailable — rate limiting will pass-through")
+        return None
 
 
 def _org_id_from_request(request: Request) -> str:
@@ -84,6 +90,9 @@ def check_rate_limit(
     window_start = now - WINDOW_SECONDS
 
     r = redis_client or _get_redis()
+    if r is None:
+        return True, limit, limit, 0.0
+
     key = f"ratelimit:{org_id}"
 
     pipe = r.pipeline()
