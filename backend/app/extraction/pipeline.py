@@ -13,7 +13,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
 from app.extraction.agents.consistency import consistency_checker_node
+from app.extraction.agents.er_agent import er_agent_node
 from app.extraction.agents.extractor import extractor_node
+from app.extraction.agents.filter import filter_agent_node
 from app.extraction.agents.strategy import strategy_selector_node
 from app.extraction.state import ExtractionPipelineState
 
@@ -41,12 +43,17 @@ def _should_retry_extraction(state: ExtractionPipelineState) -> str:
 
 
 def _should_retry_consistency(state: ExtractionPipelineState) -> str:
-    """Conditional edge: end if consistency check produced no results."""
+    """Conditional edge: skip ER + filter if consistency check produced no results."""
     result = state.get("consistency_result")
     if result is None or (hasattr(result, "classes") and len(result.classes) == 0):
-        errors = state.get("errors", [])
-        if any("No extraction passes" in e for e in errors):
-            return "end"
+        return "end"
+    return "continue"
+
+
+def _should_proceed_to_staging(state: ExtractionPipelineState) -> str:
+    """Conditional edge: proceed to staging after pre-curation filter."""
+    filter_results = state.get("filter_results", {})
+    if filter_results.get("status") == "failed":
         return "end"
     return "continue"
 
@@ -54,13 +61,16 @@ def _should_retry_consistency(state: ExtractionPipelineState) -> str:
 def build_pipeline() -> StateGraph:
     """Construct the LangGraph StateGraph for extraction.
 
-    Returns the compiled graph with MemorySaver checkpointing.
+    Full pipeline: Strategy → Extraction → Consistency → ER → Pre-Curation Filter → Staging.
+    Includes human-in-the-loop breakpoint after pre-curation filter.
     """
     graph = StateGraph(ExtractionPipelineState)
 
     graph.add_node("strategy_selector", strategy_selector_node)
     graph.add_node("extractor", extractor_node)
     graph.add_node("consistency_checker", consistency_checker_node)
+    graph.add_node("er_agent", er_agent_node)
+    graph.add_node("filter", filter_agent_node)
 
     graph.set_entry_point("strategy_selector")
     graph.add_edge("strategy_selector", "extractor")
@@ -79,6 +89,17 @@ def build_pipeline() -> StateGraph:
         _should_retry_consistency,
         {
             "end": END,
+            "continue": "er_agent",
+        },
+    )
+
+    graph.add_edge("er_agent", "filter")
+
+    graph.add_conditional_edges(
+        "filter",
+        _should_proceed_to_staging,
+        {
+            "end": END,
             "continue": END,
         },
     )
@@ -86,16 +107,39 @@ def build_pipeline() -> StateGraph:
     return graph
 
 
-def compile_pipeline(checkpointer: Any | None = None) -> Any:
+def compile_pipeline(
+    checkpointer: Any | None = None,
+    *,
+    interrupt_after_filter: bool = False,
+) -> Any:
     """Compile the pipeline with checkpointing.
 
     Uses MemorySaver by default; accepts custom checkpointer for Redis etc.
+
+    Parameters
+    ----------
+    interrupt_after_filter:
+        If True, adds a human-in-the-loop breakpoint after the pre-curation
+        filter. The pipeline pauses, emits a WebSocket event, and waits for
+        curation decisions before proceeding to staging.
     """
     graph = build_pipeline()
     if checkpointer is None:
         checkpointer = MemorySaver()
-    compiled = graph.compile(checkpointer=checkpointer)
-    log.info("extraction pipeline compiled", extra={"checkpointer": type(checkpointer).__name__})
+
+    interrupt_after = ["filter"] if interrupt_after_filter else None
+
+    compiled = graph.compile(
+        checkpointer=checkpointer,
+        interrupt_after=interrupt_after,
+    )
+    log.info(
+        "extraction pipeline compiled",
+        extra={
+            "checkpointer": type(checkpointer).__name__,
+            "interrupt_after_filter": interrupt_after_filter,
+        },
+    )
     return compiled
 
 
@@ -122,7 +166,7 @@ async def run_pipeline(
     event_callback:
         Async callable invoked with step events for WebSocket broadcasting.
     """
-    compiled = compile_pipeline()
+    compiled = compile_pipeline(interrupt_after_filter=True)
 
     initial_state: ExtractionPipelineState = {
         "run_id": run_id,
@@ -134,6 +178,9 @@ async def run_pipeline(
         "step_logs": [],
         "current_step": "initialized",
         "metadata": {},
+        "er_results": {},
+        "filter_results": {},
+        "merge_candidates": [],
     }
 
     config = {"configurable": {"thread_id": thread_id or run_id}}
@@ -164,7 +211,22 @@ async def run_pipeline(
         snapshot.values if snapshot else (final_state or initial_state)
     )
 
-    if event_callback:
+    is_interrupted = snapshot and snapshot.next if snapshot else False
+    if is_interrupted and event_callback:
+        await event_callback(
+            run_id=run_id,
+            event_type="pipeline_paused",
+            step="filter",
+            data={
+                "message": (
+                    "Pipeline paused after pre-curation filter."
+                    " Awaiting curation decisions."
+                ),
+                "filter_results": result_state.get("filter_results", {}),
+                "merge_candidates": result_state.get("merge_candidates", []),
+            },
+        )
+    elif event_callback:
         await event_callback(
             run_id=run_id,
             event_type="completed",

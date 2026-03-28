@@ -24,6 +24,7 @@ dependencies = [
     "mcp>=1.0",
     "langgraph>=0.2",
     "rdflib>=7.0",
+    "arango-entity-resolution>=0.1",
 ]
 
 [project.optional-dependencies]

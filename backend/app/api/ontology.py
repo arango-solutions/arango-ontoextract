@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.db import registry_repo
 from app.db.client import get_db
@@ -8,6 +9,7 @@ from app.models.curation import (
     TemporalDiff,
     TemporalSnapshot,
 )
+from app.services import ontology_context as ctx_svc
 from app.services import temporal as temporal_svc
 
 log = logging.getLogger(__name__)
@@ -83,6 +85,45 @@ async def get_ontology_detail(ontology_id: str) -> dict:
             "property_count": property_count,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Organization ontology selection (PRD FR-8.4)
+# ---------------------------------------------------------------------------
+
+
+class OrgOntologySelectionRequest(BaseModel):
+    """Request body for selecting base ontologies for an organization."""
+
+    ontology_ids: list[str] = Field(
+        ..., description="List of ontology registry IDs to use as base ontologies"
+    )
+
+
+@router.put("/orgs/{org_id}/ontologies")
+async def set_org_ontologies(org_id: str, body: OrgOntologySelectionRequest) -> dict:
+    """Select base ontologies for an organization.
+
+    Tier 2 extraction will use these ontologies as domain context.
+    """
+    try:
+        result = ctx_svc.set_domain_ontology_for_org(
+            org_id=org_id,
+            ontology_ids=body.ontology_ids,
+        )
+        return {"org_id": org_id, "selected_ontologies": result.get("selected_ontologies", [])}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        log.exception("Failed to set org ontologies")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/orgs/{org_id}/ontologies")
+async def get_org_ontologies(org_id: str) -> dict:
+    """List selected base ontologies for an organization."""
+    ontology_ids = ctx_svc.get_domain_ontology_for_org(org_id=org_id)
+    return {"org_id": org_id, "selected_ontologies": ontology_ids}
 
 
 # ---------------------------------------------------------------------------

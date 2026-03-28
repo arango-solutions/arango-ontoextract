@@ -21,6 +21,10 @@ import type {
   OntologyEdge,
   CurationStatus,
 } from "@/types/curation";
+import type {
+  MergeCandidate,
+  ExtractionClassification,
+} from "@/types/entity-resolution";
 
 // --- Confidence-based color helpers ---
 
@@ -42,6 +46,30 @@ const STATUS_BORDER: Record<CurationStatus, string> = {
   rejected: "border-red-400 bg-red-50",
 };
 
+// --- Cross-tier and classification color helpers ---
+
+const CLASSIFICATION_COLORS: Record<ExtractionClassification, { fill: string; border: string }> = {
+  EXISTING: { fill: "bg-blue-50", border: "border-blue-500" },
+  EXTENSION: { fill: "bg-purple-50", border: "border-purple-500" },
+  NEW: { fill: "bg-orange-50", border: "border-orange-500" },
+};
+
+type TierStyle = "domain" | "local";
+
+function tierNodeStyle(tier: TierStyle): { borderStyle: string; fill: string; borderWeight: string } {
+  if (tier === "domain") {
+    return { borderStyle: "border-solid", fill: "bg-white", borderWeight: "border-2" };
+  }
+  return { borderStyle: "border-dashed", fill: "bg-gray-50/80", borderWeight: "border-2" };
+}
+
+function classificationMiniMapColor(classification?: ExtractionClassification): string {
+  if (classification === "EXISTING") return "#3b82f6";
+  if (classification === "EXTENSION") return "#a855f7";
+  if (classification === "NEW") return "#f97316";
+  return "#94a3b8";
+}
+
 // --- Custom Node ---
 
 export interface OntologyNodeData {
@@ -52,19 +80,42 @@ export interface OntologyNodeData {
   status: CurationStatus;
   classKey: string;
   description: string;
-  colorMode: "confidence" | "status";
+  colorMode: "confidence" | "status" | "classification" | "tier";
+  classification?: ExtractionClassification;
+  tier?: TierStyle;
 }
 
 function OntologyNode({ data, selected }: NodeProps<OntologyNodeData>) {
-  const { label, confidence, status, rdfType, colorMode } = data;
-  const colorClass =
-    colorMode === "confidence" ? confidenceColor(confidence) : STATUS_BORDER[status];
-  const borderWidth = confidence < 0.5 ? "border-dashed" : "border-solid";
+  const { label, confidence, status, rdfType, colorMode, classification, tier } = data;
+
+  let colorClass: string;
+  let borderStyle: string;
+  let borderWeight = "border-2";
+
+  if (colorMode === "classification" && classification) {
+    const cc = CLASSIFICATION_COLORS[classification];
+    colorClass = `${cc.border} ${cc.fill}`;
+    borderStyle = "border-solid";
+    borderWeight = "border-[3px]";
+  } else if (colorMode === "tier" && tier) {
+    const ts = tierNodeStyle(tier);
+    const confColor = confidenceColor(confidence).split(" ").pop() ?? "bg-white";
+    colorClass = `${ts.borderStyle === "border-dashed" ? "border-gray-400" : "border-gray-700"} ${confColor}`;
+    borderStyle = ts.borderStyle;
+    borderWeight = tier === "domain" ? "border-[3px]" : "border-2";
+  } else if (colorMode === "status") {
+    colorClass = STATUS_BORDER[status];
+    borderStyle = "border-solid";
+  } else {
+    colorClass = confidenceColor(confidence);
+    borderStyle = confidence < 0.5 ? "border-dashed" : "border-solid";
+  }
+
   const nodeSize = Math.max(160, 160 + (confidence - 0.5) * 80);
 
   return (
     <div
-      className={`rounded-lg border-2 ${borderWidth} px-4 py-3 shadow-sm transition-all ${colorClass} ${selected ? "ring-2 ring-blue-500 ring-offset-1" : ""}`}
+      className={`rounded-lg ${borderWeight} ${borderStyle} px-4 py-3 shadow-sm transition-all ${colorClass} ${selected ? "ring-2 ring-blue-500 ring-offset-1" : ""}`}
       style={{ minWidth: nodeSize }}
       data-testid={`graph-node-${data.classKey}`}
     >
@@ -78,11 +129,27 @@ function OntologyNode({ data, selected }: NodeProps<OntologyNodeData>) {
           className={`inline-block h-2 w-2 rounded-full ${confidenceDotColor(confidence)}`}
           title={`Confidence: ${(confidence * 100).toFixed(0)}%`}
         />
-        <span className="text-sm font-semibold text-gray-800 truncate">
+        <span className={`text-sm font-semibold text-gray-800 truncate ${tier === "domain" ? "font-bold" : ""}`}>
           {label}
         </span>
+        {classification && (
+          <span className={`text-[9px] px-1 py-0.5 rounded font-medium ${
+            classification === "EXISTING" ? "bg-blue-100 text-blue-700" :
+            classification === "EXTENSION" ? "bg-purple-100 text-purple-700" :
+            "bg-orange-100 text-orange-700"
+          }`}>
+            {classification}
+          </span>
+        )}
       </div>
-      <div className="text-xs text-gray-500 truncate">{rdfType}</div>
+      <div className="text-xs text-gray-500 truncate">
+        {rdfType}
+        {tier && (
+          <span className="ml-1.5 text-[10px] text-gray-400">
+            ({tier === "domain" ? "Tier 1" : "Tier 2"})
+          </span>
+        )}
+      </div>
       <div className="mt-1 flex items-center gap-1.5">
         <span className="text-xs text-gray-400">
           {(confidence * 100).toFixed(0)}%
@@ -182,8 +249,12 @@ export interface GraphCanvasProps {
   onNodeSelect?: (classKey: string) => void;
   onEdgeSelect?: (edgeKey: string) => void;
   onSelectionChange?: (selectedKeys: string[]) => void;
-  colorMode?: "confidence" | "status";
+  colorMode?: "confidence" | "status" | "classification" | "tier";
   className?: string;
+  mergeCandidates?: MergeCandidate[];
+  showMergeCandidates?: boolean;
+  classificationMap?: Record<string, ExtractionClassification>;
+  tierMap?: Record<string, TierStyle>;
 }
 
 export default function GraphCanvas({
@@ -196,6 +267,10 @@ export default function GraphCanvas({
   onSelectionChange,
   colorMode = "confidence",
   className = "",
+  mergeCandidates = [],
+  showMergeCandidates = false,
+  classificationMap = {},
+  tierMap = {},
 }: GraphCanvasProps) {
   const [internalSelected, setInternalSelected] = useState<string[]>([]);
   const effectiveSelected = selectedNodes.length > 0 ? selectedNodes : internalSelected;
@@ -222,6 +297,8 @@ export default function GraphCanvas({
           classKey: cls._key,
           description: cls.description,
           colorMode,
+          classification: classificationMap[cls._key],
+          tier: tierMap[cls._key],
         },
       };
     });
@@ -229,6 +306,7 @@ export default function GraphCanvas({
     const fe: Edge[] = edges.map((edge) => {
       const fromKey = edge._from.split("/").pop() ?? edge._from;
       const toKey = edge._to.split("/").pop() ?? edge._to;
+      const isExtendsDomain = edge.type === "extends_domain";
       return {
         id: edge._key,
         source: fromKey,
@@ -237,13 +315,14 @@ export default function GraphCanvas({
         type: "default",
         markerEnd: { type: MarkerType.ArrowClosed },
         style: {
-          stroke: EDGE_COLORS[edge.type] ?? "#94a3b8",
-          strokeWidth: 2,
+          stroke: isExtendsDomain ? "#a855f7" : (EDGE_COLORS[edge.type] ?? "#94a3b8"),
+          strokeWidth: isExtendsDomain ? 2.5 : 2,
+          strokeDasharray: isExtendsDomain ? "6 3" : undefined,
         },
         labelStyle: {
-          fill: "#64748b",
+          fill: isExtendsDomain ? "#7c3aed" : "#64748b",
           fontSize: 11,
-          fontWeight: 500,
+          fontWeight: isExtendsDomain ? 600 : 500,
         },
         labelBgStyle: {
           fill: "#f8fafc",
@@ -254,8 +333,38 @@ export default function GraphCanvas({
       };
     });
 
+    if (showMergeCandidates && mergeCandidates.length > 0) {
+      for (const mc of mergeCandidates) {
+        fe.push({
+          id: `mc-${mc.pair_id}`,
+          source: mc.entity_1.key,
+          target: mc.entity_2.key,
+          label: `${(mc.overall_score * 100).toFixed(0)}%`,
+          type: "default",
+          animated: true,
+          markerEnd: { type: MarkerType.ArrowClosed },
+          style: {
+            stroke: "#ef4444",
+            strokeWidth: 2,
+            strokeDasharray: "4 4",
+          },
+          labelStyle: {
+            fill: "#dc2626",
+            fontSize: 10,
+            fontWeight: 700,
+          },
+          labelBgStyle: {
+            fill: "#fef2f2",
+            fillOpacity: 0.95,
+          },
+          labelBgPadding: [4, 2] as [number, number],
+          data: { mergeCandidate: true, pairId: mc.pair_id },
+        });
+      }
+    }
+
     return { nodes: flowNodes, flowEdges: fe };
-  }, [classes, edges, positions, effectiveSelected, colorMode]);
+  }, [classes, edges, positions, effectiveSelected, colorMode, classificationMap, tierMap, showMergeCandidates, mergeCandidates]);
 
   const onInit = useCallback((instance: { fitView: () => void }) => {
     instance.fitView();
@@ -326,7 +435,11 @@ export default function GraphCanvas({
         />
         <MiniMap
           nodeColor={(node) => {
-            const conf = (node.data as OntologyNodeData)?.confidence ?? 0.5;
+            const nd = node.data as OntologyNodeData | undefined;
+            if (colorMode === "classification" && nd?.classification) {
+              return classificationMiniMapColor(nd.classification);
+            }
+            const conf = nd?.confidence ?? 0.5;
             if (conf >= 0.8) return "#22c55e";
             if (conf >= 0.5) return "#eab308";
             return "#ef4444";

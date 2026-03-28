@@ -53,6 +53,7 @@ class ExtractedClass(BaseModel):
     label: str
     description: str
     parent_uri: str | None = None
+    parent_domain_uri: str | None = None
     classification: ExtractionClassification = ExtractionClassification.NEW
     confidence: float = Field(ge=0.0, le=1.0)
     properties: list["ExtractedProperty"] = []

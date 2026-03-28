@@ -52,3 +52,7 @@ class ExtractionPipelineState(TypedDict, total=False):
     token_usage: TokenUsage
     step_logs: list[StepLog]
     metadata: dict[str, Any]
+
+    er_results: dict[str, Any]
+    filter_results: dict[str, Any]
+    merge_candidates: list[dict[str, Any]]

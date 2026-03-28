@@ -76,3 +76,5 @@ def _load_builtin_templates() -> None:
     """Auto-import built-in template modules so they self-register."""
     for module_name in ("tier1_standard", "tier1_technical"):
         importlib.import_module(f"app.extraction.prompts.{module_name}")
+    for module_name in ("tier2_standard",):
+        importlib.import_module(f"app.extraction.prompts.tier2.{module_name}")
