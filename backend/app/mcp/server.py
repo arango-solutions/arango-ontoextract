@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -34,17 +35,22 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 log = logging.getLogger(__name__)
 
 
-def create_mcp_server(transport: str = "stdio") -> FastMCP:
+def create_mcp_server(
+    transport: str = "stdio",
+    host: str = "0.0.0.0",
+    port: int = 8001,
+) -> FastMCP:
     """Create and configure the AOE MCP server with all tools and resources.
 
     Args:
         transport: The transport mode — "stdio" or "sse".
+        host: Host to bind for SSE transport.
+        port: Port for SSE transport.
     """
     server_name = "aoe-dev" if transport == "stdio" else "aoe-runtime"
 
-    mcp = FastMCP(
-        server_name,
-        instructions=(
+    kwargs: dict[str, Any] = {
+        "instructions": (
             "AOE (Arango-OntoExtract) MCP server. "
             "Provides tools to query ontologies, trigger extractions, "
             "inspect temporal history, run entity resolution, "
@@ -52,7 +58,12 @@ def create_mcp_server(transport: str = "stdio") -> FastMCP:
             "Also exposes read-only resources for system health, "
             "ontology summaries, and recent extraction runs."
         ),
-    )
+    }
+    if transport == "sse":
+        kwargs["host"] = host
+        kwargs["port"] = port
+
+    mcp = FastMCP(server_name, **kwargs)
 
     register_introspection_tools(mcp)
     register_ontology_tools(mcp)
@@ -99,14 +110,18 @@ mcp = create_mcp_server()
 
 if __name__ == "__main__":
     args = parse_args()
-    server = create_mcp_server(transport=args.transport)
+    server = create_mcp_server(
+        transport=args.transport,
+        host=args.host,
+        port=args.port,
+    )
 
     if args.transport == "sse":
         log.info(
             "Starting AOE runtime MCP server (SSE)",
             extra={"host": args.host, "port": args.port},
         )
-        server.run(transport="sse", host=args.host, port=args.port)
+        server.run(transport="sse")
     else:
         log.info("Starting AOE dev-time MCP server (stdio)")
         server.run(transport="stdio")

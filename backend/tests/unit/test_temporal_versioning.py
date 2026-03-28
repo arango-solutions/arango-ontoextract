@@ -5,14 +5,12 @@ from __future__ import annotations
 import sys
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from app.services.temporal import NEVER_EXPIRES, create_version, expire_entity, get_current
 
 
 class TestNeverExpires:
     def test_sentinel_value(self):
-        assert NEVER_EXPIRES == sys.maxsize
+        assert sys.maxsize == NEVER_EXPIRES
         assert NEVER_EXPIRES == 9223372036854775807
 
 
@@ -39,7 +37,7 @@ class TestCreateVersion:
         mock_db.collection.return_value = mock_col
 
         with patch("app.services.temporal._now", return_value=1700000000.0):
-            result = create_version(
+            create_version(
                 mock_db,
                 collection="ontology_classes",
                 data={"uri": "http://ex.org#Foo", "label": "Foo"},
@@ -68,7 +66,7 @@ class TestExpireEntity:
         mock_db.collection.return_value = mock_col
 
         with patch("app.services.temporal._now", return_value=1700001000.0):
-            result = expire_entity(
+            expire_entity(
                 mock_db,
                 collection="ontology_classes",
                 key="abc123",

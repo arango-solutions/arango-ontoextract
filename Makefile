@@ -1,4 +1,4 @@
-.PHONY: help setup infra backend frontend test test-unit test-integration test-all test-infra-up test-infra-down lint format typecheck type-check clean migrate
+.PHONY: help setup infra backend frontend test test-unit test-integration test-all test-infra-up test-infra-down lint format typecheck type-check clean migrate docker-build docker-up docker-down
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -77,6 +77,20 @@ typecheck: ## Type-check backend
 
 type-check: ## Type-check backend + frontend
 	cd backend && .venv/bin/mypy app/ --ignore-missing-imports && cd ../frontend && npx tsc --noEmit
+
+# ---------------------------------------------------------------------------
+# Docker (Production)
+# ---------------------------------------------------------------------------
+
+docker-build: ## Build backend + frontend production images
+	docker build -t aoe-backend:latest ./backend
+	docker build -t aoe-frontend:latest ./frontend
+
+docker-up: ## Start production stack (docker-compose.prod.yml)
+	docker compose -f docker-compose.prod.yml up -d
+
+docker-down: ## Stop production stack
+	docker compose -f docker-compose.prod.yml down
 
 # ---------------------------------------------------------------------------
 # Cleanup

@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     er_vector_weight: float = 0.6
     er_topo_weight: float = 0.4
 
+    # -- Rate Limiting -----------------------------------------------------
+    rate_limit_enabled: bool = True
+    rate_limit_default: int = 100
+    rate_limit_default_tier: str = "standard"
+
     @field_validator("test_deployment_mode", mode="before")
     @classmethod
     def _normalize_deployment_mode(cls, v: str) -> str:

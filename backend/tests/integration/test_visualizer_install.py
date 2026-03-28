@@ -17,7 +17,7 @@ SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
 if str(SCRIPTS_ROOT.parent) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT.parent))
 
-from scripts.setup.install_visualizer import (
+from scripts.setup.install_visualizer import (  # noqa: E402
     ensure_all_collections,
     ensure_default_viewpoint,
     install_all,
@@ -140,8 +140,8 @@ class TestInstallCreatesSavedQueries:
             key = qid.split("/")[1]
             doc = editor_col.get(key)
             assert doc is not None, f"Missing query {key}"
-            assert "content" in doc and doc["content"], f"Query {key} missing content"
-            assert "value" in doc and doc["value"], f"Query {key} missing value"
+            assert doc.get("content"), f"Query {key} missing content"
+            assert doc.get("value"), f"Query {key} missing value"
             assert doc["content"] == doc["value"], f"Query {key} content != value"
 
     def test_queries_also_in_visualizer_collection(self, test_db: StandardDatabase):
@@ -155,7 +155,7 @@ class TestInstallCreatesSavedQueries:
 
         doc = viz_col.get("class_hierarchy_full")
         assert doc is not None
-        assert "queryText" in doc and doc["queryText"]
+        assert doc.get("queryText")
         assert doc["graphId"] == TEST_GRAPH
 
 

@@ -1,6 +1,8 @@
+import json
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
 from app.db import registry_repo
@@ -9,8 +11,15 @@ from app.models.curation import (
     TemporalDiff,
     TemporalSnapshot,
 )
+from app.services import export as export_svc
 from app.services import ontology_context as ctx_svc
 from app.services import temporal as temporal_svc
+from app.services.arangordf_bridge import import_from_file
+from app.services.schema_extraction import (
+    SchemaExtractionConfig,
+    extract_schema,
+    get_extraction_status,
+)
 
 log = logging.getLogger(__name__)
 
@@ -166,18 +175,99 @@ async def promote_staging(run_id: str) -> dict:
     return {"run_id": run_id, "promoted": 0}
 
 
-@router.get("/export")
-async def export_ontology(format: str = "ttl") -> dict:
-    """Export ontology in OWL/TTL/JSON-LD format."""
-    # TODO: implement ArangoRDF export
-    return {"format": format, "status": "not_implemented"}
+@router.get("/{ontology_id}/export")
+async def export_ontology_endpoint(
+    ontology_id: str,
+    format: str = Query("turtle", description="Export format: turtle, jsonld, csv"),
+) -> Response:
+    """Export an ontology in OWL Turtle, JSON-LD, or CSV format."""
+    entry = registry_repo.get_registry_entry(ontology_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Ontology '{ontology_id}' not found")
+
+    try:
+        if format == "jsonld":
+            data = export_svc.export_jsonld(ontology_id)
+            return Response(
+                content=json.dumps(data, indent=2),
+                media_type="application/ld+json",
+                headers={"Content-Disposition": f'attachment; filename="{ontology_id}.jsonld"'},
+            )
+        elif format == "csv":
+            csv_content = export_svc.export_csv(ontology_id)
+            return PlainTextResponse(
+                content=csv_content,
+                media_type="text/csv",
+                headers={"Content-Disposition": f'attachment; filename="{ontology_id}.csv"'},
+            )
+        else:
+            ttl_content = export_svc.export_ontology(ontology_id, fmt="turtle")
+            return PlainTextResponse(
+                content=ttl_content,
+                media_type="text/turtle",
+                headers={"Content-Disposition": f'attachment; filename="{ontology_id}.ttl"'},
+            )
+    except Exception as exc:
+        log.exception("Export failed for ontology %s", ontology_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+_IMPORT_FILE = File(..., description="OWL/TTL/RDF-XML/JSON-LD file")
 
 
 @router.post("/import")
-async def import_ontology() -> dict:
-    """Import an external ontology file."""
-    # TODO: implement ArangoRDF import
-    return {"status": "not_implemented"}
+async def import_ontology_endpoint(
+    file: UploadFile = _IMPORT_FILE,
+    ontology_id: str = Query(..., description="Unique ID for this ontology"),
+    ontology_label: str | None = Query(None, description="Human-readable label"),
+    ontology_uri_prefix: str | None = Query(None, description="URI prefix for entity filtering"),
+) -> dict:
+    """Import an ontology file (OWL/TTL/RDF-XML/JSON-LD) into the platform."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename is required for format detection")
+
+    try:
+        content = await file.read()
+        result = import_from_file(
+            file_content=content,
+            filename=file.filename,
+            ontology_id=ontology_id,
+            ontology_label=ontology_label,
+            ontology_uri_prefix=ontology_uri_prefix,
+        )
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        log.exception("Import failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Schema extraction endpoints (PRD 6.9 — Week 20)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/schema/extract")
+async def trigger_schema_extraction(config: SchemaExtractionConfig) -> dict:
+    """Trigger schema extraction from an external ArangoDB database."""
+    try:
+        result = extract_schema(config)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        log.exception("Schema extraction failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/schema/extract/{run_id}")
+async def get_schema_extraction_status(run_id: str) -> dict:
+    """Get the status of a schema extraction run."""
+    try:
+        return get_extraction_status(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

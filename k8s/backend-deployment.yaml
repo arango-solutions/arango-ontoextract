@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aoe-backend
+  labels:
+    app: aoe
+    component: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: aoe
+      component: backend
+  template:
+    metadata:
+      labels:
+        app: aoe
+        component: backend
+    spec:
+      containers:
+        - name: backend
+          image: aoe-backend:latest
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: aoe-config
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aoe-backend
+  labels:
+    app: aoe
+    component: backend
+spec:
+  selector:
+    app: aoe
+    component: backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+  type: ClusterIP

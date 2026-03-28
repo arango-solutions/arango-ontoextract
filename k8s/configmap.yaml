@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aoe-config
+  labels:
+    app: aoe
+data:
+  APP_ENV: production
+  APP_LOG_LEVEL: INFO
+  BACKEND_HOST: "0.0.0.0"
+  BACKEND_PORT: "8000"
+  BACKEND_WORKERS: "2"
+
+  ARANGO_HOST: http://arangodb:8529
+  ARANGO_DB: OntoExtract
+  ARANGO_USER: root
+
+  REDIS_URL: redis://redis:6379/0
+
+  LLM_EXTRACTION_MODEL: claude-sonnet-4-20250514
+  EMBEDDING_MODEL: text-embedding-3-small
+
+  EXTRACTION_PASSES: "3"
+  EXTRACTION_CONSISTENCY_THRESHOLD: "2"
+  EXTRACTION_CONFIDENCE_MIN: "0.6"
+
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_DEFAULT: "100"
+  RATE_LIMIT_DEFAULT_TIER: standard

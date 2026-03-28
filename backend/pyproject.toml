@@ -25,6 +25,9 @@ dependencies = [
     "langgraph>=0.2",
     "rdflib>=7.0",
     "arango-entity-resolution>=0.1",
+    "aiofiles>=24.1",
+    "PyJWT>=2.8",
+    "prometheus_client>=0.21",
 ]
 
 [project.optional-dependencies]
@@ -42,6 +45,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
+ignore = ["B008"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

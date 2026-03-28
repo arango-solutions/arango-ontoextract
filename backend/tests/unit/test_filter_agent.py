@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from app.extraction.agents.filter import (
-    GENERIC_TERMS,
-    filter_agent_node,
+    _count_tiers,
     _remove_generic_terms,
     _remove_low_confidence_single_words,
     _remove_within_run_duplicates,
-    _count_tiers,
+    filter_agent_node,
 )
 from app.extraction.state import ExtractionPipelineState
 from app.models.ontology import ExtractedClass, ExtractionResult

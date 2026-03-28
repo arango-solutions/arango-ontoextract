@@ -7,7 +7,6 @@ ER tools, and org isolation.
 
 from __future__ import annotations
 
-import sys
 import time
 from unittest.mock import patch
 
@@ -170,9 +169,11 @@ def seeded_ontology(test_db: StandardDatabase, mcp_collections):
 @pytest.fixture()
 def patched_db(test_db: StandardDatabase):
     """Patch get_db to return the test database."""
-    with patch("app.db.client.get_db", return_value=test_db):
-        with patch("app.db.client._db", test_db):
-            yield test_db
+    with (
+        patch("app.db.client.get_db", return_value=test_db),
+        patch("app.db.client._db", test_db),
+    ):
+        yield test_db
 
 
 # ---------------------------------------------------------------------------
@@ -184,8 +185,9 @@ class TestOntologyQueryTools:
     """Tests for the 4 ontology query MCP tools."""
 
     def test_query_domain_ontology(self, seeded_ontology, patched_db):
-        from app.mcp.tools.ontology import register_ontology_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.ontology import register_ontology_tools
 
         mcp = FastMCP("test")
         register_ontology_tools(mcp)
@@ -207,8 +209,9 @@ class TestOntologyQueryTools:
         assert result["registry"]["name"] == "Test Ontology"
 
     def test_get_class_hierarchy(self, seeded_ontology, patched_db):
-        from app.mcp.tools.ontology import register_ontology_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.ontology import register_ontology_tools
 
         mcp = FastMCP("test")
         register_ontology_tools(mcp)
@@ -229,8 +232,9 @@ class TestOntologyQueryTools:
         assert len(animal_root["children"]) == 3
 
     def test_get_class_hierarchy_subtree(self, seeded_ontology, patched_db):
-        from app.mcp.tools.ontology import register_ontology_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.ontology import register_ontology_tools
 
         mcp = FastMCP("test")
         register_ontology_tools(mcp)
@@ -246,8 +250,9 @@ class TestOntologyQueryTools:
         assert len(result["children"]) == 3
 
     def test_get_class_properties(self, seeded_ontology, patched_db):
-        from app.mcp.tools.ontology import register_ontology_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.ontology import register_ontology_tools
 
         mcp = FastMCP("test")
         register_ontology_tools(mcp)
@@ -265,8 +270,9 @@ class TestOntologyQueryTools:
         assert result["properties"][0]["label"] == "name"
 
     def test_search_similar_classes_fallback(self, seeded_ontology, patched_db):
-        from app.mcp.tools.ontology import register_ontology_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.ontology import register_ontology_tools
 
         mcp = FastMCP("test")
         register_ontology_tools(mcp)
@@ -291,8 +297,9 @@ class TestPipelineTools:
     """Tests for the 3 pipeline MCP tools."""
 
     def test_get_extraction_status(self, seeded_ontology, patched_db):
-        from app.mcp.tools.pipeline import register_pipeline_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.pipeline import register_pipeline_tools
 
         mcp = FastMCP("test")
         register_pipeline_tools(mcp)
@@ -310,8 +317,9 @@ class TestPipelineTools:
         assert result["elapsed_seconds"] is not None
 
     def test_get_extraction_status_not_found(self, seeded_ontology, patched_db):
-        from app.mcp.tools.pipeline import register_pipeline_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.pipeline import register_pipeline_tools
 
         mcp = FastMCP("test")
         register_pipeline_tools(mcp)
@@ -326,8 +334,9 @@ class TestPipelineTools:
         assert "error" in result
 
     def test_get_merge_candidates_empty(self, seeded_ontology, patched_db):
-        from app.mcp.tools.pipeline import register_pipeline_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.pipeline import register_pipeline_tools
 
         mcp = FastMCP("test")
         register_pipeline_tools(mcp)
@@ -351,8 +360,9 @@ class TestTemporalTools:
     """Tests for the 3 temporal MCP tools."""
 
     def test_get_ontology_snapshot(self, seeded_ontology, patched_db):
-        from app.mcp.tools.temporal import register_temporal_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.temporal import register_temporal_tools
 
         mcp = FastMCP("test")
         register_temporal_tools(mcp)
@@ -370,8 +380,9 @@ class TestTemporalTools:
         assert len(result["sample_classes"]) <= 10
 
     def test_get_class_history(self, seeded_ontology, patched_db):
-        from app.mcp.tools.temporal import register_temporal_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.temporal import register_temporal_tools
 
         mcp = FastMCP("test")
         register_temporal_tools(mcp)
@@ -389,8 +400,9 @@ class TestTemporalTools:
         assert any(not v["is_current"] for v in results)
 
     def test_get_ontology_diff(self, seeded_ontology, patched_db):
-        from app.mcp.tools.temporal import register_temporal_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.temporal import register_temporal_tools
 
         ts = seeded_ontology["timestamp"]
 
@@ -420,8 +432,9 @@ class TestExportTools:
     """Tests for the 2 export/provenance MCP tools."""
 
     def test_get_provenance(self, seeded_ontology, patched_db):
-        from app.mcp.tools.export import register_export_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.export import register_export_tools
 
         mcp = FastMCP("test")
         register_export_tools(mcp)
@@ -438,8 +451,9 @@ class TestExportTools:
         assert result["ontology_id"] == _TEST_ONTOLOGY_ID
 
     def test_get_provenance_not_found(self, seeded_ontology, patched_db):
-        from app.mcp.tools.export import register_export_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.export import register_export_tools
 
         mcp = FastMCP("test")
         register_export_tools(mcp)
@@ -454,8 +468,9 @@ class TestExportTools:
         assert "error" in result
 
     def test_export_ontology_turtle(self, seeded_ontology, patched_db):
-        from app.mcp.tools.export import register_export_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.export import register_export_tools
 
         mcp = FastMCP("test")
         register_export_tools(mcp)
@@ -472,8 +487,9 @@ class TestExportTools:
         assert "Animal" in result
 
     def test_export_ontology_invalid_format(self, seeded_ontology, patched_db):
-        from app.mcp.tools.export import register_export_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.export import register_export_tools
 
         mcp = FastMCP("test")
         register_export_tools(mcp)
@@ -497,8 +513,9 @@ class TestERTools:
     """Tests for the 3 ER MCP tools."""
 
     def test_explain_entity_match(self, seeded_ontology, patched_db):
-        from app.mcp.tools.er import register_er_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.er import register_er_tools
 
         mcp = FastMCP("test")
         register_er_tools(mcp)
@@ -515,8 +532,9 @@ class TestERTools:
         assert result["key2"] == "cls_cat"
 
     def test_get_entity_clusters_empty(self, seeded_ontology, patched_db):
-        from app.mcp.tools.er import register_er_tools
         from mcp.server.fastmcp import FastMCP
+
+        from app.mcp.tools.er import register_er_tools
 
         mcp = FastMCP("test")
         register_er_tools(mcp)

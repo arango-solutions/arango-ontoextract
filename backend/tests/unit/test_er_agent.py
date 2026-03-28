@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from app.extraction.agents.er_agent import er_agent_node
 from app.extraction.state import ExtractionPipelineState

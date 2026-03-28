@@ -5,8 +5,22 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import curation, documents, er, extraction, health, ontology, ws_extraction
+from app.api import (
+    curation,
+    documents,
+    er,
+    extraction,
+    health,
+    metrics,
+    notifications,
+    ontology,
+    orgs,
+    ws_curation,
+    ws_extraction,
+)
+from app.api.auth import JWTAuthMiddleware
 from app.api.errors import install_error_handlers
+from app.api.metrics import PrometheusMiddleware
 from app.config import settings
 from app.db.client import close_db
 
@@ -49,10 +63,17 @@ app.add_middleware(
 
 install_error_handlers(app)
 
+app.add_middleware(JWTAuthMiddleware)
+app.add_middleware(PrometheusMiddleware)
+
 app.include_router(health.router)
 app.include_router(documents.router)
 app.include_router(extraction.router)
 app.include_router(ontology.router)
 app.include_router(curation.router)
 app.include_router(er.router)
+app.include_router(orgs.router)
+app.include_router(notifications.router)
+app.include_router(metrics.router)
 app.include_router(ws_extraction.router)
+app.include_router(ws_curation.router)

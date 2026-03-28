@@ -5,6 +5,7 @@ Every versioned vertex and edge carries ``created`` / ``expired`` timestamps.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import sys
 import time
@@ -17,6 +18,54 @@ from app.db.client import get_db
 log = logging.getLogger(__name__)
 
 NEVER_EXPIRES: int = sys.maxsize
+
+# ---------------------------------------------------------------------------
+# Materialized snapshot cache (Week 23 — PRD R16)
+# ---------------------------------------------------------------------------
+# In-process LRU dict keyed by (ontology_id, rounded_timestamp).
+# TTL: 5 minutes.  Invalidated on any write to the ontology.
+
+_SNAPSHOT_CACHE_TTL = 300  # seconds
+_snapshot_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _snapshot_cache_key(ontology_id: str, timestamp: float) -> str:
+    """Deterministic cache key: ontology + timestamp rounded to the minute."""
+    rounded = int(timestamp // 60) * 60
+    raw = f"{ontology_id}:{rounded}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _snapshot_cache_get(key: str) -> dict[str, Any] | None:
+    entry = _snapshot_cache.get(key)
+    if entry is None:
+        return None
+    stored_at, data = entry
+    if time.time() - stored_at > _SNAPSHOT_CACHE_TTL:
+        _snapshot_cache.pop(key, None)
+        return None
+    return data
+
+
+def _snapshot_cache_put(key: str, data: dict[str, Any]) -> None:
+    _snapshot_cache[key] = (time.time(), data)
+
+
+def invalidate_snapshot_cache(ontology_id: str) -> int:
+    """Remove all cached snapshots for an ontology.  Called on any write."""
+    to_remove = [
+        k for k, (_, v) in _snapshot_cache.items()
+        if v.get("ontology_id") == ontology_id
+    ]
+    for k in to_remove:
+        _snapshot_cache.pop(k, None)
+    removed = len(to_remove)
+    if removed:
+        log.info(
+        "snapshot_cache_invalidated",
+        extra={"ontology_id": ontology_id, "evicted": removed},
+    )
+    return removed
 
 
 def _now() -> float:
@@ -56,6 +105,9 @@ def create_version(
         "temporal version created",
         extra={"collection": collection, "key": result["_key"]},
     )
+    ontology_id = data.get("ontology_id")
+    if ontology_id:
+        invalidate_snapshot_cache(ontology_id)
     return result["new"]
 
 
@@ -333,12 +385,23 @@ def get_snapshot(
     *,
     ontology_id: str,
     timestamp: float,
+    bypass_cache: bool = False,
 ) -> dict[str, Any]:
     """Return the full graph state at ``timestamp`` for an ontology.
 
-    Queries ontology_classes, ontology_properties, and all edge collections
+    Checks the materialized snapshot cache first (keyed by ontology_id +
+    timestamp rounded to the minute, TTL 5 min).  On miss, queries
+    ontology_classes, ontology_properties, and all edge collections
     filtering by ``created <= ts < expired``.
     """
+    cache_key = _snapshot_cache_key(ontology_id, timestamp)
+
+    if not bypass_cache:
+        cached = _snapshot_cache_get(cache_key)
+        if cached is not None:
+            log.debug("snapshot_cache_hit", extra={"ontology_id": ontology_id})
+            return cached
+
     if db is None:
         db = get_db()
 
@@ -391,13 +454,16 @@ FOR e IN @@col
             if e.get("_from") in active_ids or e.get("_to") in active_ids:
                 edges.append(e)
 
-    return {
+    result = {
         "ontology_id": ontology_id,
         "timestamp": timestamp,
         "classes": classes,
         "properties": properties,
         "edges": edges,
     }
+
+    _snapshot_cache_put(cache_key, result)
+    return result
 
 
 def get_entity_history(

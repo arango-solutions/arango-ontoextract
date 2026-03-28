@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -121,7 +121,10 @@ class TestExtractionFlow:
         with (
             patch("app.services.extraction.get_db", return_value=test_db),
             patch("app.extraction.agents.extractor._get_llm", return_value=mock_llm),
-            patch("app.extraction.agents.extractor._retrieve_relevant_chunks", side_effect=lambda *a, **k: []),
+            patch(
+                "app.extraction.agents.extractor._retrieve_relevant_chunks",
+                side_effect=lambda *a, **k: [],
+            ),
         ):
             from app.services.extraction import start_run
 
@@ -155,9 +158,12 @@ class TestExtractionFlow:
         with (
             patch("app.services.extraction.get_db", return_value=test_db),
             patch("app.extraction.agents.extractor._get_llm", return_value=mock_llm),
-            patch("app.extraction.agents.extractor._retrieve_relevant_chunks", side_effect=lambda *a, **k: []),
+            patch(
+                "app.extraction.agents.extractor._retrieve_relevant_chunks",
+                side_effect=lambda *a, **k: [],
+            ),
         ):
-            from app.services.extraction import start_run, get_run_results
+            from app.services.extraction import get_run_results, start_run
 
             run = await start_run(test_db, document_id=doc_id)
 

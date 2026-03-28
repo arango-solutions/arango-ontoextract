@@ -2,14 +2,21 @@
 
 LLM-driven ontology extraction and curation platform built on ArangoDB.
 
-AOE ingests unstructured documents, extracts formal domain ontologies via large language models, and provides a visual curation dashboard for domain experts to review, edit, and promote extracted knowledge into a production graph.
+AOE ingests unstructured documents (PDF, DOCX, Markdown), extracts formal domain ontologies via large language models, and provides a visual curation dashboard for domain experts to review, edit, and promote extracted knowledge into a production graph. Ontologies are stored in ArangoDB via ArangoRDF's PGT transformation, preserving OWL metamodel semantics while leveraging ArangoDB's multi-model capabilities.
 
 ## Architecture
 
 ```
-Frontend (React/Next.js)  →  Backend (FastAPI)  →  ArangoDB (multi-model)
-                                  ↕
-                          LLM (Claude / GPT)
+Frontend (Next.js)  ──▶  Backend (FastAPI)  ──▶  ArangoDB (multi-model)
+       │                       │                        │
+       │                  LangGraph Pipeline             ├── Document Store
+       │                  ┌─────────────────┐           ├── Graph (OWL/PGT)
+       │                  │ Strategy → LLM  │           ├── Vector Index
+       └── WebSocket ◀────│ → Consistency   │           └── ArangoSearch
+                          │ → ER → Filter   │
+                          └─────────────────┘
+                               │
+                          MCP Server (FastMCP)  ──▶  AI Agents (Cursor, Claude)
 ```
 
 **Two-tier ontology model:**
@@ -17,36 +24,19 @@ Frontend (React/Next.js)  →  Backend (FastAPI)  →  ArangoDB (multi-model)
 - **Tier 1 — Domain Ontologies:** Standardized industry schemas (shared across organizations)
 - **Tier 2 — Localized Extensions:** Organization-specific sub-graphs linked to Tier 1 via `rdfs:subClassOf`
 
-See [PRD.md](PRD.md) for the full product requirements document.
-
-## Prerequisites
-
-- Python 3.11+
-- Node.js 18+
-- Docker & Docker Compose
-- An Anthropic and/or OpenAI API key
-
 ## Quick Start
 
 ```bash
-# 1. Clone and enter the repo
+# 1. Clone and set up
 git clone <repo-url> && cd ontology_generator
+cp .env.example .env          # Add your API keys
+make setup                     # Python venv + npm install
 
-# 2. Copy environment config
-cp .env.example .env
-# Edit .env with your API keys and preferences
+# 2. Start infrastructure
+make infra                     # ArangoDB + Redis via Docker
 
-# 3. One-command setup (creates venv, installs deps, copies .env)
-make setup
-
-# 4. Start ArangoDB + Redis
-make infra
-
-# 5. Start the backend (port 8000)
-make backend
-
-# 6. In a second terminal, start the frontend (port 3000)
-make frontend
+# 3. Run the backend
+make backend                   # FastAPI on :8000
 ```
 
 After startup:
@@ -58,67 +48,241 @@ After startup:
 | Frontend | http://localhost:3000 |
 | ArangoDB UI | http://localhost:8529 |
 
+## Features
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Document Ingestion | Done | Upload PDF/DOCX/Markdown → parse → chunk → embed |
+| LLM Extraction | Done | N-pass extraction with self-correction via LangGraph |
+| Visual Curation | Done | React Flow graph canvas with approve/reject/edit/merge |
+| VCR Timeline | Done | Temporal time travel with point-in-time snapshots |
+| Entity Resolution | Done | Duplicate detection via arango-entity-resolution |
+| Cross-Tier ER | Done | Find overlaps between local and domain ontologies |
+| Staging → Production | Done | Promote approved entities with temporal versioning |
+| Import/Export | Done | OWL/TTL import and TTL/JSON-LD/CSV export |
+| MCP Server | Done | 18 tools for AI agent integration (stdio + SSE) |
+| Pipeline Monitor | Done | Real-time Agent DAG with WebSocket events |
+| ArangoDB Visualizer | Done | Custom themes, canvas actions, saved queries |
+| Auth (JWT + RBAC) | Done | 4 roles, org-scoped, API key auth for MCP |
+| Notifications | Done | In-app notification queue with WebSocket |
+| Observability | Done | Structured logging, Prometheus metrics, OpenTelemetry |
+
 ## Project Structure
 
 ```
 ontology_generator/
-├── backend/                  # Python / FastAPI
+├── backend/                       # Python / FastAPI
 │   ├── app/
-│   │   ├── api/              # Route handlers (health, documents, extraction, ontology, curation)
-│   │   ├── db/               # ArangoDB client and schema initialization
-│   │   ├── extraction/       # LLM extraction pipeline (TODO)
-│   │   ├── models/           # Pydantic models (documents, ontology, curation)
-│   │   ├── services/         # Business logic (TODO)
-│   │   ├── config.py         # Settings from environment
-│   │   └── main.py           # FastAPI app entry point
+│   │   ├── api/                   # REST endpoints (documents, extraction, ontology, curation, er)
+│   │   ├── db/                    # ArangoDB repositories and client
+│   │   ├── extraction/            # LangGraph pipeline, agents, prompts
+│   │   │   ├── agents/            # Strategy, extractor, consistency, ER, filter
+│   │   │   ├── prompts/           # Per-domain prompt templates (Tier 1, Tier 2)
+│   │   │   ├── pipeline.py        # StateGraph definition
+│   │   │   └── state.py           # Pipeline state schema
+│   │   ├── models/                # Pydantic models (documents, ontology, curation)
+│   │   ├── services/              # Business logic (ingestion, extraction, curation, temporal, ER)
+│   │   ├── mcp/                   # MCP server (tools, resources, auth)
+│   │   ├── config.py              # Settings from environment
+│   │   └── main.py                # FastAPI app entry point
+│   ├── migrations/                # Versioned database migrations
 │   ├── tests/
+│   │   ├── unit/                  # Mocked, fast tests
+│   │   ├── integration/           # Real ArangoDB via Docker
+│   │   ├── e2e/                   # Full workflow tests
+│   │   └── fixtures/              # LLM responses, sample docs, ontologies
 │   └── pyproject.toml
-├── frontend/                 # React / Next.js
-│   ├── src/app/              # App router pages
-│   ├── package.json
-│   └── tsconfig.json
-├── .env.example              # Environment variable template
-├── docker-compose.yml        # ArangoDB + Redis
-├── Makefile                  # Dev commands
-└── PRD.md                    # Product requirements document
+├── frontend/                      # React / Next.js
+│   ├── src/
+│   │   ├── app/                   # App router pages (pipeline, curation, library)
+│   │   ├── components/            # Graph canvas, VCR timeline, curation panels
+│   │   └── lib/                   # API client, WebSocket hooks, auth
+│   └── package.json
+├── scripts/
+│   └── setup/                     # Visualizer install script
+├── docs/
+│   ├── user-guide.md              # Comprehensive user walkthrough
+│   ├── architecture.md            # System architecture overview
+│   ├── api-reference.md           # Full API endpoint catalog
+│   ├── benchmarks.md              # Performance targets
+│   ├── mcp-server.md              # MCP tool catalog and connection guide
+│   ├── adr/                       # Architecture Decision Records
+│   └── visualizer/                # ArangoDB Graph Visualizer customizations
+├── .env.example                   # Environment variable template
+├── docker-compose.yml             # ArangoDB + Redis (dev)
+├── docker-compose.test.yml        # Ephemeral test services
+├── docker-compose.prod.yml        # Production profile with TLS
+├── Makefile                       # Dev commands
+└── PRD.md                         # Product requirements document
 ```
 
 ## Development Commands
 
 ```bash
-make help        # List all commands
-make setup       # First-time setup (venv + deps)
-make infra       # Start ArangoDB + Redis
-make infra-down  # Stop infrastructure
-make infra-reset # Stop infrastructure and delete data
-make backend     # Run backend dev server (hot-reload)
-make frontend    # Run frontend dev server
-make test        # Run backend tests
-make lint        # Lint backend code
-make format      # Auto-format backend code
-make typecheck   # Type-check backend
-make clean       # Remove caches and build artifacts
+make help              # List all commands
+
+# Setup
+make setup             # First-time setup (venv + deps + .env)
+
+# Infrastructure
+make infra             # Start ArangoDB + Redis
+make infra-down        # Stop infrastructure
+make infra-reset       # Stop and delete volumes
+
+# Run
+make backend           # Backend dev server (hot-reload, port 8000)
+make frontend          # Frontend dev server (port 3000)
+make migrate           # Apply pending database migrations
+
+# Quality
+make test              # Run all backend tests
+make test-unit         # Run unit tests only
+make test-integration  # Run integration tests (requires Docker)
+make test-all          # Unit + integration tests
+make lint              # Lint backend (ruff + mypy)
+make format            # Auto-format backend code
+make typecheck         # Type-check backend
+make type-check        # Type-check backend + frontend
+
+# Test Infrastructure
+make test-infra-up     # Start test ArangoDB + Redis
+make test-infra-down   # Stop test containers
+
+# Cleanup
+make clean             # Remove caches and build artifacts
 ```
 
 ## API Endpoints
 
+### System
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
-| `GET` | `/ready` | Readiness probe (DB connected) |
-| `POST` | `/api/v1/documents/upload` | Upload a document |
-| `GET` | `/api/v1/documents/{doc_id}` | Get document status |
-| `GET` | `/api/v1/documents/{doc_id}/chunks` | List document chunks |
-| `POST` | `/api/v1/extraction/run` | Trigger ontology extraction |
-| `GET` | `/api/v1/extraction/runs/{run_id}` | Get extraction run status |
-| `GET` | `/api/v1/ontology/domain` | Get domain ontology graph |
-| `GET` | `/api/v1/ontology/local/{org_id}` | Get org's local ontology |
-| `GET` | `/api/v1/ontology/staging/{run_id}` | Get staging graph for curation |
-| `POST` | `/api/v1/ontology/staging/{run_id}/promote` | Promote staging to production |
-| `POST` | `/api/v1/curation/decide` | Record a curation decision |
-| `GET` | `/api/v1/curation/merge-candidates/{run_id}` | Get entity resolution suggestions |
+| `GET` | `/ready` | Readiness probe |
 
-Full interactive docs available at `/docs` when the backend is running.
+### Documents
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/documents/upload` | Upload a document |
+| `GET` | `/api/v1/documents` | List documents |
+| `GET` | `/api/v1/documents/{doc_id}` | Get document status |
+| `GET` | `/api/v1/documents/{doc_id}/chunks` | List chunks |
+| `DELETE` | `/api/v1/documents/{doc_id}` | Soft-delete document |
+
+### Extraction
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/extraction/run` | Trigger extraction |
+| `GET` | `/api/v1/extraction/runs` | List runs |
+| `GET` | `/api/v1/extraction/runs/{run_id}` | Run status |
+| `GET` | `/api/v1/extraction/runs/{run_id}/steps` | Agent step details |
+| `GET` | `/api/v1/extraction/runs/{run_id}/results` | Extracted entities |
+| `POST` | `/api/v1/extraction/runs/{run_id}/retry` | Retry failed run |
+| `GET` | `/api/v1/extraction/runs/{run_id}/cost` | LLM cost breakdown |
+
+### Ontology
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/ontology/library` | List ontologies |
+| `GET` | `/api/v1/ontology/library/{id}` | Ontology detail + stats |
+| `PUT` | `/api/v1/ontology/orgs/{org_id}/ontologies` | Set base ontologies |
+| `GET` | `/api/v1/ontology/orgs/{org_id}/ontologies` | Get base ontologies |
+| `GET` | `/api/v1/ontology/domain` | Domain ontology graph |
+| `GET` | `/api/v1/ontology/staging/{run_id}` | Staging graph |
+| `POST` | `/api/v1/ontology/staging/{run_id}/promote` | Promote staging |
+| `GET` | `/api/v1/ontology/{id}/snapshot` | Point-in-time snapshot |
+| `GET` | `/api/v1/ontology/class/{key}/history` | Version history |
+| `GET` | `/api/v1/ontology/{id}/diff` | Temporal diff |
+| `GET` | `/api/v1/ontology/{id}/timeline` | Timeline events |
+| `POST` | `/api/v1/ontology/class/{key}/revert` | Revert to version |
+| `POST` | `/api/v1/ontology/import` | Import OWL/TTL |
+| `GET` | `/api/v1/ontology/export` | Export ontology |
+
+### Curation
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/curation/decide` | Record curation decision |
+| `POST` | `/api/v1/curation/batch` | Batch decisions |
+| `GET` | `/api/v1/curation/decisions` | List decisions |
+| `GET` | `/api/v1/curation/decisions/{id}` | Get decision |
+| `POST` | `/api/v1/curation/merge` | Merge entities |
+| `POST` | `/api/v1/curation/promote/{run_id}` | Promote to production |
+| `GET` | `/api/v1/curation/promote/{run_id}/status` | Promotion status |
+
+### Entity Resolution
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/er/run` | Trigger ER pipeline |
+| `GET` | `/api/v1/er/runs/{run_id}` | ER run status |
+| `GET` | `/api/v1/er/runs/{run_id}/candidates` | Merge candidates |
+| `GET` | `/api/v1/er/runs/{run_id}/clusters` | Entity clusters |
+| `POST` | `/api/v1/er/explain` | Explain match |
+| `POST` | `/api/v1/er/merge` | Execute merge |
+| `POST` | `/api/v1/er/cross-tier` | Cross-tier candidates |
+| `GET` | `/api/v1/er/config` | Get ER config |
+| `PUT` | `/api/v1/er/config` | Update ER config |
+
+### WebSocket
+
+| Path | Description |
+|------|-------------|
+| `ws://host/ws/extraction/{run_id}` | Extraction pipeline progress |
+
+Full interactive docs at `/docs`. Full static reference: [docs/api-reference.md](docs/api-reference.md).
+
+## MCP Tools
+
+The AOE MCP server exposes 18 tools to AI agents. Connect via stdio (Cursor/Claude Desktop) or SSE (custom clients).
+
+| Tool | Description |
+|------|-------------|
+| `query_collections` | List ArangoDB collections |
+| `run_aql` | Execute read-only AQL |
+| `sample_collection` | Sample documents |
+| `query_domain_ontology` | Ontology summary |
+| `get_class_hierarchy` | SubClassOf tree |
+| `get_class_properties` | Class properties |
+| `search_similar_classes` | BM25 search |
+| `trigger_extraction` | Start extraction |
+| `get_extraction_status` | Run status |
+| `get_merge_candidates` | ER candidates |
+| `get_ontology_snapshot` | Point-in-time graph |
+| `get_class_history` | Version history |
+| `get_ontology_diff` | Temporal diff |
+| `get_provenance` | Entity provenance |
+| `export_ontology` | Export OWL/TTL |
+| `run_entity_resolution` | Trigger ER |
+| `explain_entity_match` | Match details |
+| `get_entity_clusters` | WCC clusters |
+
+See [docs/mcp-server.md](docs/mcp-server.md) for connection instructions and full tool catalog.
+
+## Testing
+
+```bash
+# Unit tests (mocked, fast)
+make test-unit
+
+# Integration tests (requires Docker ArangoDB)
+make test-infra-up
+make test-integration
+make test-infra-down
+
+# All tests
+make test-all
+
+# Frontend tests
+cd frontend && npm test          # Jest
+cd frontend && npx playwright test  # E2E
+```
+
+Coverage targets: ≥ 80% overall, ≥ 90% for services/db, ≥ 85% for API routes.
 
 ## Configuration
 
@@ -133,6 +297,53 @@ All configuration is via environment variables (see [.env.example](.env.example)
 | `LLM_EXTRACTION_MODEL` | `claude-sonnet-4-20250514` | Model for ontology extraction |
 | `EXTRACTION_PASSES` | `3` | Number of LLM passes for consistency |
 | `ER_VECTOR_SIMILARITY_THRESHOLD` | `0.85` | Min similarity for merge candidates |
+| `TEST_DEPLOYMENT_MODE` | `local_docker` | Deployment mode (local_docker, self_managed_platform, managed_platform) |
+
+## Deployment
+
+### Local Docker (Development)
+
+```bash
+make infra      # ArangoDB + Redis
+make backend    # FastAPI dev server
+make frontend   # Next.js dev server
+```
+
+### Docker Compose (Production)
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+### Container Images
+
+| Image | Base | Size Target |
+|-------|------|-------------|
+| `aoe-backend` | `python:3.11-slim` | < 500 MB |
+| `aoe-frontend` | `node:20-alpine` + `nginx:alpine` | < 100 MB |
+| `aoe-mcp-server` | `python:3.11-slim` | < 400 MB |
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [PRD.md](PRD.md) | Full product requirements |
+| [docs/user-guide.md](docs/user-guide.md) | User walkthrough |
+| [docs/architecture.md](docs/architecture.md) | System architecture |
+| [docs/api-reference.md](docs/api-reference.md) | API endpoint catalog |
+| [docs/mcp-server.md](docs/mcp-server.md) | MCP server tool catalog |
+| [docs/benchmarks.md](docs/benchmarks.md) | Performance targets |
+| [docs/adr/](docs/adr/) | Architecture Decision Records |
+| [docs/visualizer/](docs/visualizer/) | ArangoDB Visualizer customizations |
+
+## Contributing
+
+1. Create a feature branch from `main`
+2. Follow existing code patterns (see `.cursor/rules/`)
+3. Write tests for all changes (unit + integration)
+4. Run `make lint` and `make typecheck` before committing
+5. Use conventional commit messages: `feat(scope): description`
+6. Open a PR with a summary of changes and test plan
 
 ## License
 

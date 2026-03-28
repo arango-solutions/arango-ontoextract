@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -264,8 +264,10 @@ class TestRevertToVersion:
         uri_lookup = MagicMock()
         uri_lookup.return_value = iter([None])
 
-        with patch("app.services.temporal.get_entity_history", return_value=[]):
-            with pytest.raises(ValueError, match="No version found"):
+        with (
+            patch("app.services.temporal.get_entity_history", return_value=[]),
+            pytest.raises(ValueError, match="No version found"),
+        ):
                 revert_to_version(
                     mock_db,
                     collection="ontology_classes",

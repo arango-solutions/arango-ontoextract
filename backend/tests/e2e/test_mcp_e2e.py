@@ -7,7 +7,6 @@ SDK would invoke), since stdio/SSE transport requires process-level setup.
 
 from __future__ import annotations
 
-import sys
 import time
 from unittest.mock import patch
 
@@ -123,9 +122,11 @@ def e2e_seeded_data(test_db: StandardDatabase, e2e_collections):
 @pytest.fixture()
 def patched_db(test_db: StandardDatabase):
     """Patch get_db to return the test database."""
-    with patch("app.db.client.get_db", return_value=test_db):
-        with patch("app.db.client._db", test_db):
-            yield test_db
+    with (
+        patch("app.db.client.get_db", return_value=test_db),
+        patch("app.db.client._db", test_db),
+    ):
+        yield test_db
 
 
 class TestMCPExternalAgentWorkflow:

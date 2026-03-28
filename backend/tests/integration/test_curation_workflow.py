@@ -5,8 +5,6 @@ Tests the full path: record decision → verify in curation_decisions → promot
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from app.db import curation_repo

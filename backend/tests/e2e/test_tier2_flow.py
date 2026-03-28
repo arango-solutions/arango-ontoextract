@@ -5,9 +5,7 @@ Simulates: upload org doc -> extract with domain context -> ER finds duplicates 
 
 from __future__ import annotations
 
-import sys
-import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,10 +13,7 @@ from fastapi.testclient import TestClient
 from app.models.ontology import (
     ExtractedClass,
     ExtractionClassification,
-    ExtractionResult,
 )
-from app.services.er import ERPipelineConfig
-from app.services.temporal import NEVER_EXPIRES
 
 pytestmark = pytest.mark.e2e
 

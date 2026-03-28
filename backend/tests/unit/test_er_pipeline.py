@@ -5,20 +5,18 @@ from __future__ import annotations
 import sys
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from app.services.er import (
     ERFieldConfig,
     ERPipelineConfig,
     ERRunStatus,
+    _jaro_winkler_sim,
+    _token_overlap,
     configure_blocking,
     configure_scoring,
     explain_match,
     get_config,
     run_er_pipeline,
     update_config,
-    _jaro_winkler_sim,
-    _token_overlap,
 )
 
 NEVER_EXPIRES = sys.maxsize

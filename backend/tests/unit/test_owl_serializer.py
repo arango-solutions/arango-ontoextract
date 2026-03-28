@@ -91,7 +91,7 @@ class TestExtractionToOwl:
 
         org_uri = URIRef("http://example.org/test#Organization")
         labels = list(g.objects(org_uri, RDFS.label))
-        assert any(str(l) == "Organization" for l in labels)
+        assert any(str(lbl) == "Organization" for lbl in labels)
 
     def test_contains_subclass_relationship(self):
         result = _make_extraction_result()

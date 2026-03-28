@@ -83,12 +83,12 @@ class TestParseLLMResponse:
         assert result.classes[0].properties == []
 
     def test_parse_invalid_json_raises(self):
-        with pytest.raises(Exception):
+        with pytest.raises((json.JSONDecodeError, ValueError, KeyError)):
             _parse_llm_response("not valid json at all", pass_number=1, model_name="test")
 
     def test_parse_invalid_schema_raises(self):
         bad_data = {"classes": [{"uri": "x", "label": "y"}]}
-        with pytest.raises(Exception):
+        with pytest.raises((ValueError, KeyError, TypeError)):
             _parse_llm_response(json.dumps(bad_data), pass_number=1, model_name="test")
 
     def test_all_fixtures_produce_valid_results(self):

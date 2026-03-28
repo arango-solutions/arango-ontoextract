@@ -158,7 +158,7 @@ class TestTemporalVersioning:
 
         expire_entity(test_db, collection="ontology_classes", key=v1["_key"])
 
-        v2 = create_version(
+        create_version(
             test_db,
             collection="ontology_classes",
             data={
@@ -204,8 +204,11 @@ class TestTemporalSnapshot:
     def test_snapshot_returns_active_entities(self, test_db):
         _ensure_collection(test_db, "ontology_classes")
         _ensure_collection(test_db, "ontology_properties")
-        for e in ("subclass_of", "has_property", "equivalent_class", "extends_domain", "related_to"):
-            _ensure_collection(test_db, e, edge=True)
+        for edge_name in (
+            "subclass_of", "has_property", "equivalent_class",
+            "extends_domain", "related_to",
+        ):
+            _ensure_collection(test_db, edge_name, edge=True)
 
         t_before = time.time()
         time.sleep(0.01)
@@ -284,7 +287,6 @@ class TestTemporalSnapshot:
     def test_diff_detects_additions_and_removals(self, test_db):
         _ensure_collection(test_db, "ontology_classes")
 
-        t0 = time.time()
         time.sleep(0.01)
 
         v1 = create_version(
@@ -372,7 +374,7 @@ class TestTemporalSnapshot:
         v1_created = v1["created"]
         time.sleep(0.01)
 
-        v2 = update_entity(
+        update_entity(
             test_db,
             collection="ontology_classes",
             key=v1["_key"],

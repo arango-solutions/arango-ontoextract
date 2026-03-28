@@ -6,7 +6,6 @@ and verifies candidate pairs and clusters are produced.
 
 from __future__ import annotations
 
-import sys
 import time
 
 import pytest

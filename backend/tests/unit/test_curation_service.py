@@ -6,8 +6,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.services.temporal import NEVER_EXPIRES
-
 
 class TestRecordDecision:
     """Tests for curation_svc.record_decision."""
@@ -276,8 +274,8 @@ class TestGetDecisions:
 
     @patch("app.services.curation.curation_repo")
     def test_get_decisions_delegates_to_repo(self, mock_repo):
-        from app.services.curation import get_decisions
         from app.models.common import PaginatedResponse
+        from app.services.curation import get_decisions
 
         mock_repo.list_decisions.return_value = PaginatedResponse(
             data=[{"_key": "d1"}],

@@ -1,17 +1,21 @@
 """ArangoRDF bridge — wraps arango_rdf for PGT import with post-processing.
 
-Handles OWL/TTL import into ArangoDB, post-import ontology_id tagging, and
-per-ontology named graph creation.
+Handles OWL/TTL import into ArangoDB, post-import ontology_id tagging,
+per-ontology named graph creation, and file/URL-based import with format
+detection.
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import PurePosixPath
 from typing import Any
 
+import httpx
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.registry_repo import create_registry_entry
 
 log = logging.getLogger(__name__)
 
@@ -192,3 +196,152 @@ def _ensure_named_graph(db: StandardDatabase, *, graph_name: str) -> None:
             extra={"graph_name": full_name},
             exc_info=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# Format detection helpers
+# ---------------------------------------------------------------------------
+
+_FORMAT_BY_EXTENSION: dict[str, str] = {
+    ".ttl": "turtle",
+    ".turtle": "turtle",
+    ".rdf": "xml",
+    ".xml": "xml",
+    ".owl": "xml",
+    ".jsonld": "json-ld",
+    ".json": "json-ld",
+    ".n3": "n3",
+    ".nt": "nt",
+}
+
+
+def _detect_format(filename: str) -> str:
+    """Detect RDF serialization format from file extension."""
+    suffix = PurePosixPath(filename).suffix.lower()
+    fmt = _FORMAT_BY_EXTENSION.get(suffix)
+    if fmt is None:
+        raise ValueError(
+            f"Unsupported file extension '{suffix}'. "
+            f"Supported: {', '.join(sorted(_FORMAT_BY_EXTENSION))}"
+        )
+    return fmt
+
+
+# ---------------------------------------------------------------------------
+# File / URL import (Week 20)
+# ---------------------------------------------------------------------------
+
+
+def import_from_file(
+    file_content: bytes,
+    filename: str,
+    ontology_id: str,
+    *,
+    db: StandardDatabase | None = None,
+    ontology_label: str | None = None,
+    ontology_uri_prefix: str | None = None,
+) -> dict[str, Any]:
+    """Import an OWL/TTL/RDF-XML/JSON-LD file into ArangoDB.
+
+    1. Detect format from file extension
+    2. Parse with rdflib to validate
+    3. Import via PGT (``import_owl_to_graph``)
+    4. Create an ``ontology_registry`` entry
+
+    Returns:
+        Dict with import stats and registry entry key.
+    """
+    if db is None:
+        db = get_db()
+
+    fmt = _detect_format(filename)
+    text = file_content.decode("utf-8")
+
+    from rdflib import Graph as RDFGraph
+
+    rdf_graph = RDFGraph()
+    rdf_graph.parse(data=text, format=fmt)
+    triple_count = len(rdf_graph)
+    if triple_count == 0:
+        raise ValueError("Parsed file contains no RDF triples")
+
+    ttl_content = rdf_graph.serialize(format="turtle")
+
+    graph_name = ontology_id.replace("-", "_").replace(" ", "_")
+
+    stats = import_owl_to_graph(
+        db,
+        ttl_content=ttl_content,
+        graph_name=graph_name,
+        ontology_id=ontology_id,
+        ontology_uri_prefix=ontology_uri_prefix,
+    )
+
+    registry_entry = create_registry_entry({
+        "_key": ontology_id,
+        "label": ontology_label or ontology_id,
+        "source": "file_import",
+        "source_filename": filename,
+        "format": fmt,
+        "triple_count": triple_count,
+        "graph_name": f"ontology_{graph_name}",
+        "uri": ontology_uri_prefix or f"http://example.org/ontology/{ontology_id}",
+    })
+
+    log.info(
+        "file import completed",
+        extra={
+            "ontology_id": ontology_id,
+            "filename": filename,
+            "format": fmt,
+            "triple_count": triple_count,
+            "registry_key": registry_entry["_key"],
+        },
+    )
+
+    return {
+        **stats,
+        "source": "file_import",
+        "filename": filename,
+        "format": fmt,
+        "registry_key": registry_entry["_key"],
+    }
+
+
+def import_from_url(
+    url: str,
+    ontology_id: str,
+    *,
+    db: StandardDatabase | None = None,
+    ontology_label: str | None = None,
+) -> dict[str, Any]:
+    """Fetch an OWL/RDF file from a URL and import it.
+
+    Determines format from the URL path extension, downloads the content,
+    and delegates to ``import_from_file``.
+
+    Returns:
+        Dict with import stats and registry entry key.
+    """
+    if db is None:
+        db = get_db()
+
+    filename = PurePosixPath(url.split("?")[0].split("#")[0]).name
+    if not filename:
+        filename = "ontology.ttl"
+
+    log.info("downloading ontology from URL", extra={"url": url, "ontology_id": ontology_id})
+
+    response = httpx.get(url, timeout=60, follow_redirects=True)
+    response.raise_for_status()
+
+    result = import_from_file(
+        file_content=response.content,
+        filename=filename,
+        ontology_id=ontology_id,
+        db=db,
+        ontology_label=ontology_label,
+    )
+    result["source"] = "url_import"
+    result["source_url"] = url
+    return result
