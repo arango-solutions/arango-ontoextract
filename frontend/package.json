@@ -19,6 +19,9 @@
     "react-dom": "^18",
     "reactflow": "^11"
   },
+  "overrides": {
+    "@tootallnate/once": ">=3.0.1"
+  },
   "devDependencies": {
     "@jest/globals": "^29",
     "@playwright/test": "^1",
