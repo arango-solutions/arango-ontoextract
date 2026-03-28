@@ -5,7 +5,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import curation, documents, extraction, health, ontology
+from app.api import curation, documents, extraction, health, ontology, ws_extraction
 from app.api.errors import install_error_handlers
 from app.config import settings
 from app.db.client import close_db
@@ -54,3 +54,4 @@ app.include_router(documents.router)
 app.include_router(extraction.router)
 app.include_router(ontology.router)
 app.include_router(curation.router)
+app.include_router(ws_extraction.router)

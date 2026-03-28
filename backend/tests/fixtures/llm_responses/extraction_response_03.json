@@ -1,0 +1,54 @@
+{
+  "classes": [
+    {
+      "uri": "http://example.org/enterprise#Organization",
+      "label": "Organization",
+      "description": "A legally recognized business entity.",
+      "rdf_type": "owl:Class",
+      "parent_uri": null,
+      "confidence": 0.93
+    },
+    {
+      "uri": "http://example.org/enterprise#Department",
+      "label": "Department",
+      "description": "A subdivision within an organization handling specific functions.",
+      "rdf_type": "owl:Class",
+      "parent_uri": "http://example.org/enterprise#Organization",
+      "confidence": 0.89
+    },
+    {
+      "uri": "http://example.org/enterprise#Employee",
+      "label": "Employee",
+      "description": "A person working for an organization.",
+      "rdf_type": "owl:Class",
+      "parent_uri": null,
+      "confidence": 0.91
+    },
+    {
+      "uri": "http://example.org/enterprise#Role",
+      "label": "Role",
+      "description": "A defined set of responsibilities within an organization.",
+      "rdf_type": "owl:Class",
+      "parent_uri": null,
+      "confidence": 0.85
+    }
+  ],
+  "properties": [
+    {
+      "uri": "http://example.org/enterprise#hasDepartment",
+      "label": "has department",
+      "description": "Associates an organization with its departments.",
+      "rdf_type": "owl:ObjectProperty",
+      "domain_uri": "http://example.org/enterprise#Organization",
+      "range_uri": "http://example.org/enterprise#Department"
+    },
+    {
+      "uri": "http://example.org/enterprise#hasRole",
+      "label": "has role",
+      "description": "Assigns a role to an employee.",
+      "rdf_type": "owl:ObjectProperty",
+      "domain_uri": "http://example.org/enterprise#Employee",
+      "range_uri": "http://example.org/enterprise#Role"
+    }
+  ]
+}

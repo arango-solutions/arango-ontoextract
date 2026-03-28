@@ -16,7 +16,8 @@
   "dependencies": {
     "next": "^15",
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "reactflow": "^11"
   },
   "devDependencies": {
     "@jest/globals": "^29",

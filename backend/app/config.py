@@ -1,10 +1,10 @@
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
-class DeploymentMode(str, Enum):
+class DeploymentMode(StrEnum):
     LOCAL_DOCKER = "local_docker"
     SELF_MANAGED_PLATFORM = "self_managed_platform"
     MANAGED_PLATFORM = "managed_platform"
