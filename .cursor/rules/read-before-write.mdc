@@ -1,0 +1,52 @@
+---
+description: Match the codebase - search for existing patterns, utilities, and conventions before writing new code
+alwaysApply: true
+---
+
+# Read Before Write
+
+> **"Match the codebase, don't fight it."**
+
+Before writing ANY code, understand what already exists. The codebase has patterns, conventions, and utilities. Use them, don't reinvent them.
+
+## The Reading Protocol
+
+Before implementing anything:
+
+1. **Pattern Search** — How does the codebase already do this?
+2. **Utility Search** — Is there a helper for this?
+3. **Existing Implementation** — Has someone already solved this?
+4. **Test Pattern Search** — How are similar things tested?
+
+## What You Must Find Before Writing
+
+| Before Writing | Find First |
+| --- | --- |
+| New struct/type | Existing similar types |
+| New function | Existing utilities with same behavior |
+| New endpoint | Existing endpoint patterns |
+| New test | Existing test helpers/patterns |
+| New error type | Existing error conventions |
+| New config field | Existing config structure |
+
+## Pattern Matching Requirements
+
+When you find existing patterns, you MUST:
+1. Use the same naming conventions
+2. Use the same file organization
+3. Use the same error handling style
+4. Use the same logging approach
+5. Use existing utilities — don't write `formatTime()` if `utils.FormatTime()` exists
+
+## The Duplication Detector
+
+| Question | If Yes → |
+| --- | --- |
+| Does this function already exist? | Use it |
+| Does a similar type already exist? | Extend or reuse it |
+| Is there a util/helper for this? | Call it |
+| Is there an established pattern? | Follow it |
+
+The codebase was here before you. Your job is to make it *more* consistent, not less.
+
+**Read first. Match the patterns. Then write.**

@@ -1,0 +1,56 @@
+---
+description: When unsure, ask the user - never silently guess on ambiguous requirements, architecture, or scope
+alwaysApply: true
+---
+
+# Surface Don't Guess
+
+> **"When unsure, ask—don't bet the codebase."**
+
+A wrong guess implemented is worse than an honest question asked.
+
+## When You MUST Ask
+
+| Situation | Why |
+| --- | --- |
+| Ambiguous requirements | "Add caching" — Cache what? Where? How long? |
+| Multiple valid approaches | Sync or async? REST or gRPC? |
+| Breaking changes | Will this affect existing callers? |
+| Architectural decisions | New service or extend existing? |
+| Unclear scope | Is this feature supposed to include X? |
+| Missing context | Why does this code exist? |
+
+## The Uncertainty Protocol
+
+1. **Attempt Self-Resolution (60 seconds max)** — Search codebase, check docs, look at tests
+2. **If Still Uncertain → ASK** — State what you understand, what's unclear, and options with tradeoffs
+3. **WAIT** — Do NOT proceed with a guess
+
+## Good vs. Bad
+
+```text
+# BAD: Silent Guessing
+User: "Add retry logic"
+Agent: *implements exponential backoff with 5 retries, 1s delay, max 30s*
+User: "Why 30 seconds? I wanted 3 quick retries."
+
+# GOOD: Surfacing Uncertainty
+User: "Add retry logic"
+Agent: "Before I implement:
+1. Max retries: 3? 5?
+2. Backoff: fixed? exponential? jitter?
+3. Which errors trigger retry?
+4. Max total timeout?"
+```
+
+## Cost of Guessing
+
+| Guess | Cost |
+| --- | --- |
+| Wrong architecture | Days of refactoring |
+| Wrong behavior | User-facing bugs |
+| Wrong scope | Wasted effort |
+
+**Cost of asking: 30 seconds of the user's time.**
+
+Your confidence is not a substitute for their knowledge. **Ask.**

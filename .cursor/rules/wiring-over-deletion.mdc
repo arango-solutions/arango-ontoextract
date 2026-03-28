@@ -1,0 +1,41 @@
+---
+description: Unused code is a missing feature, not garbage - wire it in instead of deleting to silence linters
+alwaysApply: true
+---
+
+# Wiring Over Deletion
+
+> **"Unused code often represents missing features, not garbage."**
+
+When you see a linter warning about an unused import, variable, or parameter, it is NOT a request to delete it. It is a request to **finish the implementation**.
+
+**You are FORBIDDEN from deleting "unused" code without first proving it is truly obsolete.**
+
+## Decision Matrix
+
+### Go
+- `VAR declared but not used` → Log it, return it, or trace it. **NEVER** `_ = score`
+- `ctx parameter unused` → Pass `ctx` to every DB call, HTTP request, or sub-function
+- `err variable unused` → Handle it: `if err != nil { return fmt.Errorf("context: %w", err) }`
+
+### React/TypeScript
+- `'MyIcon' defined but never used` → Render it where it belongs
+- `Prop 'isEnabled' defined but never used` → Wire it: conditional rendering, class toggling, or logic gate
+- `useEffect has missing dependencies` → Stabilize the dependency (`useCallback`, `useMemo`). **NEVER** `eslint-disable`
+
+### Imports
+- `'some-lib' imported but never used` → Implement the feature that needs it. **NEVER** delete just to silence the linter unless the entire feature was scrapped
+
+### Tests
+- `Unused write to field` → Assert or log it to prove test setup executed
+- `Unused parameter 't'` → Shadow it in sub-tests: `t.Run("sub", func(t *testing.T) { ... })`
+
+## Wire-It Checklist
+
+1. **Semantic Value** — Does the name suggest meaningful data? → Wire to UI/logs
+2. **Structural Integrity** — Is it a system parameter (`ctx`, `config`)? → Pass it down
+3. **Intent** — Was it just added in the previous turn? → **IT IS MANDATORY TO USE IT**
+
+> "A passing linter check on a broken feature is a failure. A failing linter check on a working feature is just a todo."
+
+**Do not clean the house by throwing out the furniture.**

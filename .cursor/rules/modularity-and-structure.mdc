@@ -1,0 +1,53 @@
+---
+description: Everything has a place - enforce file size limits, directory conventions, and module cohesion
+alwaysApply: true
+---
+
+# Modularity and Structure
+
+> **"Everything has a place. Put everything in its place."**
+
+## File Size Limits
+
+| File Type | Max Lines | Action If Exceeded |
+| --- | --- | --- |
+| Source code | 1500 | Split into multiple files |
+| Test files | 2000 | Split by test category |
+| Config files | 500 | Use includes/imports |
+| Documentation | 1000 | Split into sections |
+
+### Signs a File Needs Splitting
+- Can't find things without search
+- Multiple unrelated concerns
+- Multiple people need to edit it simultaneously
+
+## File Placement Rules
+
+| File Type | Goes In | NOT In |
+| --- | --- | --- |
+| Shared types | Core/types module | Random location |
+| Tests | Next to source file | Separate `tests/` folder (except E2E) |
+| Configs | `configs/` | Root directory |
+| Scripts | `scripts/` | Root directory |
+
+## Module Cohesion
+
+Each package/module should:
+- Have a single responsibility
+- Expose a minimal public API
+- Hide implementation details
+- Be independently testable
+
+## Before Creating Any File
+
+| Check | Question |
+| --- | --- |
+| Location | Is this the right directory? |
+| Naming | Does the name follow existing conventions? |
+| Size | Will this file stay under limits? |
+| Cohesion | Does this file belong with its neighbors? |
+| Discoverability | Can someone find this file intuitively? |
+
+> A new developer should be able to find any file based solely on what it does, without searching.
+
+**Structure is not bureaucracy—it's navigation.**

@@ -1,0 +1,52 @@
+---
+description: If you didn't run it, you didn't ship it - always build, test, and exercise changed code before claiming done
+alwaysApply: true
+---
+
+# Verify Before Claiming Done
+
+> **"If you didn't run it, you didn't ship it."**
+
+Saying "I've implemented X" when you haven't verified X works is not a mistake — it's a lie.
+
+## Mandatory Verification
+
+Before claiming ANY work is complete:
+
+1. **Build it** — compilation must succeed
+2. **Test it** — all tests must pass
+3. **Run it** — actually exercise the changed code path
+4. **Inspect it** — look at the output/behavior
+
+### For Go Code
+```bash
+go build ./...           # Compiles?
+go test ./...            # Tests pass?
+go test -race ./...      # Race conditions?
+golangci-lint run ./...  # Lint issues?
+```
+
+### For Frontend Code
+```bash
+npm run type-check   # TypeScript compiles?
+npm run lint         # Lint passes?
+npm run test         # Tests pass?
+npm run build        # Production build works?
+```
+
+## The "Done" Checklist
+
+| Step | If No → |
+| --- | --- |
+| Did the build succeed? | Fix build errors |
+| Did all tests pass? | Fix failing tests |
+| Did you run the specific feature you changed? | Run it manually |
+| Did you check for regressions in related areas? | Test adjacent functionality |
+
+## Anti-Patterns
+
+- "I've updated the handler" (didn't run server) → Start server, hit endpoint, verify
+- "Fixed the test" (didn't run suite) → Run `go test ./...` and see green
+- "Added the component" (didn't view in browser) → Run dev server, navigate, verify render
+
+**Verify. Every. Time.**
