@@ -158,6 +158,8 @@ async def run_pipeline(
     chunks: list[dict[str, Any]],
     thread_id: str | None = None,
     event_callback: Any | None = None,
+    domain_context: str = "",
+    domain_ontology_ids: list[str] | None = None,
 ) -> ExtractionPipelineState:
     """Execute the extraction pipeline end-to-end.
 
@@ -173,6 +175,10 @@ async def run_pipeline(
         LangGraph thread for checkpoint resume. Defaults to run_id.
     event_callback:
         Async callable invoked with step events for WebSocket broadcasting.
+    domain_context:
+        Serialized domain ontology text for Tier 2 context-aware extraction.
+    domain_ontology_ids:
+        IDs of domain ontologies used as context for Tier 2 extraction.
     """
     compiled = compile_pipeline(interrupt_after_filter=True)
 
@@ -185,10 +191,13 @@ async def run_pipeline(
         "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         "step_logs": [],
         "current_step": "initialized",
-        "metadata": {},
+        "metadata": {
+            "domain_ontology_ids": domain_ontology_ids or [],
+        },
         "er_results": {},
         "filter_results": {},
         "merge_candidates": [],
+        "domain_context": domain_context,
     }
 
     config = {"configurable": {"thread_id": thread_id or run_id}}

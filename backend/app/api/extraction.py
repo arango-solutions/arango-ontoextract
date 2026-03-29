@@ -25,6 +25,14 @@ class StartRunRequest(BaseModel):
         default=None,
         description="Optional config overrides (num_passes, consistency_threshold, etc.)",
     )
+    target_ontology_id: str | None = Field(
+        default=None,
+        description="Target domain ontology for Tier 2 context-aware extraction",
+    )
+    base_ontology_ids: list[str] | None = Field(
+        default=None,
+        description="Multiple base ontologies for Tier 2 context-aware extraction",
+    )
 
 
 class StartRunResponse(BaseModel):
@@ -51,16 +59,25 @@ async def start_extraction(
     for the full extraction to complete.
     """
     db = get_db()
+
+    ontology_ids: list[str] = []
+    if body.target_ontology_id:
+        ontology_ids.append(body.target_ontology_id)
+    if body.base_ontology_ids:
+        ontology_ids.extend(oid for oid in body.base_ontology_ids if oid not in ontology_ids)
+
     run_record = extraction_service.create_run_record(
         db,
         document_id=body.document_id,
         config_overrides=body.config,
+        domain_ontology_ids=ontology_ids or None,
     )
     background_tasks.add_task(
         extraction_service.execute_run,
         run_id=run_record["_key"],
         document_id=body.document_id,
         config_overrides=body.config,
+        domain_ontology_ids=ontology_ids or None,
     )
     return StartRunResponse(
         run_id=run_record["_key"],

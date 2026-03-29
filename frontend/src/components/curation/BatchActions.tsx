@@ -32,9 +32,13 @@ export default function BatchActions({
 
       try {
         await api.post("/api/v1/curation/batch", {
-          entity_keys: selectedKeys,
-          entity_type: entityType,
-          decision,
+          run_id: runId,
+          decisions: selectedKeys.map((key) => ({
+            entity_key: key,
+            entity_type: entityType,
+            action: decision,
+            curator_id: "anonymous",
+          })),
         });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Batch operation failed");

@@ -46,6 +46,7 @@ def create_run_record(
     *,
     document_id: str,
     config_overrides: dict[str, Any] | None = None,
+    domain_ontology_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Create an extraction run record (synchronous).
 
@@ -58,11 +59,14 @@ def create_run_record(
     run_id = _generate_run_id()
     now = time.time()
 
+    is_tier2 = bool(domain_ontology_ids)
+    prompt_version = "tier2_standard" if is_tier2 else "tier1_standard"
+
     run_record = {
         "_key": run_id,
         "doc_id": document_id,
         "model": settings.llm_extraction_model,
-        "prompt_version": "tier1_standard",
+        "prompt_version": prompt_version,
         "started_at": now,
         "completed_at": None,
         "status": "running",
@@ -74,6 +78,9 @@ def create_run_record(
             "step_logs": [],
         },
     }
+
+    if domain_ontology_ids:
+        run_record["domain_ontology_ids"] = domain_ontology_ids
 
     if config_overrides:
         run_record["stats"].update(config_overrides)
@@ -95,6 +102,7 @@ async def execute_run(
     document_id: str,
     config_overrides: dict[str, Any] | None = None,
     event_callback: Any | None = None,
+    domain_ontology_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Execute the extraction pipeline for an existing run record.
 
@@ -113,6 +121,32 @@ async def execute_run(
     if run_record is None:
         raise NotFoundError(f"Extraction run '{run_id}' not found")
 
+    if domain_ontology_ids is None:
+        domain_ontology_ids = run_record.get("domain_ontology_ids")
+
+    domain_context = ""
+    if domain_ontology_ids:
+        try:
+            from app.services.ontology_context import serialize_multi_domain_context
+
+            domain_context = serialize_multi_domain_context(
+                db, ontology_ids=domain_ontology_ids,
+            )
+            log.info(
+                "serialized domain context for tier 2",
+                extra={
+                    "run_id": run_id,
+                    "ontology_ids": domain_ontology_ids,
+                    "context_length": len(domain_context),
+                },
+            )
+        except Exception:
+            log.warning(
+                "failed to serialize domain context, falling back to tier 1",
+                exc_info=True,
+                extra={"run_id": run_id},
+            )
+
     chunks = _load_document_chunks(db, document_id)
 
     final_state: dict[str, Any] | None = None
@@ -122,6 +156,8 @@ async def execute_run(
             document_id=document_id,
             chunks=chunks,
             event_callback=event_callback,
+            domain_context=domain_context,
+            domain_ontology_ids=domain_ontology_ids or [],
         )
 
         completed_at = time.time()

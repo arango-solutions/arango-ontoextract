@@ -82,15 +82,29 @@ def _classify_document(chunks: list[dict[str, Any]]) -> str:
 
 
 def strategy_selector_node(state: ExtractionPipelineState) -> dict:
-    """LangGraph node: select extraction strategy based on document characteristics."""
+    """LangGraph node: select extraction strategy based on document characteristics.
+
+    When domain_context is present in the state (Tier 2 extraction), the
+    strategy overrides the prompt template to ``tier2_standard`` so the
+    extractor uses context-aware prompts.
+    """
     start = time.time()
     run_id = state.get("run_id", "unknown")
     chunks = state.get("document_chunks", [])
+    domain_context = state.get("domain_context", "")
 
     log.info("strategy_selector started", extra={"run_id": run_id, "chunk_count": len(chunks)})
 
     doc_type = _classify_document(chunks)
-    config = _STRATEGIES.get(doc_type, _STRATEGIES["default"])
+    config = dict(_STRATEGIES.get(doc_type, _STRATEGIES["default"]))
+
+    is_tier2 = bool(domain_context)
+    if is_tier2:
+        config["prompt_template_key"] = "tier2_standard"
+        log.info(
+            "tier 2 domain context detected, using tier2_standard template",
+            extra={"run_id": run_id, "context_length": len(domain_context)},
+        )
 
     duration = time.time() - start
     step_log = StepLog(
@@ -100,7 +114,11 @@ def strategy_selector_node(state: ExtractionPipelineState) -> dict:
         completed_at=time.time(),
         duration_seconds=round(duration, 3),
         error=None,
-        metadata={"document_type": doc_type, "chunk_count": len(chunks)},
+        metadata={
+            "document_type": doc_type,
+            "chunk_count": len(chunks),
+            "is_tier2": is_tier2,
+        },
     )
 
     log.info(
@@ -110,6 +128,7 @@ def strategy_selector_node(state: ExtractionPipelineState) -> dict:
             "document_type": doc_type,
             "model": config.get("model_name"),
             "num_passes": config.get("num_passes"),
+            "prompt_template_key": config.get("prompt_template_key"),
             "duration_seconds": round(duration, 3),
         },
     )

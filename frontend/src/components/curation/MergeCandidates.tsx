@@ -12,6 +12,7 @@ import type {
 interface MergeCandidatesProps {
   onAcceptMerge?: (candidate: MergeCandidate) => void;
   onCandidateHover?: (candidate: MergeCandidate | null) => void;
+  onCandidatesLoaded?: (candidates: MergeCandidate[]) => void;
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -42,6 +43,7 @@ function methodLabel(method: string): string {
 export default function MergeCandidates({
   onAcceptMerge,
   onCandidateHover,
+  onCandidatesLoaded,
 }: MergeCandidatesProps) {
   const [candidates, setCandidates] = useState<MergeCandidate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,10 +72,12 @@ export default function MergeCandidates({
         const res = await api.get<PaginatedResponse<MergeCandidate>>(
           `/api/v1/er/candidates?${params}`,
         );
-        setCandidates((prev) => (append ? [...prev, ...res.data] : res.data));
+        const updated = append ? [...candidates, ...res.data] : res.data;
+        setCandidates(updated);
         setCursor(res.cursor);
         setHasMore(res.has_more);
         setTotalCount(res.total_count);
+        onCandidatesLoaded?.(updated);
       } catch (err) {
         setError(
           err instanceof ApiError
@@ -84,7 +88,7 @@ export default function MergeCandidates({
         setLoading(false);
       }
     },
-    [cursor],
+    [cursor, candidates, onCandidatesLoaded],
   );
 
   useEffect(() => {

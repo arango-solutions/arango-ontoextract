@@ -67,8 +67,11 @@ export default function EntityResolutionPage() {
   const [entityRight, setEntityRight] = useState<EntityDetail | null>(null);
   const [entitiesLoading, setEntitiesLoading] = useState(false);
 
-  // Merge candidates for graph overlay
   const [allCandidates, setAllCandidates] = useState<MergeCandidate[]>([]);
+
+  const handleCandidatesLoaded = useCallback((candidates: MergeCandidate[]) => {
+    setAllCandidates(candidates);
+  }, []);
 
   const fetchGraphData = useCallback(async () => {
     setGraphLoading(true);
@@ -257,6 +260,7 @@ export default function EntityResolutionPage() {
             <MergeCandidates
               onAcceptMerge={handleAcceptMerge}
               onCandidateHover={setHoveredCandidate}
+              onCandidatesLoaded={handleCandidatesLoaded}
             />
           )}
 

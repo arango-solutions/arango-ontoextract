@@ -138,6 +138,7 @@ def extractor_node(state: ExtractionPipelineState) -> dict:
     template_key = config.get("prompt_template_key", "tier1_standard")
     batch_size = config.get("chunk_batch_size", 5)
     num_passes = config.get("num_passes", settings.extraction_passes)
+    domain_context = state.get("domain_context", "")
 
     log.info(
         "extractor started",
@@ -170,6 +171,7 @@ def extractor_node(state: ExtractionPipelineState) -> dict:
             extra_vars = {"pass_number": pass_num, "model_name": model_name}
             system_msg, user_msg = template.render(
                 chunks_text=batch_text,
+                domain_context=domain_context,
                 extra_vars=extra_vars,
             )
 

@@ -139,6 +139,31 @@ export default function CurationPage() {
     [],
   );
 
+  const handleEdgeDecision = useCallback(
+    (key: string, decision: CurationDecisionType) => {
+      setGraph((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          edges: prev.edges.map((e) =>
+            e._key === key
+              ? {
+                  ...e,
+                  status:
+                    decision === "approve"
+                      ? "approved"
+                      : decision === "reject"
+                        ? "rejected"
+                        : e.status,
+                }
+              : e,
+          ),
+        };
+      });
+    },
+    [],
+  );
+
   const handleBatchDecision = useCallback(
     (keys: string[], decision: CurationDecisionType) => {
       setGraph((prev) => {
@@ -489,9 +514,7 @@ export default function CurationPage() {
                   runId={runId}
                   currentType={selectedEdge.type}
                   currentLabel={selectedEdge.label}
-                  onDecision={(key, decision) =>
-                    handleNodeDecision(key, decision)
-                  }
+                  onDecision={handleEdgeDecision}
                 />
               )}
 
