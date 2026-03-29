@@ -262,13 +262,19 @@ export default function UploadPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       {(doc.status === "ready" || doc.status === "processed") && (
-                        <button
-                          onClick={() => extractDocument(doc._key)}
-                          disabled={extractingDocs.has(doc._key)}
-                          className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                        >
-                          {extractingDocs.has(doc._key) ? "Starting…" : "Extract"}
-                        </button>
+                        extractingDocs.has(doc._key) ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-violet-100 text-violet-700 rounded-lg font-medium">
+                            <span className="h-3 w-3 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+                            Extracting…
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => extractDocument(doc._key)}
+                            className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                          >
+                            Extract
+                          </button>
+                        )
                       )}
                       <span
                         className={`text-xs font-medium px-2.5 py-1 rounded-full ${

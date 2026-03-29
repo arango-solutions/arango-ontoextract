@@ -41,24 +41,22 @@ def _get_collection(db: StandardDatabase, name: str):
     return db.collection(name)
 
 
-async def start_run(
+def create_run_record(
     db: StandardDatabase | None = None,
     *,
     document_id: str,
     config_overrides: dict[str, Any] | None = None,
-    event_callback: Any | None = None,
 ) -> dict[str, Any]:
-    """Create an extraction run record and dispatch the LangGraph pipeline.
+    """Create an extraction run record (synchronous).
 
-    Returns the run record with status.
+    Returns the run record immediately so the HTTP response can be sent
+    before the pipeline starts executing.
     """
     if db is None:
         db = get_db()
 
     run_id = _generate_run_id()
     now = time.time()
-
-    chunks = _load_document_chunks(db, document_id)
 
     run_record = {
         "_key": run_id,
@@ -83,11 +81,34 @@ async def start_run(
     col = _get_collection(db, "extraction_runs")
     col.insert(run_record)
 
+    chunks = _load_document_chunks(db, document_id)
     log.info(
         "extraction run created",
         extra={"run_id": run_id, "doc_id": document_id, "chunk_count": len(chunks)},
     )
 
+    return run_record
+
+
+async def execute_run(
+    run_id: str,
+    document_id: str,
+    config_overrides: dict[str, Any] | None = None,
+    event_callback: Any | None = None,
+) -> dict[str, Any]:
+    """Execute the extraction pipeline for an existing run record.
+
+    Designed to run as a background task after the HTTP response is sent.
+    """
+    db = get_db()
+    col = _get_collection(db, "extraction_runs")
+    run_record = col.get(run_id)
+    if run_record is None:
+        raise NotFoundError(f"Extraction run '{run_id}' not found")
+
+    chunks = _load_document_chunks(db, document_id)
+
+    final_state: dict[str, Any] | None = None
     try:
         final_state = await run_pipeline(
             run_id=run_id,
@@ -103,6 +124,22 @@ async def start_run(
         if final_state.get("consistency_result") is None:
             status = "failed"
 
+        consistency = final_state.get("consistency_result")
+        classes_extracted = len(consistency.classes) if consistency else 0
+        properties_extracted = (
+            sum(len(c.properties) for c in consistency.classes) if consistency else 0
+        )
+        pass_results = final_state.get("extraction_passes", [])
+        pass_agreement_rate = _compute_agreement_rate(pass_results) if pass_results else 0.0
+        if pass_agreement_rate == 0.0:
+            for sl in final_state.get("step_logs", []):
+                sl_dict = sl if isinstance(sl, dict) else (sl.model_dump() if hasattr(sl, "model_dump") else dict(sl))
+                if sl_dict.get("step") == "consistency_checker":
+                    rates = sl_dict.get("metadata", {}).get("agreement_rates", {})
+                    if rates:
+                        pass_agreement_rate = sum(rates.values()) / len(rates)
+                    break
+
         update_data: dict[str, Any] = {
             "completed_at": completed_at,
             "status": status,
@@ -113,11 +150,9 @@ async def start_run(
                 "step_logs": [
                     _serialize_step_log(sl) for sl in final_state.get("step_logs", [])
                 ],
-                "classes_extracted": (
-                    len(final_state["consistency_result"].classes)
-                    if final_state.get("consistency_result")
-                    else 0
-                ),
+                "classes_extracted": classes_extracted,
+                "properties_extracted": properties_extracted,
+                "pass_agreement_rate": pass_agreement_rate,
             },
         }
         col.update({"_key": run_id, **update_data})
@@ -150,6 +185,11 @@ async def start_run(
 
     except Exception as exc:
         log.exception("extraction pipeline failed", extra={"run_id": run_id})
+        partial_logs: list[dict[str, Any]] = []
+        if final_state and final_state.get("step_logs"):
+            partial_logs = [
+                _serialize_step_log(sl) for sl in final_state["step_logs"]
+            ]
         col.update({
             "_key": run_id,
             "status": "failed",
@@ -157,12 +197,34 @@ async def start_run(
             "stats": {
                 **run_record["stats"],
                 "errors": [str(exc)],
+                "step_logs": partial_logs,
+                "token_usage": (
+                    final_state.get("token_usage", {}) if final_state else {}
+                ),
             },
         })
-        raise
 
     updated = col.get(run_id)
     return updated
+
+
+async def start_run(
+    db: StandardDatabase | None = None,
+    *,
+    document_id: str,
+    config_overrides: dict[str, Any] | None = None,
+    event_callback: Any | None = None,
+) -> dict[str, Any]:
+    """Create and execute an extraction run synchronously (legacy helper)."""
+    if db is None:
+        db = get_db()
+    run_record = create_run_record(db, document_id=document_id, config_overrides=config_overrides)
+    return await execute_run(
+        run_id=run_record["_key"],
+        document_id=document_id,
+        config_overrides=config_overrides,
+        event_callback=event_callback,
+    )
 
 
 def get_run(
@@ -206,6 +268,7 @@ def list_runs(
         limit=limit,
         cursor=cursor,
         filters=filters if filters else None,
+        extra_aql='FILTER NOT STARTS_WITH(doc._key, "results_")',
     )
 
 
@@ -373,6 +436,8 @@ def _materialize_to_graph(
     related_col = db.collection("related_to")
 
     class_keys: dict[str, str] = {}
+    uri_to_key: dict[str, str] = {}
+    class_parent_uris: list[tuple[str, str]] = []
 
     for cls in classes:
         cls_data = cls.model_dump() if hasattr(cls, "model_dump") else dict(cls)
@@ -397,6 +462,11 @@ def _materialize_to_graph(
         except Exception as exc:
             log.warning("class insert failed for %s: %s", key, exc)
         class_keys[label] = key
+        uri_to_key[uri] = key
+
+        parent_uri = cls_data.get("parent_uri")
+        if parent_uri:
+            class_parent_uris.append((key, parent_uri))
 
         props = cls_data.get("properties", [])
         for prop in props:
@@ -442,12 +512,16 @@ def _materialize_to_graph(
         except Exception:
             pass
 
-        parent = cls_data.get("parent_class")
-        if parent and parent in class_keys:
+    for child_key, parent_uri in class_parent_uris:
+        parent_key = uri_to_key.get(parent_uri)
+        if not parent_key:
+            parent_frag = parent_uri.split("#")[-1].split("/")[-1]
+            parent_key = class_keys.get(parent_frag) or class_keys.get(parent_uri)
+        if parent_key:
             try:
                 subclass_col.insert({
-                    "_from": f"ontology_classes/{key}",
-                    "_to": f"ontology_classes/{class_keys[parent]}",
+                    "_from": f"ontology_classes/{child_key}",
+                    "_to": f"ontology_classes/{parent_key}",
                     "ontology_id": ontology_id,
                     "created": now,
                     "expired": NEVER_EXPIRES,
@@ -504,6 +578,29 @@ def _auto_register_ontology(
     except Exception:
         log.warning("auto-registration failed — ontology can be registered manually", exc_info=True)
         return None
+
+
+def _compute_agreement_rate(pass_results: list[Any]) -> float:
+    """Compute cross-pass agreement rate as fraction of overlapping class URIs."""
+    if len(pass_results) < 2:
+        return 1.0
+    uri_sets: list[set[str]] = []
+    for pr in pass_results:
+        classes = pr.classes if hasattr(pr, "classes") else pr.get("classes", [])
+        uris = set()
+        for c in classes:
+            uri = c.uri if hasattr(c, "uri") else c.get("uri", "")
+            if uri:
+                uris.add(uri)
+        uri_sets.append(uris)
+    if not uri_sets or all(len(s) == 0 for s in uri_sets):
+        return 0.0
+    intersection = uri_sets[0]
+    union = set(uri_sets[0])
+    for s in uri_sets[1:]:
+        intersection = intersection & s
+        union = union | s
+    return len(intersection) / len(union) if union else 0.0
 
 
 def _serialize_step_log(step_log: dict[str, Any] | Any) -> dict[str, Any]:

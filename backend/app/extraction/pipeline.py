@@ -192,22 +192,36 @@ async def run_pipeline(
     )
 
     final_state: ExtractionPipelineState | None = None
-    async for event in compiled.astream(initial_state, config=config):
-        for node_name, node_output in event.items():
-            log.info(
-                "pipeline node completed",
-                extra={"run_id": run_id, "node": node_name},
-            )
-            if event_callback:
-                await event_callback(
-                    run_id=run_id,
-                    event_type="step_completed",
-                    step=node_name,
-                    data={"current_step": node_name},
+    try:
+        async for event in compiled.astream(initial_state, config=config):
+            for node_name, node_output in event.items():
+                log.info(
+                    "pipeline node completed",
+                    extra={"run_id": run_id, "node": node_name},
                 )
-            final_state = node_output if isinstance(node_output, dict) else final_state
+                if event_callback:
+                    await event_callback(
+                        run_id=run_id,
+                        event_type="step_completed",
+                        step=node_name,
+                        data={"current_step": node_name},
+                    )
+                if isinstance(node_output, dict):
+                    final_state = node_output
+    except Exception as stream_exc:
+        log.warning(
+            "pipeline stream error, capturing partial state",
+            extra={"run_id": run_id, "error": str(stream_exc)},
+        )
+        if final_state is None:
+            final_state = dict(initial_state)
+        final_state.setdefault("errors", []).append(str(stream_exc))
+        return final_state
 
-    snapshot = compiled.get_state(config)
+    try:
+        snapshot = compiled.get_state(config)
+    except Exception:
+        snapshot = None
     result_state: ExtractionPipelineState = (  # type: ignore[assignment]
         snapshot.values if snapshot else (final_state or initial_state)
     )

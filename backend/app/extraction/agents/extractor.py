@@ -74,9 +74,13 @@ def _parse_llm_response(raw_text: str, pass_number: int, model_name: str) -> Ext
     for cls in data.get("classes", []):
         if "properties" not in cls:
             cls["properties"] = []
+        if "confidence" in cls:
+            cls["confidence"] = max(0.0, min(1.0, float(cls["confidence"])))
         for prop in cls.get("properties", []):
             if "confidence" not in prop:
                 prop["confidence"] = 0.5
+            else:
+                prop["confidence"] = max(0.0, min(1.0, float(prop["confidence"])))
 
     return ExtractionResult.model_validate(data)
 
@@ -194,13 +198,13 @@ def extractor_node(state: ExtractionPipelineState) -> dict:
 
                     if hasattr(response, "usage_metadata") and response.usage_metadata:
                         usage = response.usage_metadata
-                        pass_token_total += getattr(usage, "total_tokens", 0)
+                        pass_token_total += usage.get("total_tokens", 0)
                         total_tokens["prompt_tokens"] = total_tokens.get(
                             "prompt_tokens", 0
-                        ) + getattr(usage, "input_tokens", 0)
+                        ) + usage.get("input_tokens", 0)
                         total_tokens["completion_tokens"] = total_tokens.get(
                             "completion_tokens", 0
-                        ) + getattr(usage, "output_tokens", 0)
+                        ) + usage.get("output_tokens", 0)
 
                     result = _parse_llm_response(raw_text, pass_num, model_name)
                     break

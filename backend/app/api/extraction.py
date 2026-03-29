@@ -6,7 +6,7 @@ import logging
 import sys
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.db.client import get_db
@@ -40,18 +40,32 @@ class RetryResponse(BaseModel):
 
 
 @router.post("/run")
-async def start_extraction(body: StartRunRequest) -> StartRunResponse:
-    """Trigger ontology extraction on a document."""
+async def start_extraction(
+    body: StartRunRequest,
+    background_tasks: BackgroundTasks,
+) -> StartRunResponse:
+    """Trigger ontology extraction on a document.
+
+    Creates the run record immediately and dispatches the pipeline
+    as a background task so the HTTP response returns without waiting
+    for the full extraction to complete.
+    """
     db = get_db()
-    run = await extraction_service.start_run(
+    run_record = extraction_service.create_run_record(
         db,
         document_id=body.document_id,
         config_overrides=body.config,
     )
+    background_tasks.add_task(
+        extraction_service.execute_run,
+        run_id=run_record["_key"],
+        document_id=body.document_id,
+        config_overrides=body.config,
+    )
     return StartRunResponse(
-        run_id=run["_key"],
-        doc_id=run["doc_id"],
-        status=run["status"],
+        run_id=run_record["_key"],
+        doc_id=run_record["doc_id"],
+        status=run_record["status"],
     )
 
 

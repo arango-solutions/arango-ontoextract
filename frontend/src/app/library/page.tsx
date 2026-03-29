@@ -26,6 +26,7 @@ export default function LibraryPage() {
   );
   const [selectedClass, setSelectedClass] = useState<ClassDetail | null>(null);
   const [classLoading, setClassLoading] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [tierFilter, setTierFilter] = useState<"all" | "domain" | "local">(
     "all",
   );
@@ -238,28 +239,36 @@ export default function LibraryPage() {
                     >
                       Curate Ontology
                     </a>
-                    <div className="relative group/export">
-                      <button className="text-xs px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors font-medium">
+                    <div className="relative">
+                      <button
+                        onClick={() => setExportOpen((v) => !v)}
+                        onBlur={() => setTimeout(() => setExportOpen(false), 150)}
+                        className="text-xs px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors font-medium"
+                      >
                         Export ▾
                       </button>
-                      <div className="hidden group-hover/export:block absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-                        {(["turtle", "jsonld", "csv"] as const).map((fmt) => {
-                          const baseUrl =
-                            process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
-                          const label = fmt === "turtle" ? "OWL / Turtle" : fmt === "jsonld" ? "JSON-LD" : "CSV";
-                          return (
-                            <a
-                              key={fmt}
-                              href={`${baseUrl}/api/v1/ontology/${selectedOntology._key}/export?format=${fmt}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="block px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg"
-                            >
-                              {label}
-                            </a>
-                          );
-                        })}
-                      </div>
+                      {exportOpen && (
+                        <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                          {(["turtle", "jsonld", "csv"] as const).map((fmt) => {
+                            const baseUrl =
+                              process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
+                            const label = fmt === "turtle" ? "OWL / Turtle" : fmt === "jsonld" ? "JSON-LD" : "CSV";
+                            return (
+                              <a
+                                key={fmt}
+                                href={`${baseUrl}/api/v1/ontology/${selectedOntology._key}/export?format=${fmt}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => setExportOpen(false)}
+                                className="block px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg"
+                              >
+                                {label}
+                              </a>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
 

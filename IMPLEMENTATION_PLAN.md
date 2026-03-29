@@ -692,15 +692,108 @@ Sprint C (data integrity)  ─┐
 
 ---
 
-### Addendum L: Pipeline Enrichment, Run Deletion & System Reset
+### Addendum L: Pipeline Enrichment, System Reset, Auto-Extraction & UI Fixes
 
 **Status: IMPLEMENTED**
 
-| ID | Task | Files | Depends On | Description |
-|----|------|-------|------------|-------------|
-| L.1 | Enrich extraction run list API | `backend/app/api/extraction.py` | — | `GET /extraction/runs` now joins against `documents` for `document_name` and `chunk_count`, queries `ontology_classes`/`ontology_properties` for live entity counts, and computes `duration_ms`, `error_count`, and includes `model`. |
-| L.2 | Delete extraction run API | `backend/app/api/extraction.py` | — | `DELETE /extraction/runs/{run_id}` removes the run document and its `results_*` document. Does not cascade to ontology data. |
-| L.3 | Admin reset endpoints | `backend/app/api/admin.py`, `backend/app/main.py` | — | `POST /admin/reset` truncates all ontology/extraction collections while preserving documents and chunks. `POST /admin/reset/full` purges everything. Both gated by `ALLOW_SYSTEM_RESET=true` env var. |
-| L.4 | Enriched RunList UI | `frontend/src/components/pipeline/RunList.tsx`, `frontend/src/types/pipeline.ts` | L.1 | Run cards show document name (primary), chunk count, classes extracted, properties extracted, error count, duration, and model. Delete button appears on hover. |
-| L.5 | Reset UI | `frontend/src/app/pipeline/page.tsx` | L.3 | "Reset" dropdown in Pipeline Monitor header with two options: soft reset (keeps docs) and full reset. Confirms before executing. Re-fetches run list after reset. |
-| L.6 | PRD updates | `PRD.md` | — | Added `DELETE /extraction/runs/{run_id}`, enriched `GET /extraction/runs` description, and new Section 7.2.1 (Admin endpoints). |
+#### L-I: Pipeline Enrichment & System Administration (PRD §7.2, §7.2.1)
+
+| ID | Task | Files | Status | Description |
+|----|------|-------|--------|-------------|
+| L.1 | Enrich extraction run list API | `backend/app/api/extraction.py` | DONE | `GET /extraction/runs` now joins against `documents` for `document_name` and `chunk_count`, queries `ontology_classes`/`ontology_properties` for live entity counts, and computes `duration_ms`, `error_count`, and includes `model`. |
+| L.2 | Delete extraction run API | `backend/app/api/extraction.py` | DONE | `DELETE /extraction/runs/{run_id}` removes the run document and its `results_*` document. Does not cascade to ontology data. |
+| L.3 | Admin reset endpoints | `backend/app/api/admin.py`, `backend/app/main.py` | DONE | `POST /admin/reset` truncates all ontology/extraction collections while preserving documents and chunks. `POST /admin/reset/full` purges everything. Both gated by `ALLOW_SYSTEM_RESET=true` env var. |
+| L.4 | Enriched RunList UI | `frontend/src/components/pipeline/RunList.tsx`, `frontend/src/types/pipeline.ts` | DONE | Run cards show document name (primary), chunk count, classes extracted, properties extracted, error count, duration, and model. Delete button appears on hover with confirmation. |
+| L.5 | Reset UI | `frontend/src/app/pipeline/page.tsx` | DONE | Click-based "Reset" dropdown in Pipeline Monitor header with two options: soft reset (keeps docs) and full reset. Confirms before executing. Re-fetches run list after reset. |
+| L.6 | PRD updates | `PRD.md` | DONE | Added `DELETE /extraction/runs/{run_id}`, enriched `GET /extraction/runs` description, and new Section 7.2.1 (Admin endpoints). |
+
+#### L-II: Auto-Extraction on Upload (PRD §6.1 FR-1.6, §6.11)
+
+| ID | Task | Files | Status | Description |
+|----|------|-------|--------|-------------|
+| L.7 | Auto-trigger extraction after upload | `frontend/src/app/upload/page.tsx` | DONE | After successful document upload (parse + chunk), the UI automatically triggers `POST /api/v1/extraction/run` with the new `doc_id`. Three-phase UX: "Uploading…" → "Starting extraction…" → "Success — extraction started" with links to Pipeline Monitor and Library. |
+| L.8 | "Extract" button on documents | `frontend/src/app/upload/page.tsx` | DONE | Each document with `ready` status in the Recent Documents list displays an "Extract" button. Clicking it triggers extraction and redirects to Pipeline Monitor. Enables re-extraction after a soft reset without re-uploading. |
+
+#### L-III: Curation Graph & Pipeline Visualization Fixes (PRD §6.4, §6.12)
+
+| ID | Task | Files | Status | Description |
+|----|------|-------|--------|-------------|
+| L.9 | Graph layout fix (hierarchy edges only) | `frontend/src/components/graph/GraphCanvas.tsx` | DONE | `computeLayout` now filters edges to `HIERARCHY_EDGE_TYPES` (`subclass_of`, `extends_domain`, `related_to`) for positioning. Non-class edges (`has_property`, `extracted_from`) excluded from class graph rendering. Parent nodes centered over children. |
+| L.10 | NodeDetail crash fix | `frontend/src/components/curation/NodeDetail.tsx` | DONE | Added `(node.status ?? "pending")` fallback. Fixed Unix timestamp rendering (multiply by 1000). Hidden `Expired` row when value is `NEVER_EXPIRES` sentinel. |
+| L.11 | REST fallback for pipeline steps | `frontend/src/lib/use-websocket.ts` | DONE | Added `fetchStepsFromRest()` to fetch `step_logs` from `GET /extraction/runs/{runId}` as fallback when WebSocket is unavailable. `BACKEND_TO_FRONTEND_STEP` mapping aligns backend step names (`extractor`, `er_agent`) to frontend `PIPELINE_STEPS`. |
+| L.12 | Empty curation state | `frontend/src/app/curation/[runId]/page.tsx` | DONE | When no ontology data exists for a run, shows clear "No ontology data for this run" message with links to Pipeline and Library. All action buttons disabled when `!hasData`. |
+| L.13 | RunList timestamp fix | `frontend/src/components/pipeline/RunList.tsx` | DONE | `formatRelativeTime` handles both Unix timestamps (number) and ISO strings. Uses `run.started_at` with fallback to `run.created_at`. |
+
+#### L-IV: Library & Ontology Card UX (PRD §6.8 FR-8.3, §6.4 FR-4.13)
+
+| ID | Task | Files | Status | Description |
+|----|------|-------|--------|-------------|
+| L.14 | OntologyCard click affordance | `frontend/src/components/library/OntologyCard.tsx` | DONE | Added `cursor-pointer`, `hover:border-blue-300`, `title="Click to explore class hierarchy"`. "Click to explore →" hint on hover. |
+| L.15 | Curate Ontology button in library | `frontend/src/app/library/page.tsx` | DONE | Replaced "Open in Platform UI" and "Open in DB UI" links (which required separate login) with a "Curate Ontology" button linking to `/curation/{extraction_run_id}`. |
+| L.16 | Export dropdown in library | `frontend/src/app/library/page.tsx` | DONE | Added "Export ▾" dropdown with OWL/Turtle, JSON-LD, and CSV options. Links to backend `/api/v1/ontology/{ontology_id}/export?format=`. |
+| L.17 | Class detail "View in Curation" | `frontend/src/app/library/page.tsx` | DONE | Replaced external visualizer links in class detail panel with "View in Curation Dashboard" link focused on the selected class. |
+
+#### L-V: Per-Ontology Graphs & Visualizer Customization (PRD §6.2 FR-2.10, FR-2.11, §6.6)
+
+| ID | Task | Files | Status | Description |
+|----|------|-------|--------|-------------|
+| L.18 | Per-ontology graph creation | `backend/app/services/ontology_graphs.py` | DONE | Auto-creates `ontology_{name_slug}` named graph after extraction with human-readable name. |
+| L.19 | Process graph (`aoe_process`) | `backend/migrations/010_process_graph.py` | DONE | Named graph connecting `documents` → `chunks` → `ontology_classes` → `ontology_properties` → `extraction_runs` with provenance edges. |
+| L.20 | Visualizer auto-install | `scripts/setup/install_visualizer.py` | DONE | Idempotent installer deploys themes, canvas actions, saved queries, and viewpoints for both per-ontology graphs and `aoe_process`. Preserves ArangoDB default theme. Prunes theme to actual graph collections. |
+| L.21 | Removed `all_ontologies` graph | `backend/app/services/ontology_graphs.py`, `backend/migrations/011_all_ontologies_graph.py` | DONE | `domain_ontology` serves as the composite graph. `all_ontologies` was redundant and removed. |
+| L.22 | Human-readable graph names | `backend/app/services/ontology_graphs.py` | DONE | Ontology graph names derived from registry `name` field (e.g., "Financial Services Domain" → `ontology_financial_services_domain`). |
+
+#### L-VI: Temporal Data & Index Fixes (PRD §5.3)
+
+| ID | Task | Files | Status | Description |
+|----|------|-------|--------|-------------|
+| L.23 | `expired` field sentinel backfill | Manual AQL | DONE | Backfilled 169 documents across `ontology_classes`, `ontology_properties`, `subclass_of`, `has_property`, `extracted_from` from `null` to `NEVER_EXPIRES` (9223372036854775807). |
+| L.24 | AQL double-brace syntax fix | `backend/app/api/ontology.py` | DONE | Corrected `{{edge_type: @et}}` to `{edge_type: @et}` in `list_ontology_edges` and `get_staging` endpoints. |
+| L.25 | MDI-prefixed index corrections | `backend/migrations/005_mdi_indexes.py` | DONE | Updated to use `prefixFields: ["ontology_id"]` and `fields: ["created", "expired"]` per PRD §5.3. |
+
+### Coverage Verification: PRD vs Implementation Plan
+
+All PRD §6 features are tracked in the implementation plan:
+
+| PRD Section | Feature | Plan Location | Status |
+|-------------|---------|---------------|--------|
+| §6.1 FR-1.1–1.5 | Document ingestion basics | Phase 1, Week 2 | IMPLEMENTED |
+| §6.1 FR-1.6 | Upload status + auto-extract | Phase 1 + L.7 | IMPLEMENTED |
+| §6.1 FR-1.7–1.8 | Multi-doc ontologies, add doc | Sprint G | PENDING |
+| §6.1 FR-1.9–1.10 | Full CRUD, many-to-many | Sprint J | PENDING |
+| §6.2 FR-2.1–2.6 | Core extraction pipeline | Phase 2 | IMPLEMENTED |
+| §6.2 FR-2.7–2.11 | Materialization, graphs, visualizer | Phase 2 + L.18–L.22 | IMPLEMENTED |
+| §6.2 FR-2.12–2.13 | Incremental + multi-doc extraction | Sprint G | PENDING |
+| §6.3 FR-3.1–3.5 | Tier 2 local extensions | Phase 4, Week 13 | IMPLEMENTED (stubs) |
+| §6.4 FR-4.1–4.9 | Visual curation dashboard | Phase 3, Weeks 8–9 | IMPLEMENTED |
+| §6.4 FR-4.10–4.13 | Standalone ontology editor | Sprint K | PENDING |
+| §6.5 FR-5.1–5.11 | Temporal time travel + VCR | Phase 3, Week 10 | IMPLEMENTED (partially wired) |
+| §6.6 FR-6.1–6.12 | ArangoDB Visualizer customization | Phase 3, Week 11 + L.20 | IMPLEMENTED |
+| §6.7 FR-7.1–7.11 | Entity resolution | Phase 4, Weeks 14–16 | IMPLEMENTED (stubs) |
+| §6.8 FR-8.1–8.7 | Import/export | Phase 6, Week 20 + L.16 | PARTIALLY IMPLEMENTED |
+| §6.8 FR-8.8–8.16 | Imports, catalog, search, CRUD | Sprints H, J | PENDING |
+| §6.9 FR-9.1–9.7 | Schema extraction from ArangoDB | Phase 6, Week 20 | STUB |
+| §6.10 FR-10.1–10.5 | MCP server (runtime) | Phase 5 | IMPLEMENTED |
+| §6.11 FR-11.1–11.10 | Agentic extraction pipeline | Phase 2 | IMPLEMENTED |
+| §6.12 FR-12.1–12.10 | Pipeline monitor dashboard | Phase 2, Week 7 + L.1–L.13 | IMPLEMENTED |
+| §6.13 FR-13.1–13.10 | Ontology quality metrics | Sprint F | PENDING |
+| §6.14 FR-14.1–14.7 | OWL restrictions + SHACL | Sprint I | PENDING |
+| §6.15 FR-15.1–15.6 | Ontology imports & dependencies | Sprint H | PENDING |
+| §7.2.1 | Admin reset endpoints | L.3 | IMPLEMENTED |
+
+### Remaining Work Priority
+
+| Sprint | Duration | Tasks | Priority | Blocks |
+|--------|----------|-------|----------|--------|
+| C: Data Integrity & Reindex | 3 days | 4 | **P0** | Temporal queries |
+| A: Critical Bugs & Wiring | 1 week | 9 | **P0** | Demo & workflows |
+| K: Standalone Ontology Editor | 1.5 weeks | 12 | **P0** | Ontology management |
+| B: Backend Stubs | 1 week | 8 | **P1** | Feature parity |
+| G: Multi-Doc & Incremental | 1.5 weeks | 8 | **P1** | Ontology construction |
+| H: Imports & Dependencies | 1.5 weeks | 9 | **P1** | Standard ontology support |
+| F: Quality Metrics | 1.5 weeks | 18 | **P1** | PRD §3.2 success metrics |
+| J: CRUD, Search & Organization | 1 week | 9 | **P1** | Lifecycle management |
+| I: Constraints (OWL + SHACL) | 1 week | 9 | **P2** | Formal constraints |
+| D: Test Coverage & CI | 1 week | 5 | **P2** | Quality gate |
+| E: Production Polish | 1 week | 5 | **P2** | v1.0.0 readiness |
+| **Total remaining** | **~12 weeks** | **96 tasks** | |
