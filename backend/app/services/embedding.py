@@ -20,7 +20,10 @@ _INITIAL_BACKOFF = 1.0
 
 
 def _get_client() -> OpenAI:
-    return OpenAI(api_key=settings.openai_api_key)
+    kwargs: dict = {"api_key": settings.openai_api_key}
+    if settings.openai_base_url:
+        kwargs["base_url"] = settings.openai_base_url
+    return OpenAI(**kwargs)
 
 
 def embed_texts(

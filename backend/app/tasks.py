@@ -59,8 +59,16 @@ async def process_document(doc_id: str, file_bytes: bytes, mime_type: str) -> No
 
         # --- store chunks ---
         chunk_dicts = _build_chunk_dicts(doc_id, chunks, embeddings)
-        documents_repo.create_chunks(chunk_dicts)
-        documents_repo.update_document_chunk_count(doc_id, len(chunk_dicts))
+        stored = documents_repo.create_chunks(chunk_dicts)
+        if not stored:
+            raise RuntimeError(
+                f"All {len(chunk_dicts)} chunk inserts failed — check ArangoDB logs"
+            )
+        documents_repo.update_document_chunk_count(doc_id, len(stored))
+        log.info(
+            "chunks stored",
+            extra={"doc_id": doc_id, "requested": len(chunk_dicts), "stored": len(stored)},
+        )
 
         documents_repo.update_document_status(doc_id, DocumentStatus.READY)
         log.info("document processing complete", extra={"doc_id": doc_id, "chunks": len(chunks)})

@@ -63,6 +63,7 @@ export interface CurationDecision {
 
 export interface StagingGraph {
   run_id: string;
+  ontology_id?: string;
   classes: OntologyClass[];
   properties: OntologyProperty[];
   edges: OntologyEdge[];
@@ -115,9 +116,11 @@ export interface OntologyRegistryEntry {
   class_count: number;
   property_count: number;
   edge_count: number;
-  last_updated: string;
-  created_at: string;
+  last_updated?: string;
+  updated_at?: string;
+  created_at?: string;
   ontology_id: string;
+  extraction_run_id?: string;
   source_document?: string;
   status: "draft" | "active" | "deprecated";
 }

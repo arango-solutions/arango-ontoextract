@@ -63,7 +63,7 @@ export default function NodeDetail({
           }`}
           data-testid="node-status-badge"
         >
-          {node.status.charAt(0).toUpperCase() + node.status.slice(1)}
+          {(node.status ?? "pending").charAt(0).toUpperCase() + (node.status ?? "pending").slice(1)}
         </span>
         <span className="text-xs text-gray-500 bg-gray-50 px-2 py-0.5 rounded-full">
           {node.rdf_type}
@@ -143,14 +143,16 @@ export default function NodeDetail({
         <div className="flex justify-between text-xs">
           <span className="text-gray-500">Created</span>
           <span className="text-gray-700">
-            {new Date(node.created).toLocaleString()}
+            {node.created
+              ? new Date(typeof node.created === "number" ? node.created * 1000 : node.created).toLocaleString()
+              : "—"}
           </span>
         </div>
-        {node.expired && (
+        {node.expired != null && node.expired !== 9223372036854775807 && (
           <div className="flex justify-between text-xs">
             <span className="text-gray-500">Expired</span>
             <span className="text-gray-700">
-              {new Date(node.expired).toLocaleString()}
+              {new Date(typeof node.expired === "number" ? node.expired * 1000 : node.expired).toLocaleString()}
             </span>
           </div>
         )}

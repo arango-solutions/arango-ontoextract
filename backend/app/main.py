@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
+    admin,
     curation,
     documents,
     er,
@@ -69,6 +70,7 @@ app.add_middleware(PrometheusMiddleware)
 app.include_router(health.router)
 app.include_router(documents.router)
 app.include_router(extraction.router)
+app.include_router(admin.router)
 app.include_router(ontology.router)
 app.include_router(curation.router)
 app.include_router(er.router)

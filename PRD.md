@@ -30,9 +30,12 @@
    - 6.10 MCP Server (Runtime)
    - 6.11 Agentic Extraction Pipeline (LangGraph)
    - 6.12 Pipeline Monitor Dashboard (Agentic Workflow Visualizer)
+   - 6.13 Ontology Quality Metrics
+   - 6.14 Ontology Constraints (OWL Restrictions & SHACL Shapes)
+   - 6.15 Ontology Imports & Dependency Management
 7. [API Specification](#7-api-specification-backend)
    - 7.1–7.7 Endpoint groups
-   - 7.8 API Conventions (Pagination, Errors, Rate Limiting, WebSocket)
+   - 7.8 Frontend Pages (Next.js Routes)
 8. [Non-Functional Requirements](#8-non-functional-requirements)
    - 8.1 Performance
    - 8.2 Scalability
@@ -217,7 +220,7 @@ The critical differentiator is that Localized Ontologies are **structurally link
 |------------|---------|------------|
 | `ontology_classes` | Versioned `owl:Class` / `rdfs:Class` / `skos:Concept` instances | `_key`, `uri`, `rdf_type` (owl:Class\|skos:Concept), `label`, `description`, `tier` (domain\|local), `ontology_id` (FK to registry), `org_id`, `status` (draft\|approved\|deprecated), `version`, `created`, `expired`, `created_by`, `change_type`, `change_summary`, `ttlExpireAt` |
 | `ontology_properties` | Versioned `owl:ObjectProperty` / `owl:DatatypeProperty` instances | `_key`, `uri`, `rdf_type`, `label`, `domain_class` (denormalized from `has_property` edge for query convenience), `range` (URI or datatype), `ontology_id`, `tier`, `status`, `version`, `created`, `expired`, `created_by`, `change_type`, `change_summary`, `ttlExpireAt` |
-| `ontology_constraints` | Versioned `owl:Restriction` / cardinality / value restrictions | `_key`, `property_id`, `constraint_type` (owl:minCardinality\|owl:maxCardinality\|owl:allValuesFrom\|etc.), `constraint_value`, `created`, `expired`, `ttlExpireAt` |
+| `ontology_constraints` | Versioned OWL restrictions and SHACL shapes | `_key`, `ontology_id`, `constraint_type` (owl:Restriction\|sh:NodeShape\|sh:PropertyShape), `property_id`, `on_class` (target class), `restriction_type` (owl:allValuesFrom\|owl:someValuesFrom\|owl:minCardinality\|owl:maxCardinality\|owl:hasValue), `restriction_value`, `shape_uri`, `severity` (sh:Violation\|sh:Warning\|sh:Info), `sh_path`, `sh_datatype`, `sh_min_count`, `sh_max_count`, `sh_pattern`, `sh_in`, `message`, `created`, `expired`, `ttlExpireAt` |
 
 #### Edge Collections (Temporal — All Edges Carry `created`/`expired`)
 
@@ -227,7 +230,9 @@ The critical differentiator is that Localized Ontologies are **structurally link
 | `equivalent_class` | `ontology_classes` → `ontology_classes` | `owl:equivalentClass` / `skos:exactMatch` mappings |
 | `has_property` | `ontology_classes` → `ontology_properties` | `rdfs:domain` — class → property associations |
 | `extends_domain` | `ontology_classes` (local) → `ontology_classes` (domain) | Tier 2 → Tier 1 linkage (specialization via `rdfs:subClassOf` or `skos:narrower`) |
-| `extracted_from` | `ontology_classes` → `chunks` | Provenance: which chunk produced this class |
+| `extracted_from` | `ontology_classes` → `documents` | Provenance: which source document produced this class (links to the document, not individual chunks) |
+| `has_chunk` | `documents` → `chunks` | Links source documents to their semantic text chunks (process graph) |
+| `produced_by` | `ontology_registry` → `extraction_runs` | Links registered ontologies to the extraction run that created them (process graph) |
 | `related_to` | `ontology_classes` → `ontology_classes` | `skos:related` / `owl:ObjectProperty` general semantic relationships |
 | `merge_candidate` | `ontology_classes` → `ontology_classes` | Entity resolution suggestions (scored) |
 | `imports` | `ontology_registry` → `ontology_registry` | `owl:imports` — ontology-level dependency tracking |
@@ -254,10 +259,35 @@ Each ontology in the library gets a registry entry. All `ontology_classes` and `
 
 | Graph | Vertex Collections | Edge Collections | Purpose |
 |-------|-------------------|-------------------|---------|
-| `domain_ontology` | `ontology_classes`, `ontology_properties`, `ontology_constraints` | `subclass_of`, `equivalent_class`, `has_property`, `related_to` | Tier 1 base ontologies (all library ontologies combined) |
-| `ontology_{ontology_id}` | `ontology_classes`, `ontology_properties`, `ontology_constraints` | `subclass_of`, `equivalent_class`, `has_property`, `related_to` | Per-ontology named graph for isolation within the library |
+| `domain_ontology` | `ontology_classes`, `ontology_properties`, `ontology_constraints`, `documents` | `subclass_of`, `equivalent_class`, `has_property`, `related_to`, `extracted_from` | Tier 1 base ontologies with provenance links to source documents |
+| `aoe_process` | `documents`, `chunks`, `ontology_classes`, `ontology_properties`, `ontology_registry`, `extraction_runs` | `has_chunk`, `extracted_from`, `has_property`, `subclass_of`, `produced_by` | End-to-end pipeline graph showing the full data flow from document ingestion through extraction to the resulting ontology |
+| `ontology_{name_slug}` | `ontology_classes`, `ontology_properties`, `ontology_constraints` | `subclass_of`, `equivalent_class`, `has_property`, `related_to`, `extracted_from` | Per-ontology named graph for isolation within the library. Name is derived from the human-readable ontology name (e.g., "Financial Services Domain" → `ontology_financial_services_domain`). |
 | `local_ontology_{org_id}` | `ontology_classes`, `ontology_properties`, `ontology_constraints` | `subclass_of`, `equivalent_class`, `has_property`, `extends_domain`, `related_to` | Per-org Tier 2 extensions |
 | `staging_{run_id}` | `ontology_classes`, `ontology_properties`, `ontology_constraints` | All ontology edge types | Draft graphs pending curation |
+| `ontology_imports` | `ontology_registry` | `imports` | Ontology-level dependency graph showing `owl:imports` relationships between registered ontologies. Traversable to find upstream dependencies and downstream dependents. |
+
+##### Process Graph (`aoe_process`)
+
+The `aoe_process` graph provides a unified view of the entire extraction pipeline, enabling visual exploration in the ArangoDB Graph Visualizer of how documents flow through the system:
+
+```
+documents ──has_chunk──→ chunks
+    ↑
+    └──extracted_from── ontology_classes ──has_property──→ ontology_properties
+                            │
+                            └──subclass_of──→ ontology_classes
+                            
+ontology_registry ──produced_by──→ extraction_runs
+```
+
+**Additional Edge Collections (Process Graph):**
+
+| Edge Collection | From | To | Purpose |
+|----------------|------|-----|---------|
+| `has_chunk` | `documents` | `chunks` | Links source documents to their semantic chunks |
+| `produced_by` | `ontology_registry` | `extraction_runs` | Links registered ontologies to the extraction run that created them |
+
+These edge collections complement the existing ontology edges (`subclass_of`, `has_property`, `extracted_from`) to form a complete traversable graph of the extraction pipeline. This enables AQL queries like "given a class, which document was it extracted from and what chunks contributed to its definition?"
 
 ### 5.2 Ontology Library Architecture
 
@@ -270,8 +300,8 @@ ArangoRDF's PGT transformation stores OWL/RDFS/SKOS ontologies in ArangoDB using
 | Mechanism | How It Works |
 |-----------|-------------|
 | **`ontology_id` field** | Every `ontology_classes` and `ontology_properties` document carries an `ontology_id` linking to `ontology_registry`. All queries filter by this field. |
-| **Per-ontology named graph** | Each imported ontology gets its own ArangoDB named graph (`ontology_{id}`), enabling graph traversals scoped to a single ontology. |
-| **Combined domain graph** | The `domain_ontology` graph is a union view across all active library ontologies, used when Tier 2 extraction needs full domain context. |
+| **Per-ontology named graph** | Each ontology gets its own ArangoDB named graph with a human-readable slug name derived from the ontology's `name` field (e.g., `ontology_financial_services_domain`). This enables graph traversals scoped to a single ontology and provides clear identification in the ArangoDB UI. |
+| **Combined domain graph** | The `domain_ontology` graph is the single composite view across all active library ontologies, used when Tier 2 extraction needs full domain context. There is no separate "all ontologies" graph — `domain_ontology` serves this purpose. |
 | **IRI prefix tracking** | Each registry entry records its `iri_prefix` (e.g., `http://xmlns.com/foaf/0.1/`). Cross-ontology references are detectable by IRI prefix mismatch. |
 | **ArangoRDF `uri_map_collection_name`** | Used during import to enable incremental multi-file imports and track URI-to-collection mappings across ontologies. |
 
@@ -332,11 +362,12 @@ Every versioned vertex and edge carries two numeric fields:
 | Field | Type | Meaning |
 |-------|------|---------|
 | `created` | `float` (unix timestamp) | When this version became active |
-| `expired` | `float` (unix timestamp or sentinel) | When this version was superseded |
+| `expired` | `float` (unix timestamp) | When this version was superseded. `NEVER_EXPIRES = sys.maxsize` (9223372036854775807) for current/active entities. |
 
-Sentinel value for "current": `NEVER_EXPIRES = sys.maxsize` (9223372036854775807)
+Sentinel value for "current": `NEVER_EXPIRES = sys.maxsize` (9223372036854775807). All `created` and `expired` fields store Unix timestamps as integers/floats.
 
-- **Current** (active) entities: `expired == 9223372036854775807`
+- **Current** (active) entities: `expired == NEVER_EXPIRES` (9223372036854775807)
+- **UI display**: Timestamps should be rendered in human-readable format (e.g., "2026-03-28 14:30 UTC"). `NEVER_EXPIRES` should be displayed as "Current" or "Active" in the UI, never as the raw integer.
 - **Historical** entities: `expired` is a finite timestamp
 
 #### Versioned Entity Fields
@@ -346,7 +377,7 @@ Every `ontology_classes` and `ontology_properties` versioned document carries:
 | Field | Type | Purpose |
 |-------|------|---------|
 | `created` | float | Unix timestamp when this version became active |
-| `expired` | float | Unix timestamp when superseded (or `NEVER_EXPIRES` for current) |
+| `expired` | float | Unix timestamp when superseded (`NEVER_EXPIRES` for current) |
 | `version` | integer | Monotonically increasing version counter |
 | `created_by` | string | User or system that created this version |
 | `change_type` | enum | `initial` \| `edit` \| `promote` \| `merge` \| `deprecate` |
@@ -361,25 +392,37 @@ Every ontology edge (`subclass_of`, `has_property`, `extends_domain`, etc.) carr
 | Field | Type | Purpose |
 |-------|------|---------|
 | `created` | float | When this edge became active |
-| `expired` | float | When this edge was superseded (or `NEVER_EXPIRES` for current) |
+| `expired` | float | When this edge was superseded (`NEVER_EXPIRES` for current) |
 | `ttlExpireAt` | float \| null | TTL expiration for historical edges (null for current) |
 
 #### MDI-Prefixed Indexes (Temporal Range Optimization)
 
-Multi-dimensional indexes accelerate point-in-time queries on `[created, expired]` intervals:
+Multi-dimensional indexes accelerate point-in-time queries on `[created, expired]` intervals. The `prefixFields` provide an equality-match prefix (narrowing by `ontology_id` first), and the `fields` enable multi-dimensional range queries on the temporal interval:
 
 ```json
 {
   "type": "mdi-prefixed",
+  "prefixFields": ["ontology_id"],
   "fields": ["created", "expired"],
   "fieldValueTypes": "double",
-  "prefixFields": ["created"],
   "sparse": false,
   "name": "idx_ontology_classes_mdi_temporal"
 }
 ```
 
-Deployed on: all versioned vertex collections (`ontology_classes`, `ontology_properties`, `ontology_constraints`) **and** all ontology edge collections (`subclass_of`, `has_property`, `extends_domain`, `equivalent_class`, `related_to`).
+This enables efficient point-in-time snapshot queries of the form:
+
+```aql
+FOR cls IN ontology_classes
+  FILTER cls.ontology_id == @oid
+    AND cls.created <= @t
+    AND (cls.expired == 9223372036854775807 OR cls.expired > @t)
+  RETURN cls
+```
+
+The index first narrows by `ontology_id` (equality prefix), then efficiently intersects the 2D `[created, expired]` range — avoiding full collection scans even with millions of historical versions.
+
+Deployed on: all versioned vertex collections (`ontology_classes`, `ontology_properties`, `ontology_constraints`) **and** all ontology edge collections (`subclass_of`, `has_property`, `extends_domain`, `equivalent_class`, `related_to`, `merge_candidate`, `imports`).
 
 #### TTL Aging for Historical Versions
 
@@ -465,6 +508,10 @@ RETURN { before, after }
 | FR-1.4 | Chunk metadata preserves provenance | Each chunk links back to source document, page number, section heading |
 | FR-1.5 | Duplicate document detection | SHA-256 hash check prevents re-ingestion of identical files |
 | FR-1.6 | Upload progress and status tracking | UI shows upload → parsing → chunking → embedding → ready pipeline stages |
+| FR-1.7 | Multiple documents per ontology | A single ontology can be constructed from multiple source documents. The extraction run accepts a list of `doc_ids`, and all extracted concepts are tagged with the same `ontology_id`. Subsequent documents can be added to an existing ontology via "Add Document to Ontology" — triggering incremental extraction that merges new concepts into the existing ontology rather than creating a new one. |
+| FR-1.8 | Add document to existing ontology | UI provides an "Add Document" action on an existing ontology in the library. This triggers extraction with the existing ontology passed as context (like Tier 2), classifying new concepts as EXISTING (already present), EXTENSION (refines existing), or NEW (novel). Results go through curation before merging into the target ontology. |
+| FR-1.9 | Full CRUD on documents | Documents support: create (upload), read (metadata + chunks), update (re-upload with versioning — old version soft-deleted, new version linked), and hard-delete. Hard-delete of a document removes its chunks and marks `extracted_from` provenance edges as expired but does **not** automatically delete the ontology classes — they may have been curated, promoted, or referenced by other ontologies. A warning is displayed listing affected ontologies. |
+| FR-1.10 | Document–ontology relationship is many-to-many | A document can contribute to multiple ontologies (extracted separately into each). An ontology can be built from multiple documents. The `extracted_from` edge tracks which specific document produced which class, maintaining provenance even in multi-document ontologies. |
 
 ### 6.2 Domain Ontology Extraction (Tier 1)
 
@@ -475,12 +522,18 @@ RETURN { before, after }
 | ID | Requirement | Acceptance Criteria |
 |----|-------------|-------------------|
 | FR-2.1 | LLM output enforced via strict JSON schema mapping to OWL constructs | Output validates against Pydantic models representing `owl:Class`, `owl:ObjectProperty`, `owl:DatatypeProperty`, `rdfs:subClassOf`, and optionally `skos:Concept` |
-| FR-2.2 | Extraction schema supports OWL 2 / RDFS / SKOS constructs | `owl:Class`, `rdfs:subClassOf`, `owl:equivalentClass`, `owl:ObjectProperty`, `owl:DatatypeProperty`, cardinality restrictions, and optionally `skos:Concept`, `skos:broader`, `skos:prefLabel` for taxonomy-style ontologies |
+| FR-2.2 | Extraction schema supports OWL 2 / RDFS / SKOS constructs and constraints | `owl:Class`, `rdfs:subClassOf`, `owl:equivalentClass`, `owl:ObjectProperty`, `owl:DatatypeProperty`, OWL restrictions (`owl:Restriction`, cardinality, `owl:allValuesFrom`, `owl:someValuesFrom`), and optionally `skos:Concept`, `skos:broader`, `skos:prefLabel` for taxonomy-style ontologies. SHACL shapes (`sh:NodeShape`, `sh:PropertyShape`) are also extractable when the source document describes validation rules or data constraints (see §6.14). |
 | FR-2.3 | Multi-pass extraction with self-consistency check | LLM runs N passes; only concepts appearing in ≥ M passes are included (configurable) |
 | FR-2.4 | RAG-augmented extraction | LLM prompt includes relevant chunks retrieved via vector similarity for context |
 | FR-2.5 | Import via ArangoRDF PGT transformation | Generated OWL/RDFS → ArangoDB via `ArangoRDF.rdf_to_arangodb_by_pgt()`, preserving OWL class hierarchy, property domains/ranges, and constraints |
 | FR-2.6 | Extraction results land in staging graph | Never written directly to production; always to `staging_{run_id}` first |
 | FR-2.7 | Each extracted ontology registered in library | New `ontology_registry` entry created with source metadata; all classes/properties tagged with `ontology_id` |
+| FR-2.8 | Extraction results materialized into graph collections | After successful extraction, classes are written to `ontology_classes`, properties to `ontology_properties`, and edges (`has_property`, `subclass_of`, `extracted_from`) are created to form a traversable graph. The `aoe_process` graph edges (`has_chunk`, `produced_by`) are also populated to maintain the full pipeline lineage. |
+| FR-2.9 | Process graph provides end-to-end lineage | The `aoe_process` named graph connects `documents` → `chunks` (via `has_chunk`), `ontology_classes` → `documents` (via `extracted_from`), `ontology_classes` → `ontology_properties` (via `has_property`), and `ontology_registry` → `extraction_runs` (via `produced_by`), enabling full provenance tracing from any ontology concept back to its source document and chunks. |
+| FR-2.10 | Per-ontology graph auto-created | After extraction, a per-ontology named graph (`ontology_{name_slug}`) is automatically created with a human-readable name derived from the ontology's registry name (e.g., "Supply Chain Domain" → `ontology_supply_chain_domain`). |
+| FR-2.11 | Visualizer assets auto-installed | After per-ontology graph creation, ArangoDB Visualizer customizations (theme, canvas actions, saved queries, viewpoint links) are deployed for the new graph so it is immediately explorable in the ArangoDB UI. |
+| FR-2.12 | Incremental extraction into existing ontology | When a new document is added to an existing ontology (FR-1.8), the extraction pipeline runs with the existing ontology classes injected as context. The Consistency Checker compares new extractions against existing classes to avoid duplication. New classes are tagged with the same `ontology_id` and go through curation before being merged. |
+| FR-2.13 | Multi-document extraction run | The extraction API accepts `doc_ids: list[str]` (multiple documents) and an optional `target_ontology_id`. Chunks from all documents are batched and processed together. All extracted concepts share the target ontology_id. |
 
 **ArangoRDF Import Detail:**
 
@@ -510,7 +563,7 @@ ArangoRDF merges all imports into shared collections distinguished by IRI namesp
 1. Import ontology via PGT with a unique `name` per ontology
 2. After import, query for all documents whose `_uri` matches the ontology's IRI prefix
 3. Set `ontology_id` on each document, linking to the `ontology_registry` entry
-4. Create a per-ontology named graph (`ontology_{id}`) scoping only this ontology's vertices and edges
+4. Create a per-ontology named graph (`ontology_{name_slug}`, e.g., `ontology_financial_services_domain`) scoping only this ontology's vertices and edges
 5. Add the ontology to the combined `domain_ontology` graph for cross-ontology queries
 
 ### 6.3 Localized Ontology Extension (Tier 2)
@@ -574,6 +627,10 @@ All graph visualization and UI libraries used in the curation dashboard **must b
 | FR-4.7 | Provenance display | Clicking a node shows which document chunk(s) it was extracted from, with highlighted source text |
 | FR-4.8 | Confidence scores | Each extracted entity displays LLM confidence; low-confidence entities visually highlighted |
 | FR-4.9 | All visualization libraries are React-compatible | No vanilla JS graph libraries that require manual DOM manipulation; all rendering through React component tree |
+| FR-4.10 | Standalone ontology graph viewer/editor (not tied to extraction run) | The curation dashboard is accessible in two modes: (1) **Staging mode** (`/curation/[runId]`) for reviewing extraction results, and (2) **Ontology mode** (`/ontology/[ontologyId]/edit`) for directly viewing and editing any approved ontology in the library. Ontology mode loads all current classes, properties, and edges for the ontology, supports the same graph visualization, node/edge actions, VCR timeline, and diff view. Enables ongoing ontology management beyond initial extraction. |
+| FR-4.11 | Direct class/property creation in the editor | In ontology mode, users can manually add new classes, properties, and edges directly in the graph editor without needing an extraction run. New entities are created with `source_type: "manual"` and go through the same temporal versioning. Useful for filling gaps LLM extraction missed. |
+| FR-4.12 | Drag-and-drop reparenting | Users can drag a class node onto another class to create or change a `subclass_of` relationship. The old edge is expired and a new edge created (temporal versioning). Visual feedback shows valid drop targets. |
+| FR-4.13 | Library-to-editor navigation | Clicking "Edit" on an ontology card in the library page opens the ontology graph editor. Clicking a class in the class hierarchy opens the editor scrolled/zoomed to that class. |
 
 ### 6.5 Temporal Time Travel & VCR Timeline (Ontology History)
 
@@ -716,6 +773,11 @@ Each ontology named graph gets a programmatically created viewpoint (`_viewpoint
 | FR-6.7 | Themes pruned to actual graph collections | `prune_theme()` removes config for collections not present in the specific ontology graph |
 | FR-6.8 | Temporal canvas actions and queries installed | Version history, point-in-time snapshot, and recently changed queries available in Graph Visualizer |
 | FR-6.9 | Canvas actions filter by current edges | Default traversal actions include `FILTER e.expired == 9223372036854775807` to show only current graph state |
+| FR-6.10 | Temporal snapshot saved query per graph | Each ontology graph has an "Ontology at Point in Time" saved query with a `@snapshot_time` bind variable (defaults to `0` = current time). Users can set a past Unix timestamp to view the ontology state at any historical moment. The query returns classes, properties, and edges alive at `@snapshot_time` using `FILTER created <= t AND (expired == NEVER_EXPIRES OR expired > t)`. Timestamps displayed in human-readable ISO 8601 format alongside raw Unix values. |
+| FR-6.11 | Changes-since saved query per graph | Each ontology graph has an "Ontology Changes Since" saved query with a `@since_time` bind variable showing all classes and properties created or expired since that time — useful for reviewing diffs and audit trails. |
+| FR-6.12 | ArangoDB Visualizer URL convention | Frontend links to the ArangoDB Graph Visualizer use the **Platform UI** pattern `https://{host}/ui/{database}/graphs/{graph_name}` with a fallback link to the **Database UI** pattern `https://{host}/_db/{database}/_admin/aardvark/index.html#graph/{graph_name}` for environments where the Platform UI is not installed. Both links rendered side-by-side. |
+
+**Temporal Display Convention:** All `created` and `expired` fields store Unix timestamps (integers/floats) in the database. The UI must display these in human-readable format (e.g., ISO 8601: "2026-03-28T14:30:00Z"). The `NEVER_EXPIRES` sentinel should be displayed as "Current" or "Active", never as the raw integer. Saved AQL queries include `DATE_ISO8601(timestamp * 1000)` alongside raw values for readability. **Future enhancement:** A global "time of interest" setting so all ontology queries are automatically time-scoped.
 
 ### 6.7 Entity Resolution & Deduplication
 
@@ -820,12 +882,20 @@ The library's MCP server (`arango-er-mcp`) runs as a separate process alongside 
 |----|-------------|-------------------|
 | FR-8.1 | Import OWL/TTL/RDF/SKOS files as Domain Ontologies via ArangoRDF | Standard ontologies (FOAF, Schema.org, custom OWL, SKOS taxonomies) importable via `rdf_to_arangodb_by_pgt()` with automatic `ontology_registry` entry creation and `ontology_id` tagging |
 | FR-8.2 | Import multiple ontologies into the same database | Each import creates a separate `ontology_registry` entry and per-ontology named graph; shared collections use `ontology_id` for isolation |
-| FR-8.3 | Ontology Library browser in UI | List all registered ontologies with stats (class count, property count, status); drill into any ontology's class hierarchy |
+| FR-8.3 | Ontology Library browser in UI | List all registered ontologies with stats (class count, property count, status); drill into any ontology's class hierarchy. Clicking a class shows inline detail panel with description, URI, confidence, RDF type, all properties (with range types), and a link to the ArangoDB Graph Visualizer for the per-ontology graph. |
 | FR-8.4 | Ontology composition for organizations | Organizations select which domain ontologies from the library apply to them; Tier 2 extraction uses only selected base ontologies as context |
 | FR-8.5 | Export ontology to OWL/TTL/SKOS | Any approved ontology graph exportable as valid OWL 2 Turtle (or SKOS if taxonomy-style) via rdflib serialization |
 | FR-8.6 | Export to JSON-LD | For web/API consumption |
 | FR-8.7 | Export to CSV/Excel | For non-technical stakeholders |
-| FR-8.8 | Cross-ontology dependency tracking | When ontology A references classes from ontology B (via `owl:imports` or cross-namespace URIs), the dependency is recorded in the registry |
+| FR-8.8 | Cross-ontology dependency tracking via `owl:imports` | When ontology A references classes from ontology B (via `owl:imports` or cross-namespace URIs), the dependency is recorded as an `imports` edge between their `ontology_registry` entries. The `ontology_registry` document stores an `owl_imports` list of dependent ontology URIs. |
+| FR-8.9 | Ontology imports graph visualization | The `imports` edges between `ontology_registry` entries form a traversable dependency graph. This graph is queryable via AQL (`FOR v, e IN 1..N OUTBOUND reg imports ...`) and visualizable in the ArangoDB Visualizer and the frontend Ontology Library as a dependency tree. Users can see which ontologies depend on which others. |
+| FR-8.10 | Upper/domain ontology selection in UI | When creating or extending an ontology, the UI provides a searchable selector showing all ontologies in the library. Users can select one or more upper/domain ontologies to serve as the base. Selected ontologies are: (a) passed as context to the extraction LLM, (b) recorded as `imports` edges, and (c) used for cross-tier entity resolution. |
+| FR-8.11 | Import existing standard ontologies (FIBO, Schema.org, FOAF, etc.) | The import endpoint accepts any valid OWL/TTL/RDF/SKOS file, including large industry-standard ontologies like FIBO (Financial Industry Business Ontology), Schema.org, Dublin Core, PROV-O, etc. The ArangoRDF PGT import handles arbitrarily large ontologies. A built-in catalog of common ontology URLs (FIBO, Schema.org, FOAF, Dublin Core) is provided for one-click import from the UI. |
+| FR-8.12 | Full CRUD on ontologies | Ontologies support: **Create** (via import or extraction), **Read** (library detail, class hierarchy, graph exploration), **Update** (add documents, curate classes, change metadata, re-extract), and **Delete** (deprecation with cascade analysis). |
+| FR-8.13 | Ontology deletion with cascade analysis | Deleting (deprecating) an ontology requires analysis: if other ontologies import it (via `imports` edges), the system warns and requires confirmation. Deleting an ontology expires all its classes, properties, and edges (temporal deletion, not hard delete), removes the per-ontology named graph, and marks the registry entry as `deprecated`. The `domain_ontology` composite graph automatically excludes deprecated entities via `expired` filter. |
+| FR-8.14 | Document deletion does not cascade to ontology | Deleting a document soft-deletes the document and its chunks. It does **not** delete ontology classes that were extracted from it — those classes may have been curated, approved, or enriched from other documents. The `extracted_from` provenance edges are expired. A warning lists which ontologies were sourced from the deleted document. |
+| FR-8.15 | Ontology Library search | The library supports full-text search across ontology names, descriptions, class labels, and property labels via ArangoSearch. Results are ranked by relevance. Search works across all ontologies in the library regardless of tier or organization. |
+| FR-8.16 | Ontology Library taxonomy organization | Ontologies in the library are organized hierarchically using the `imports` dependency graph as the primary structure. Domain ontologies appear as top-level entries; local extensions appear nested under their parent domain ontologies. Users can also filter by tier (domain/local), status (active/deprecated), source type (import/extraction/schema), and tags. |
 
 ### 6.9 Schema Extraction from ArangoDB Databases
 
@@ -1122,6 +1192,120 @@ The agent DAG is a small, fixed-topology graph (5–6 nodes) — unlike the onto
 | Edge renderer | Conditional edges styled differently (dashed for conditional, solid for always) |
 | Interactivity | Click node → detail panel; hover → tooltip with summary |
 
+### 6.13 Ontology Quality Metrics
+
+**Description:** The system computes, tracks, and displays ontology quality metrics to measure extraction effectiveness, curation efficiency, and structural integrity. These metrics directly correspond to the success criteria defined in §3.2.
+
+**Metric Categories:**
+
+| Category | Metrics | Source Data |
+|----------|---------|-------------|
+| **Extraction Quality** | Precision (acceptance rate), recall (vs gold standard), avg confidence | `curation_decisions`, `ontology_classes`, reference ontologies |
+| **Curation Efficiency** | Throughput (concepts/hour), time-to-first-ontology | `curation_decisions` timestamps, `documents.uploaded_at`, `extraction_runs.completed_at` |
+| **Deduplication Quality** | Merge suggestion accuracy (accepted vs rejected) | `curation_decisions` on merge candidates |
+| **Structural Quality** | Completeness (classes with properties), coherence (cycle-free hierarchy), coverage (concepts per source chunk), orphan count | `ontology_classes`, `ontology_properties`, `has_property`, `subclass_of` edges |
+
+**Requirements:**
+
+| ID | Requirement | Acceptance Criteria |
+|----|-------------|-------------------|
+| FR-13.1 | Extraction precision computed automatically | System aggregates curation decisions: `acceptance_rate = accepted / (accepted + rejected + edited)` per ontology and per extraction run. Displayed in library detail and pipeline run metrics. |
+| FR-13.2 | Curation throughput tracked per session | Each curation decision records `decided_at` timestamp. System computes `concepts_per_hour` per curator session. Live counter displayed in curation dashboard header. |
+| FR-13.3 | Deduplication accuracy computed from ER decisions | System tracks accepted/rejected merge suggestions. `dedup_accuracy = accepted_merges / total_merge_suggestions`. Displayed in ER dashboard and quality summary. |
+| FR-13.4 | Time-to-first-ontology measured | Computed as elapsed time from `documents.uploaded_at` to `extraction_runs.completed_at`. Per-run value displayed in pipeline metrics; aggregate average in quality dashboard. |
+| FR-13.5 | Gold-standard recall comparison | User can upload a reference OWL/TTL file; system computes `recall = |extracted ∩ reference| / |reference|` using fuzzy label matching. Results displayed alongside the ontology detail. |
+| FR-13.6 | Structural quality analysis per ontology | System computes: (a) **Completeness** — % of classes with ≥1 property, % of properties with defined domain+range; (b) **Coherence** — cycle detection in `subclass_of` hierarchy; (c) **Orphan count** — classes with no parent and not designated as root; (d) **Avg confidence** — mean confidence across all current classes. |
+| FR-13.7 | Quality dashboard page | Dedicated `/quality` route showing aggregate metrics across all ontologies with traffic-light indicators against PRD targets (green ≥ target, yellow within 10%, red below). Trend sparklines from quality history. |
+| FR-13.8 | Quality history over time | Quality metrics stored with timestamps so trends can be tracked. Leverages temporal snapshot infrastructure for historical quality snapshots. |
+| FR-13.9 | Low-confidence visual highlighting in curation graph | Nodes in the curation graph canvas are color-coded by confidence: red border < 0.5, yellow 0.5–0.7, green > 0.7. Enables curators to focus on uncertain entities first. |
+| FR-13.10 | Quality-oriented ArangoDB Visualizer queries | Saved queries for: "Low Confidence Classes" (below threshold), "Orphan Classes" (no hierarchy edges), "Classes Without Properties" (incomplete definitions). |
+
+**API Endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/quality/{ontology_id}` | Returns all computed quality scores for an ontology |
+| `GET` | `/api/v1/quality/{ontology_id}/history` | Quality metrics over time (leverages temporal snapshots) |
+| `GET` | `/api/v1/quality/summary` | Aggregate quality scores across all ontologies |
+| `POST` | `/api/v1/quality/recall` | Upload a reference OWL/TTL file to compute recall against extracted ontology |
+
+### 6.14 Ontology Constraints (OWL Restrictions & SHACL Shapes)
+
+**Description:** The system supports two complementary constraint frameworks for expressing validation rules and structural restrictions on ontology entities:
+
+1. **OWL Restrictions** — Embedded within the ontology itself as `owl:Restriction` individuals, expressing class-level constraints like cardinality (`owl:minCardinality`, `owl:maxCardinality`, `owl:cardinality`), value restrictions (`owl:allValuesFrom`, `owl:someValuesFrom`, `owl:hasValue`), and qualified cardinality restrictions (`owl:minQualifiedCardinality`).
+
+2. **SHACL Shapes** — External validation shapes (`sh:NodeShape`, `sh:PropertyShape`) that define data quality rules, value patterns, and structural constraints independently of the ontology itself. SHACL shapes can validate data against the ontology.
+
+**Data Model:**
+
+The existing `ontology_constraints` collection (§5.1) stores both OWL restrictions and SHACL shapes:
+
+| Constraint Source | Stored As | Key Fields |
+|-------------------|-----------|------------|
+| OWL Restriction | `constraint_type: "owl:Restriction"` | `property_id`, `on_class`, `restriction_type` (allValuesFrom\|someValuesFrom\|minCardinality\|maxCardinality\|hasValue), `restriction_value`, `ontology_id` |
+| SHACL NodeShape | `constraint_type: "sh:NodeShape"` | `target_class`, `shape_uri`, `severity` (sh:Violation\|sh:Warning\|sh:Info), `message`, `ontology_id` |
+| SHACL PropertyShape | `constraint_type: "sh:PropertyShape"` | `path` (property URI), `datatype`, `min_count`, `max_count`, `pattern` (regex), `in` (allowed values), `node` (nested shape), `ontology_id` |
+
+**Requirements:**
+
+| ID | Requirement | Acceptance Criteria |
+|----|-------------|-------------------|
+| FR-14.1 | Extract OWL restrictions from source documents | LLM extraction identifies cardinality constraints, value restrictions, and type restrictions expressed in source text (e.g., "each Account must have exactly one holder") and maps them to `owl:Restriction` entries in `ontology_constraints` |
+| FR-14.2 | Import OWL restrictions from OWL files | When importing an OWL file via ArangoRDF, `owl:Restriction` blank nodes are parsed and stored as `ontology_constraints` documents linked to their property and class |
+| FR-14.3 | Import SHACL shapes from Turtle/TTL files | SHACL shapes graphs (separate from the ontology) can be imported and stored as `ontology_constraints`. Each shape links to its target class via `target_class` |
+| FR-14.4 | Display constraints in curation UI | When viewing a class in the curation dashboard or library detail, associated constraints (OWL and SHACL) are displayed alongside properties — showing cardinality, allowed values, patterns, and severity levels |
+| FR-14.5 | Export constraints in OWL and SHACL formats | OWL export includes `owl:Restriction` constructs inline. SHACL shapes can be exported as a separate shapes graph in Turtle format. |
+| FR-14.6 | Constraints are temporally versioned | Like classes and properties, constraints carry `created`/`expired` timestamps and participate in temporal snapshots and time-travel queries |
+| FR-14.7 | SHACL validation execution (future) | The system can validate instance data against SHACL shapes, reporting violations. *(Deferred — requires integration with a SHACL validator like pySHACL or ArangoDB's native validation)* |
+
+**Relationship to existing data model:**
+
+The `ontology_constraints` collection already exists in §5.1 with fields for `owl:Restriction` types. This section extends it to also cover SHACL shapes and defines the full lifecycle (extraction, import, display, export, temporal versioning).
+
+### 6.15 Ontology Imports & Dependency Management
+
+**Description:** Ontologies rarely exist in isolation. Real-world ontologies build on each other via `owl:imports` declarations (e.g., a Financial Services ontology imports Dublin Core for metadata properties and FIBO for financial concepts). The system must represent, track, and visualize these inter-ontology dependencies.
+
+**Import Dependency Model:**
+
+```
+            ┌──────────────────┐
+            │  FIBO Foundation  │  (Tier 1 — imported standard)
+            └────────┬─────────┘
+                     │ imports
+        ┌────────────┼────────────┐
+        ↓            ↓            ↓
+┌──────────────┐ ┌──────────┐ ┌──────────────┐
+│ FIBO Business │ │ Dublin   │ │ Schema.org   │  (Tier 1 — imported standards)
+│ Entities     │ │ Core     │ │              │
+└──────┬───────┘ └────┬─────┘ └──────┬───────┘
+       │              │              │
+       └──────┬───────┘              │
+              ↓                      ↓
+   ┌────────────────────┐    ┌──────────────┐
+   │ Financial Services │    │ Supply Chain │  (Tier 1 — extracted from docs)
+   │ Domain             │    │ Domain       │
+   └────────┬───────────┘    └──────────────┘
+            │ imports
+            ↓
+   ┌────────────────────┐
+   │ Acme Corp Banking  │  (Tier 2 — org-specific extension)
+   │ Extension          │
+   └────────────────────┘
+```
+
+**Requirements:**
+
+| ID | Requirement | Acceptance Criteria |
+|----|-------------|-------------------|
+| FR-15.1 | `owl:imports` recorded as `imports` edges | When ontology A declares `owl:imports` of ontology B, an `imports` edge is created from A's `ontology_registry` entry to B's entry. If B is not in the library, the system warns and optionally offers to import it. |
+| FR-15.2 | Import dependency graph visualizable | A dedicated view in the library page shows the imports graph — a DAG of ontology dependencies. Users can click any node to drill into that ontology. The same graph is available in the ArangoDB Visualizer. |
+| FR-15.3 | Upper ontology selection in extraction UI | The upload/extraction UI provides a searchable "Base Ontologies" selector. Selected ontologies are: (a) injected as LLM context during extraction, (b) used for cross-tier entity resolution, (c) recorded as `imports` dependencies on the resulting ontology. |
+| FR-15.4 | Cascade warnings on ontology deletion | When deprecating an ontology, the system traverses the `imports` graph to find all downstream dependents. A confirmation dialog lists them: "Ontology X is imported by Y, Z. Deprecating X will affect these ontologies." |
+| FR-15.5 | Import resolution during OWL file import | When importing an OWL file that contains `owl:imports` declarations, the system checks if each imported ontology exists in the library. If not, it offers to: (a) auto-import from URL if the import IRI is resolvable, (b) skip and warn, or (c) block import until dependencies are satisfied. |
+| FR-15.6 | Standard ontology catalog | The system provides a built-in catalog of commonly used upper ontologies with one-click import: FIBO (modular — user selects which modules), Schema.org, Dublin Core (DC Terms), FOAF, PROV-O, SKOS Core, OWL-Time, GeoSPARQL. Catalog entries include description, module count, and approximate class count. |
+
 ---
 
 ## 7. API Specification (Backend)
@@ -1134,19 +1318,29 @@ The agent DAG is a small, fixed-topology graph (5–6 nodes) — unlike the onto
 | `GET` | `/api/v1/documents/{doc_id}` | Get document metadata and processing status |
 | `GET` | `/api/v1/documents/{doc_id}/chunks` | List chunks with optional embedding similarity search |
 | `GET` | `/api/v1/documents` | List all documents (paginated, filterable by org/status) |
-| `DELETE` | `/api/v1/documents/{doc_id}` | Soft-delete document and associated chunks |
+| `DELETE` | `/api/v1/documents/{doc_id}` | Soft-delete document and associated chunks; returns list of affected ontologies |
+| `PUT` | `/api/v1/documents/{doc_id}` | Re-upload/update a document (old version soft-deleted, new version linked) |
+| `GET` | `/api/v1/documents/{doc_id}/ontologies` | List ontologies that were extracted from this document |
 
 ### 7.2 Extraction Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/extraction/run` | Trigger extraction on a document or set of chunks |
-| `GET` | `/api/v1/extraction/runs` | List all extraction runs (paginated, filterable by status/org/date) |
+| `POST` | `/api/v1/extraction/run` | Trigger extraction; accepts `document_id` or `doc_ids[]` and optional `target_ontology_id` for incremental extraction into an existing ontology |
+| `GET` | `/api/v1/extraction/runs` | List all extraction runs (paginated, filterable by status/org/date). Each entry includes: `document_name`, `chunk_count`, `classes_extracted`, `properties_extracted`, `edge_count`, `duration_ms`, `model`, `error_count`. Resolved by joining against the `documents` collection and `stats` on the run document. |
 | `GET` | `/api/v1/extraction/runs/{run_id}` | Get extraction run status, current agent step, and summary stats |
 | `GET` | `/api/v1/extraction/runs/{run_id}/steps` | Get per-agent-step detail: inputs, outputs, token usage, errors, duration |
 | `GET` | `/api/v1/extraction/runs/{run_id}/results` | Get extracted entities from a run |
 | `POST` | `/api/v1/extraction/runs/{run_id}/retry` | Retry a failed extraction run |
+| `DELETE` | `/api/v1/extraction/runs/{run_id}` | Delete an extraction run and its associated `results_*` document. Does **not** delete the ontology or its classes — those are managed via the ontology lifecycle. Returns `{ deleted: true, run_id }`. |
 | `GET` | `/api/v1/extraction/runs/{run_id}/cost` | Get LLM cost breakdown: tokens by model, estimated cost |
+
+### 7.2.1 System Administration Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/admin/reset` | **Development/demo only.** Purges all extracted data: truncates `ontology_classes`, `ontology_properties`, `ontology_constraints`, all edge collections, `extraction_runs`, `ontology_registry`, `curation_decisions`. Preserves `documents` and `chunks` so re-extraction can be triggered without re-upload. Requires `ALLOW_SYSTEM_RESET=true` in environment. Returns `{ reset: true, collections_truncated: [...] }`. |
+| `POST` | `/api/v1/admin/reset/full` | **Development/demo only.** Full purge including documents and chunks. Requires `ALLOW_SYSTEM_RESET=true`. |
 
 ### 7.3 Ontology Endpoints
 
@@ -1155,13 +1349,27 @@ The agent DAG is a small, fixed-topology graph (5–6 nodes) — unlike the onto
 | `GET` | `/api/v1/ontology/domain` | Get full domain ontology graph (paginated) |
 | `GET` | `/api/v1/ontology/domain/classes` | List domain classes with filters |
 | `GET` | `/api/v1/ontology/local/{org_id}` | Get organization's local ontology |
-| `GET` | `/api/v1/ontology/staging/{run_id}` | Get staging graph for curation |
+| `GET` | `/api/v1/ontology/staging/{run_id}` | Get staging graph for curation — returns `{ run_id, ontology_id, classes[], properties[], edges[] }` by resolving the ontology from the extraction run |
 | `POST` | `/api/v1/ontology/staging/{run_id}/promote` | Promote approved staging entities to production |
 | `GET` | `/api/v1/ontology/export` | Export ontology in OWL/TTL/JSON-LD format |
 | `POST` | `/api/v1/ontology/import` | Import external ontology file (OWL/TTL/RDF) via ArangoRDF |
 | `GET` | `/api/v1/ontology/library` | List all ontologies in the registry |
 | `GET` | `/api/v1/ontology/library/{ontology_id}` | Get ontology detail (classes, properties, stats) |
-| `DELETE` | `/api/v1/ontology/library/{ontology_id}` | Deprecate an ontology in the library |
+| `PUT` | `/api/v1/ontology/library/{ontology_id}` | Update ontology metadata (name, description, tags, status) |
+| `DELETE` | `/api/v1/ontology/library/{ontology_id}` | Deprecate an ontology — returns cascade analysis (dependent ontologies, affected orgs) |
+| `GET` | `/api/v1/ontology/library/{ontology_id}/imports` | List ontologies this ontology imports (outbound `imports` edges) |
+| `GET` | `/api/v1/ontology/library/{ontology_id}/imported-by` | List ontologies that import this one (inbound `imports` edges) |
+| `POST` | `/api/v1/ontology/library/{ontology_id}/add-document` | Add a document to an existing ontology — triggers incremental extraction |
+| `GET` | `/api/v1/ontology/library/{ontology_id}/documents` | List all source documents for this ontology (via `extracted_from` edges) |
+| `GET` | `/api/v1/ontology/library/{ontology_id}/constraints` | List all constraints (OWL restrictions + SHACL shapes) for this ontology |
+| `GET` | `/api/v1/ontology/imports-graph` | Get the full ontology imports dependency graph (all `imports` edges) |
+| `GET` | `/api/v1/ontology/catalog` | List available standard ontologies for one-click import (FIBO, Schema.org, etc.) |
+| `POST` | `/api/v1/ontology/catalog/{catalog_id}/import` | Import a standard ontology from the catalog |
+| `GET` | `/api/v1/ontology/search` | Full-text search across ontology names, descriptions, class labels, property labels |
+| `GET` | `/api/v1/ontology/graphs` | List all named graphs (system graphs + per-ontology graphs) |
+| `GET` | `/api/v1/ontology/{ontology_id}/classes` | List all current classes for a specific ontology |
+| `GET` | `/api/v1/ontology/{ontology_id}/properties` | List properties, with optional `?keys=` CSV filter |
+| `GET` | `/api/v1/ontology/{ontology_id}/edges` | List all current edges (subclass_of, has_property, related_to, etc.) with `edge_type` field |
 | `GET` | `/api/v1/ontology/{ontology_id}/snapshot` | Point-in-time snapshot — query param `at={unix_timestamp}` returns ontology state at that moment |
 | `GET` | `/api/v1/ontology/{ontology_id}/timeline` | List all discrete change events (version creations) for timeline tick marks |
 | `GET` | `/api/v1/ontology/{ontology_id}/diff` | Temporal diff — query params `t1={ts}&t2={ts}` returns added/removed/changed entities |
@@ -1211,6 +1419,15 @@ The agent DAG is a small, fixed-topology graph (5–6 nodes) — unlike the onto
 | `GET` | `/health` | Health check |
 | `GET` | `/ready` | Readiness probe (DB connected, models loaded) |
 | `GET` | `/api/v1/stats` | System statistics (documents, classes, properties, runs) |
+
+### 7.7a Quality Metrics Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/quality/{ontology_id}` | All computed quality scores for an ontology (acceptance rate, structural quality, avg confidence, etc.) |
+| `GET` | `/api/v1/quality/{ontology_id}/history` | Quality metrics over time |
+| `GET` | `/api/v1/quality/summary` | Aggregate quality scores across all ontologies |
+| `POST` | `/api/v1/quality/recall` | Upload reference OWL/TTL file; compute recall against extracted ontology |
 
 ### 7.8 API Conventions
 
@@ -1282,6 +1499,20 @@ The architecture supports WebSocket connections for real-time updates on long-ru
 | `ws://host/ws/er/{run_id}` | `blocking_complete`, `scoring_progress`, `clustering_complete` | ER pipeline progress |
 
 Clients that don't support WebSocket can poll the corresponding `GET` status endpoints instead.
+
+### 7.8 Frontend Pages (Next.js Routes)
+
+| Route | Page | Description |
+|-------|------|-------------|
+| `/` | Landing / Dashboard | Backend health status, ontology count, quick links to Upload/Library/Pipeline |
+| `/upload` | Document Upload | Drag-and-drop file upload (PDF, DOCX, Markdown), recent documents list with status and chunk counts. Option to target an existing ontology or create new. Searchable "Base Ontologies" selector to choose upper/domain ontologies as extraction context. Import from standard ontology catalog (FIBO, Schema.org, etc.). |
+| `/library` | Ontology Library | Browse registered ontologies with full-text search; filter by tier, status, source type; view imports dependency graph; click an ontology card to view its class hierarchy with inline class detail (properties, constraints, description, confidence, link to ArangoDB Visualizer). "Add Document" action to extend ontology with new source material. |
+| `/pipeline` | Pipeline Monitor | List extraction runs, view agent DAG, metrics, errors, timeline; "Curate" button links to curation page |
+| `/curation/[runId]` | Visual Curation (Staging Mode) | Interactive graph canvas showing staging graph for an extraction run, with node/edge selection, approve/reject actions, batch operations, VCR timeline, diff view, and promote panel |
+| `/ontology/[ontologyId]/edit` | Ontology Graph Editor (Ontology Mode) | Full graph editor for an approved ontology — same graph canvas, VCR timeline, and node/edge actions as curation, plus direct class/property creation, drag-and-drop reparenting, and ongoing editing without requiring an extraction run. Accessible from the library page. |
+| `/entity-resolution` | Entity Resolution | Run and review ER pipelines, view merge candidates and clusters |
+| `/login` | Login | Authentication page; renders login form (or redirects to OIDC provider). Bypassed when `NEXT_PUBLIC_DEV_MODE=true`. |
+| `/quality` | Quality Dashboard | Aggregate ontology quality metrics (extraction precision, curation throughput, structural quality) with traffic-light indicators and trend sparklines (Section 6.13). |
 
 ---
 
@@ -1501,7 +1732,7 @@ Long-running operations (extraction, entity resolution) and curation workflows r
 |------|-------------|-----------------|
 | Pydantic models | Serialization, validation, edge cases | No mocks needed — pure data |
 | Extraction prompts & parsers | LLM output parsing, JSON schema validation, error recovery | Mock LLM responses with fixture JSON files |
-| Temporal versioning logic | Version creation, `expired` field updates, edge re-creation, `NEVER_EXPIRES` sentinel | Mock ArangoDB client (`python-arango` calls) |
+| Temporal versioning logic | Version creation, `expired` field updates, edge re-creation, `NEVER_EXPIRES` sentinel for current entities | Mock ArangoDB client (`python-arango` calls) |
 | Entity resolution config | `ERPipelineConfig` construction, weight calculations, strategy selection | Mock `arango-entity-resolution` service calls |
 | Service layer (`services/`) | Business logic for curation, promotion, import/export | Mock DB repository layer |
 | Config & settings | `.env` parsing, defaults, validation | Override `Settings` with test values |
@@ -1559,7 +1790,7 @@ backend/tests/
 ├── unit/
 │   ├── test_models.py             # Pydantic model validation
 │   ├── test_extraction_parser.py  # LLM output parsing & error recovery
-│   ├── test_temporal_versioning.py # Version creation, expiration, sentinel values
+│   ├── test_temporal_versioning.py # Version creation, expiration, NEVER_EXPIRES sentinel
 │   ├── test_er_config.py          # Entity resolution configuration
 │   ├── test_curation_service.py   # Curation business logic
 │   └── test_import_export.py      # OWL/TTL serialization logic
@@ -1778,7 +2009,7 @@ A feature is not complete until:
 | Component | Reuse (Future) | Adaptation Needed |
 |-----------|-------|-------------------|
 | ProxyIn/ProxyOut/Entity architecture | Full pattern: stable proxies, versioned entities, hasVersion edges | Adapt from Device/Software to Class/Property ontology entity types |
-| Interval semantics (`created`/`expired`/`NEVER_EXPIRES`) | **Already adopted** — same interval semantics used in edge-interval approach | None |
+| Interval semantics (`created`/`expired`/`NEVER_EXPIRES` for current) | **Already adopted** — same interval semantics used in edge-interval approach | None |
 | MDI-prefixed index pattern | **Already adopted** — same index type deployed on vertex and edge collections | None |
 | TTL aging (`HISTORICAL_ONLY` strategy) | **Already adopted** — same TTL strategy applied to historical vertices and edges | None |
 | AQL time travel queries (snapshot, history, overlap) | **Already adopted** — same query patterns, adapted for edge-interval (filter both vertices and edges by timestamp) | None |
@@ -1986,6 +2217,7 @@ A feature is not complete until:
 | **RDFS** | RDF Schema — lightweight vocabulary for defining class hierarchies and property domains/ranges; foundation for OWL |
 | **SKOS** | Simple Knowledge Organization System — W3C standard for taxonomies, thesauri, and controlled vocabularies (`skos:Concept`, `skos:broader`, `skos:prefLabel`) |
 | **PGT** | Property Graph Transformation — ArangoRDF's strategy for storing OWL/RDF in ArangoDB. Uses an OWL metamodel approach: RDF types become collections, predicates become edges, OWL semantics are preserved |
+| **Process Graph (`aoe_process`)** | A named graph that provides end-to-end visibility of the extraction pipeline: `documents` → `chunks` → `ontology_classes` → `ontology_properties`, with lineage edges linking ontology entries back to extraction runs. Used for debugging, provenance tracing, and visual exploration in the ArangoDB Graph Visualizer |
 | **Staging Graph** | A temporary graph holding extracted entities pending human review |
 | **Curation** | The process of a domain expert reviewing, editing, and approving LLM-extracted ontology elements |
 | **Entity Resolution** | The process of identifying and merging duplicate or equivalent concepts |
@@ -2007,7 +2239,7 @@ A feature is not complete until:
 | **Temporal Graph** | A graph that tracks the full history of entity changes using versioned documents with `created`/`expired` interval semantics on both vertices and edges |
 | **Edge-Interval Time Travel** | The approach used by AOE: both vertices and edges carry `created`/`expired` timestamps. When a vertex changes, its edges are expired and re-created for the new version. Simple to implement; appropriate for moderate-frequency changes |
 | **Immutable-Proxy Pattern** | Advanced alternative (Phase 6): separates stable identity (ProxyIn/ProxyOut) from mutable state (versioned entities), avoiding edge re-creation at the cost of additional proxy collections. Reserved for future optimization if needed |
-| **NEVER_EXPIRES** | Sentinel value (`sys.maxsize` = 9223372036854775807) indicating a versioned entity or edge is the current active version |
+| **NEVER_EXPIRES** | Sentinel value (`sys.maxsize` = 9223372036854775807) stored in the `expired` field to indicate a versioned entity or edge is the current active version. The UI should display this as "Current" or "Active", not as the raw integer. |
 | **MDI-Prefixed Index** | Multi-dimensional index on `[created, expired]` fields that accelerates temporal range queries (point-in-time snapshots, interval overlaps) |
 | **TTL Aging** | Automatic garbage collection of historical (expired) versioned documents via ArangoDB TTL indexes on the `ttlExpireAt` field |
 | **VCR Timeline** | Interactive timeline slider in the curation dashboard that enables scrubbing through ontology history, with playback controls and diff visualization |

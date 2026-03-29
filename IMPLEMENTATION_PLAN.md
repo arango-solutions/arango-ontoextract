@@ -15,21 +15,23 @@
 
 | # | Task | Files | Depends On | Acceptance Criteria |
 |---|------|-------|------------|---------------------|
-| 1.1 | Implement migration runner framework | `backend/migrations/runner.py`, `backend/migrations/__init__.py` | — | `python -m migrations.runner` applies pending migrations in order; tracks state in `_system_meta` |
-| 1.2 | Migration 001: Create all non-temporal collections | `backend/migrations/001_initial_collections.py` | 1.1 | `documents`, `chunks`, `extraction_runs`, `curation_decisions`, `notifications`, `organizations`, `users`, `_system_meta`, `ontology_registry` created idempotently |
+| 1.1 | Implement migration runner framework | `backend/migrations/runner.py`, `backend/migrations/__init__.py` | — | `python -m migrations.runner` applies pending migrations in order; tracks state in `aoe_system_meta` (not `_system_meta`, which is invalid on ArangoDB Enterprise clusters) |
+| 1.2 | Migration 001: Create all non-temporal collections | `backend/migrations/001_initial_collections.py` | 1.1 | `documents`, `chunks`, `extraction_runs`, `curation_decisions`, `notifications`, `organizations`, `users`, `aoe_system_meta`, `ontology_registry` created idempotently |
 | 1.3 | Migration 002: Create versioned vertex collections | `backend/migrations/002_versioned_vertices.py` | 1.2 | `ontology_classes`, `ontology_properties`, `ontology_constraints` created with temporal field defaults |
 | 1.4 | Migration 003: Create edge collections | `backend/migrations/003_edge_collections.py` | 1.3 | All 8 edge collections created (`subclass_of`, `equivalent_class`, `has_property`, `extends_domain`, `extracted_from`, `related_to`, `merge_candidate`, `imports`) |
 | 1.5 | Migration 004: Create named graphs | `backend/migrations/004_named_graphs.py` | 1.4 | `domain_ontology` graph created with correct vertex/edge definitions per PRD Section 5.1 |
 | 1.6 | Migration 005: MDI-prefixed temporal indexes | `backend/migrations/005_mdi_indexes.py` | 1.3, 1.4 | MDI-prefixed indexes on `[created, expired]` deployed on all versioned vertex and edge collections |
 | 1.7 | Migration 006: TTL indexes for historical aging | `backend/migrations/006_ttl_indexes.py` | 1.3, 1.4 | Sparse TTL indexes on `ttlExpireAt` field for all versioned collections |
 | 1.8 | Migration 007: ArangoSearch views | `backend/migrations/007_arangosearch_views.py` | 1.2, 1.3 | ArangoSearch view on `ontology_classes` (label, description) for BM25 blocking |
-| 1.9 | Migration 008: Vector indexes | `backend/migrations/008_vector_indexes.py` | 1.2 | HNSW vector index on `chunks.embedding` field |
+| 1.9 | Migration 008: Vector indexes | `backend/migrations/008_vector_indexes.py` | 1.2 | HNSW vector index on `chunks.embedding` field. Must use raw ArangoDB REST API (`db._conn.send_request`) as `python-arango` high-level methods do not expose HNSW vector parameters. |
 | 1.10 | Update `schema.py` to call migration runner | `backend/app/db/schema.py` | 1.1 | `init_schema(db)` runs all pending migrations |
 | 1.11 | CI pipeline: lint + type check + unit tests | `.github/workflows/ci.yml` | — | GitHub Actions runs `ruff check`, `mypy`, `pytest tests/unit/` on every push |
 | 1.12 | Docker Compose test profile | `docker-compose.test.yml` | — | `docker compose -f docker-compose.test.yml up` starts ephemeral ArangoDB + Redis for integration tests |
 | 1.13 | Test conftest with auto-create/drop test DB | `backend/tests/conftest.py` | 1.12 | `test_db` fixture creates unique DB, runs migrations, yields, drops DB |
 | 1.14 | Copy test fixtures | `backend/tests/fixtures/ontologies/aws.ttl`, `backend/tests/fixtures/sample_documents/` | — | Sample OWL file and 2-3 test documents (PDF, DOCX, Markdown) in fixtures |
 | 1.15 | Integration test: migration runner | `backend/tests/integration/test_migrations.py` | 1.1–1.9, 1.13 | All migrations apply cleanly on fresh DB; re-running is idempotent |
+| 1.16 | Migration 009: ER collections | `backend/migrations/009_er_collections.py` | 1.4 | `similarTo`, `entity_clusters`, `golden_records` collections created |
+| 1.17 | Migration 010: Process graph | `backend/migrations/010_process_graph.py` | 1.4 | Creates `aoe_process` named graph with `has_chunk`, `extracted_from`, `has_property`, `subclass_of`, `produced_by` edges; adds `extracted_from` to `domain_ontology` graph |
 
 **Week 1 exit:** `make migrate` creates the full schema on a fresh ArangoDB. CI pipeline green. Test DB auto-provisioning works.
 
@@ -67,7 +69,8 @@
 | 3.5 | Ontology library API endpoints | `backend/app/api/ontology.py` | 3.4 | `GET /library` lists registered ontologies; `GET /library/{id}` returns detail with stats |
 | 3.6 | Frontend: install Jest + React Testing Library + Playwright | `frontend/package.json`, `frontend/jest.config.ts`, `frontend/playwright.config.ts` | — | `npm test` runs Jest; `npx playwright test` runs E2E |
 | 3.7 | Frontend: API client scaffold | `frontend/src/lib/api-client.ts` | — | Typed fetch wrapper for all backend API endpoints; handles pagination envelope |
-| 3.8 | Frontend: health check page | `frontend/src/app/page.tsx` | 3.7 | Landing page shows backend connection status and basic system stats |
+| 3.8 | Frontend: health check page | `frontend/src/app/page.tsx` | 3.7 | Landing page calls backend `/ready` endpoint (not `/api/v1/health`); shows backend status, registered ontology count, quick links |
+| 3.8a | Frontend: document upload page | `frontend/src/app/upload/page.tsx` | 3.7, 2.6 | Drag-and-drop file upload (PDF/DOCX/Markdown); shows recent documents with status and chunk counts; calls `POST /api/v1/documents/upload` |
 | 3.9 | CI pipeline: add integration tests + frontend lint | `.github/workflows/ci.yml` | 1.11, 1.12 | CI runs integration tests against Docker ArangoDB; runs `eslint` + `tsc --noEmit` on frontend |
 | 3.10 | Makefile: `make migrate`, `make test-unit`, `make test-integration` | `Makefile` | 1.1, 1.11 | Convenience commands for common dev workflows |
 
@@ -112,9 +115,12 @@
 | 6.3 | Staging graph creation | `backend/app/services/ontology.py` | 6.1, 6.2, W1 | Extraction output imported via PGT into `staging_{run_id}` named graph; all entities tagged with `ontology_id` |
 | 6.4 | Temporal versioning service | `backend/app/services/temporal.py` | W1 | `create_version()`, `expire_entity()`, `re_create_edges()` — core edge-interval time travel operations |
 | 6.5 | Ontology repository (DB layer) | `backend/app/db/ontology_repo.py` | W1 | CRUD for `ontology_classes`, `ontology_properties`, edges; all operations use temporal versioning |
-| 6.6 | Staging ontology API endpoint | `backend/app/api/ontology.py` | 6.3, 6.5 | `GET /staging/{run_id}` returns staging graph as JSON |
+| 6.6 | Staging ontology API endpoint | `backend/app/api/ontology.py` | 6.3, 6.5 | `GET /staging/{run_id}` resolves `ontology_id` from the extraction run, then returns all current classes, properties, and edges for that ontology as JSON |
+| 6.6a | Graph materialization after extraction | `backend/app/services/extraction.py` | 6.5 | After successful extraction, auto-populate `ontology_classes`, `ontology_properties`, and edges (`has_property`, `subclass_of`, `extracted_from`) from `ExtractionResult`. Also auto-register in `ontology_registry`. |
+| 6.6b | Per-ontology named graph auto-creation | `backend/app/services/ontology_graphs.py` | 6.6a | After extraction and registration, auto-create a per-ontology named graph (`ontology_{name_slug}`) with human-readable name derived from the ontology's registry `name` field (e.g., `ontology_financial_services_domain`). |
+| 6.6c | Per-ontology API endpoints | `backend/app/api/ontology.py` | 6.5 | `GET /{ontology_id}/classes`, `GET /{ontology_id}/properties?keys=`, `GET /{ontology_id}/edges`, `GET /graphs` — per-ontology class/property/edge retrieval and graph listing |
 | 6.7 | Integration tests: ArangoRDF import | `backend/tests/integration/test_arangordf_import.py` | 6.1, 1.13, 1.14 | Import `aws.ttl` → verify collections populated → verify named graph → verify `ontology_id` tagging |
-| 6.8 | Integration tests: temporal versioning | `backend/tests/integration/test_temporal_queries.py` | 6.4, 1.13 | Create entity → edit → verify old expired + new created → point-in-time snapshot returns correct version |
+| 6.8 | Integration tests: temporal versioning | `backend/tests/integration/test_temporal_queries.py` | 6.4, 1.13 | Create entity → edit → verify old expired + new created → point-in-time snapshot returns correct version. Temporal convention: `expired == NEVER_EXPIRES` (sys.maxsize = 9223372036854775807) for current entities. |
 
 ### Week 7: Pipeline Monitor Dashboard & WebSocket
 
@@ -122,7 +128,7 @@
 |---|------|-------|------------|---------------------|
 | 7.1 | WebSocket endpoint: extraction progress | `backend/app/api/ws_extraction.py` | 4.5 | `ws://host/ws/extraction/{run_id}` emits `step_started`, `step_completed`, `step_failed`, `completed` |
 | 7.2 | Agent step event emission | `backend/app/extraction/pipeline.py` | 7.1 | LangGraph node callbacks publish events to WebSocket via Redis Pub/Sub |
-| 7.3 | Frontend: Pipeline Monitor page scaffold | `frontend/src/app/pipeline/page.tsx` | 3.7 | Route `/pipeline` with run list and detail layout |
+| 7.3 | Frontend: Pipeline Monitor page scaffold | `frontend/src/app/pipeline/page.tsx` | 3.7 | Route `/pipeline` with run list and detail layout; includes "Curate" button linking to `/curation/{runId}` for completed runs |
 | 7.4 | Frontend: Run List component | `frontend/src/components/pipeline/RunList.tsx` | 7.3 | Filterable/sortable list of extraction runs; status badges; auto-refresh |
 | 7.5 | Frontend: Agent DAG component (React Flow) | `frontend/src/components/pipeline/AgentDAG.tsx` | 7.3 | React Flow graph rendering the LangGraph pipeline; custom node components with status icons |
 | 7.6 | Frontend: WebSocket hook | `frontend/src/lib/use-websocket.ts` | — | React hook for WebSocket connection with reconnect logic; updates Agent DAG nodes in real-time |
@@ -187,16 +193,19 @@
 | 11.1 | Ontology theme JSON definitions | `docs/visualizer/themes/ontology_theme.json` | — | OWL/RDFS/SKOS node type colors, icons, and edge styles per PRD Section 6.6 |
 | 11.2 | Canvas action definitions | `docs/visualizer/actions/ontology_actions.json` | — | All 7 right-click actions from PRD Section 6.6; AQL queries with temporal edge filtering |
 | 11.3 | Saved query definitions | `docs/visualizer/queries/ontology_queries.json` | — | All 10 saved queries from PRD Section 6.6 (class hierarchy, orphans, cross-tier, temporal queries) |
-| 11.4 | Visualizer install script | `scripts/setup/install_visualizer.py` | 11.1–11.3 | Idempotent installer: creates themes, canvas actions, saved queries, viewpoints; `prune_theme()` per graph |
+| 11.4 | Visualizer install script | `scripts/setup/install_visualizer.py` | 11.1–11.3 | Idempotent installer: creates themes, canvas actions, saved queries, viewpoints per graph; `_demote_builtin_defaults()` sets `isDefault: false` on built-in Default themes so AOE themes take precedence |
+| 11.3a | Temporal snapshot saved query | `docs/visualizer/queries/ontology_queries.json` | 11.3 | "Ontology at Point in Time" query with `@snapshot_time` bind var (0 = current); uses `FILTER created <= t AND (expired == NEVER_EXPIRES OR expired > t)`; displays timestamps in ISO 8601 alongside Unix. Also add "Changes Since" query with `@since_time`. |
+| 11.4a | Process graph visualizer assets | `docs/visualizer/themes/process_theme.json`, `docs/visualizer/actions/process_actions.json`, `docs/visualizer/queries/process_queries.json` | — | Separate theme/actions/queries for `aoe_process` graph with pipeline-specific node colors and traversal queries |
 | 11.5 | Viewpoint auto-creation | `scripts/setup/install_visualizer.py` | 11.4 | `ensure_default_viewpoint()` creates viewpoint per ontology graph; links actions + queries |
-| 11.6 | Integration tests: visualizer install | `backend/tests/integration/test_visualizer_install.py` | 11.4, 1.13 | Run installer twice → idempotent → verify `_graphThemeStore`, `_canvasActions`, `_editor_saved_queries` populated |
+| 11.5a | Auto-install visualizer for new ontology graphs | `scripts/setup/install_visualizer.py`, `backend/app/services/extraction.py` | 11.4, 6.6b | After per-ontology graph creation (post-extraction), automatically deploy visualizer theme, canvas actions, saved queries, and viewpoint links so the new graph is immediately explorable in ArangoDB UI |
+| 11.6 | Integration tests: visualizer install | `backend/tests/integration/test_visualizer_install.py` | 11.4, 1.13 | Run installer twice → idempotent → verify `_graphThemeStore`, `_canvasActions`, `_editor_saved_queries` populated; verify built-in Default themes demoted |
 
 ### Week 12: Integration, Polish & Phase 3 Testing
 
 | # | Task | Files | Depends On | Acceptance Criteria |
 |---|------|-------|------------|---------------------|
 | 12.1 | Connect curation UI to staging graph | Integration across 8.x and 10.x | W8–W10 | Full flow: see staging graph → make decisions → see temporal versions → scrub timeline |
-| 12.2 | Frontend: Ontology Library browser | `frontend/src/app/library/page.tsx`, `frontend/src/components/library/OntologyList.tsx` | 3.5 | List all registered ontologies; drill into class hierarchy |
+| 12.2 | Frontend: Ontology Library browser | `frontend/src/app/library/page.tsx`, `frontend/src/components/library/OntologyCard.tsx`, `frontend/src/components/library/ClassHierarchy.tsx` | 3.5, 6.6c | List all registered ontologies; drill into class hierarchy; clicking a class shows inline detail panel with description, URI, confidence, RDF type, properties (with ranges), and links to ArangoDB Graph Visualizer — Platform UI (`/ui/{db}/graphs/{graph}`) with Database UI fallback (`/_db/{db}/_admin/aardvark/index.html#graph/{graph}`) |
 | 12.3 | Frontend E2E: curation workflow | `frontend/e2e/curation.spec.ts` | 12.1 | Playwright: open staging → approve class → verify promoted |
 | 12.4 | Frontend E2E: VCR timeline | `frontend/e2e/timeline.spec.ts` | 10.6 | Playwright: load ontology → drag slider → verify graph changes |
 | 12.5 | Performance check: graph rendering | — | 8.2 | Verify < 2s render for 500-node graph; add lazy loading if needed |
@@ -351,13 +360,13 @@
 
 | Phase | Weeks | Tasks | Key Dependencies |
 |-------|-------|-------|------------------|
-| 1: Foundation | 1–3 | 37 | None (greenfield) |
-| 2: Extraction Pipeline | 4–7 | 37 | Phase 1 (schema, ingestion, test infra) |
-| 3: Curation & Timeline | 8–12 | 38 | Phase 2 (extraction, staging graphs, temporal service) |
+| 1: Foundation | 1–3 | 40 | None (greenfield) |
+| 2: Extraction Pipeline | 4–7 | 41 | Phase 1 (schema, ingestion, test infra) |
+| 3: Curation & Timeline | 8–12 | 40 | Phase 2 (extraction, staging graphs, temporal service) |
 | 4: Tier 2 & ER | 13–16 | 22 | Phase 2 (extraction pipeline) + Phase 3 (curation UI) |
 | 5: MCP Server | 17–19 | 14 | Phase 2 (extraction) + Phase 3 (temporal) + Phase 4 (ER) |
 | 6: Production | 20–24 | 27 | All prior phases |
-| **Total** | **24 weeks** | **175 tasks** | |
+| **Total** | **24 weeks** | **184 tasks** | |
 
 ## Critical Path
 
@@ -367,6 +376,10 @@ Schema (W1) → Ingestion (W2) → LangGraph + Extraction (W4-5) → ArangoRDF +
 Test Infra (W1) ──────────────────────────────────────────────→ All integration tests
     ↓                                                                    ↓
 MCP Dev (W3) ──────────────────────────────────────────────────→ MCP Runtime (W17)
+    ↓                                                                    ↓
+Upload Page (W3) ─→ Library Page (W12) ←── Per-Ontology APIs (W6)
+                                                                         ↓
+Extraction → Materialization (W6) → Per-ontology Graph (W6) → Visualizer Auto-Install (W11)
                                                                          ↓
 Temporal Service (W6) → Temporal APIs (W10) → VCR Timeline (W10) → Snapshot Cache (W23)
     ↓                       ↓
@@ -376,3 +389,318 @@ ArangoRDF Bridge (W6) → Import/Export (W20) → Schema Extraction (W20)
     ↓
 ER Integration (W14) → ER Agent (W15) → ER MCP (W18)
 ```
+
+---
+
+## Addendum: Gap Analysis & Remediation Plan
+
+**Derived from:** System audit conducted 2026-03-27, comparing implemented code against PRD v3.
+
+### Gap Classification
+
+Each gap is classified by severity:
+- **BUG**: Code exists but is broken (will error at runtime)
+- **UNWIRED**: Code is implemented but not connected to the rest of the system
+- **STUB**: Route/function exists but returns placeholder data
+- **INCOMPLETE**: Feature partially works but key behavior is missing
+- **MISSING**: No implementation exists
+
+---
+
+### Sprint A: Critical Bugs & Wiring Fixes (1 week)
+
+**Goal:** Fix runtime errors and connect implemented but unwired components.
+
+| # | Gap | Severity | Files | Fix |
+|---|-----|----------|-------|-----|
+| A.1 | Schema extraction status endpoint broken | BUG | `backend/app/api/ontology.py` | `GET /schema/extract/{run_id}` calls `get_extraction_status()` which is not imported. Import it from `schema_extraction` or implement inline. |
+| A.2 | `expired` field inconsistency in existing DB data | BUG | `backend/app/services/extraction.py`, DB data | Existing documents written with `expired: null` (before sentinel fix) will not match `expired == NEVER_EXPIRES` queries. Write a data migration script to backfill: `UPDATE doc WITH { expired: 9223372036854775807 } IN ontology_classes FILTER doc.expired == null`. Same for `ontology_properties` and all edge collections. |
+| A.3 | WebSocket extraction events never published | UNWIRED | `backend/app/services/extraction.py`, `backend/app/api/ws_extraction.py` | `publish_event()` exists in `ws_extraction.py` but is never called from the extraction pipeline. Add calls to `publish_event(run_id, event)` at each LangGraph node callback in `extraction.py` / `pipeline.py`. |
+| A.4 | Rate limit middleware not registered | UNWIRED | `backend/app/main.py`, `backend/app/api/rate_limit.py` | `RateLimitMiddleware` is implemented but not added to the FastAPI app in `main.py`. Add conditional registration when `settings.rate_limit_enabled` is True. |
+| A.5 | VCR Timeline scrubber doesn't update the graph | UNWIRED | `frontend/src/app/curation/[runId]/page.tsx`, `frontend/src/components/timeline/VCRTimeline.tsx` | VCR slider fires events but curation page does not pass `onTimestampChange` handler. Wire it to call `GET /ontology/{id}/snapshot?at={ts}` and replace graph data. |
+| A.6 | EntityHistory component not mounted | UNWIRED | `frontend/src/app/curation/[runId]/page.tsx`, `frontend/src/components/timeline/EntityHistory.tsx` | Curation page wires history button as `() => {}`. Import `EntityHistory` and wire `onShowHistory` to render it in the side panel. |
+| A.7 | DiffOverlay component not imported anywhere | UNWIRED | `frontend/src/components/graph/DiffOverlay.tsx` | Component exists but no page imports it. Wire into curation page's diff view mode to overlay temporal diff on the graph. |
+| A.8 | Frontend auth cookie vs localStorage mismatch | BUG | `frontend/src/middleware.ts`, `frontend/src/lib/auth.ts` | Middleware checks cookie `aoe_auth_token`; `auth.ts` stores in `localStorage`. Sync by setting cookie from `localStorage` on login, or read from both. |
+| A.9 | Login page missing | MISSING | `frontend/src/app/login/page.tsx` | Middleware redirects to `/login` but no page exists. Create login page (or redirect to OIDC provider). |
+
+**Sprint A exit:** No runtime errors. WebSocket shows real-time pipeline progress. VCR timeline drives graph state. Auth flow works end-to-end in production mode.
+
+---
+
+### Sprint B: Backend Stubs & Incomplete Endpoints (1 week)
+
+**Goal:** Replace all remaining TODO/placeholder endpoints with real implementations.
+
+| # | Gap | Severity | Files | Fix |
+|---|-----|----------|-------|-----|
+| B.1 | `GET /ontology/domain` returns empty | STUB | `backend/app/api/ontology.py` | Implement to query all current classes/edges across all ontologies in `domain_ontology` graph, paginated. |
+| B.2 | `GET /ontology/domain/classes` returns empty | STUB | `backend/app/api/ontology.py` | Implement with filters (label search, tier, confidence threshold, ontology_id). |
+| B.3 | `GET /ontology/local/{org_id}` returns empty | STUB | `backend/app/api/ontology.py` | Query classes/edges where `org_id` matches, including `extends_domain` edges. |
+| B.4 | `POST /ontology/staging/{run_id}/promote` is stub | STUB | `backend/app/api/ontology.py` | Wire to `promotion.py` service (real promotion exists at `POST /curation/promote/{run_id}`). Consolidate or redirect. |
+| B.5 | Tier 2 pipeline path not wired | INCOMPLETE | `backend/app/services/extraction.py` | `start_run` always uses `tier1_standard`. Add logic: if org has selected domain ontologies, inject `serialize_domain_context()` and use `tier2_standard` prompt. |
+| B.6 | `BatchActions` doesn't send `run_id` in body | INCOMPLETE | `frontend/src/components/curation/BatchActions.tsx` | Verify API contract for `POST /curation/batch` and include `run_id` in the request body. |
+| B.7 | Curation edge decision doesn't update local graph state | INCOMPLETE | `frontend/src/app/curation/[runId]/page.tsx` | `handleNodeDecision` only updates `graph.classes`; edge approve/reject doesn't update `graph.edges`. Add edge state update handler. |
+| B.8 | ER page `allCandidates` never populated | INCOMPLETE | `frontend/src/app/entity-resolution/page.tsx` | `setAllCandidates` is declared but never called. Wire it when loading candidates so merge candidate overlays appear on the graph. |
+
+**Sprint B exit:** All API endpoints return real data. Tier 2 extraction works for organizations with selected domain ontologies.
+
+---
+
+### Sprint C: Temporal Data Integrity & Visualizer Reinstall (3 days)
+
+**Goal:** Ensure temporal data consistency and redeploy visualizer assets.
+
+| # | Gap | Severity | Files | Fix |
+|---|-----|----------|-------|-----|
+| C.1 | Backfill `expired: null` → `NEVER_EXPIRES` in DB | BUG | New: `backend/migrations/012_backfill_expired_sentinel.py` | AQL update on `ontology_classes`, `ontology_properties`, and all edge collections to set `expired = 9223372036854775807` where `expired == null OR expired == 0`. |
+| C.2 | Re-run MDI index migration with corrected `prefixFields` | BUG | `backend/migrations/005_mdi_indexes.py` | Drop existing `idx_*_mdi_temporal` indexes (which had wrong `prefixFields: ["created"]`) and re-create with `prefixFields: ["ontology_id"]`. Add migration `013_reindex_mdi.py`. |
+| C.3 | Redeploy visualizer saved queries | — | `scripts/setup/install_visualizer.py` | Re-run installer to deploy updated queries (sentinel values, `ontology_at_time`, `ontology_changes_since`) and actions. |
+| C.4 | Verify `has_chunk` and `produced_by` edges populated | INCOMPLETE | `backend/app/services/extraction.py` | `_materialize_to_graph` creates `extracted_from` edges but does not create `has_chunk` (documents→chunks) or `produced_by` (ontology_registry→extraction_runs) edges. Add these to complete the `aoe_process` graph lineage. |
+
+**Sprint C exit:** All temporal data uses sentinel consistently. MDI indexes correct. Process graph fully populated.
+
+---
+
+### Sprint D: Test Coverage & CI Hardening (1 week)
+
+**Goal:** Reach ≥80% coverage across all layers. Add missing tests and CI stages.
+
+| # | Gap | Severity | Files | Fix |
+|---|-----|----------|-------|-----|
+| D.1 | E2E tests not in CI | INCOMPLETE | `.github/workflows/ci.yml` | Add `test-e2e` job running `pytest tests/e2e/` with full infra (ArangoDB + Redis). |
+| D.2 | Frontend tests not in CI | MISSING | `.github/workflows/ci.yml` | Add `test-frontend` job: `npm test` (Jest) and optionally `npx playwright test` for E2E. |
+| D.3 | Missing component tests | MISSING | `frontend/src/components/` | No tests for: `GraphCanvas`, `ClassHierarchy`, `ErrorLog`, `EntityHistory`, `DiffOverlay`. Create basic render + interaction tests. |
+| D.4 | `.env.example` incomplete | INCOMPLETE | `.env.example` | Add missing settings: `OPENAI_BASE_URL`, `RATE_LIMIT_ENABLED`, `NEXT_PUBLIC_ARANGO_URL`, `NEXT_PUBLIC_ARANGO_DB`. |
+| D.5 | Root `AGENTS.md` missing | MISSING | `AGENTS.md` | Create top-level `AGENTS.md` describing repo structure, module boundaries, and development conventions. |
+
+**Sprint D exit:** CI runs all test types. Coverage ≥80%. Environment template complete.
+
+---
+
+### Sprint E: Production Polish (1 week)
+
+**Goal:** Final production-readiness items from Phase 6.
+
+| # | Gap | Severity | Files | Fix |
+|---|-----|----------|-------|-----|
+| E.1 | OpenTelemetry tracing not implemented | MISSING | `backend/app/main.py` | PRD §8.5 requires spans across ingestion → extraction → storage. Add `opentelemetry-api` + `opentelemetry-sdk` and instrument key services. |
+| E.2 | Alerting rules not defined | MISSING | `docs/ops/alerts.yml` | PRD §8.5 requires alert definitions for extraction failure rate, API error rate, queue backlog. |
+| E.3 | Temporal `ttlExpireAt` not set on historical versions | INCOMPLETE | `backend/app/services/temporal.py` | `expire_entity` sets `expired` but verify `ttlExpireAt` is set for garbage collection. |
+| E.4 | Visualizer auto-install post-extraction | INCOMPLETE | `backend/app/services/extraction.py` | After `ensure_ontology_graph()`, call `install_for_ontology_graph()` to deploy theme/actions/queries for the new per-ontology graph automatically. |
+| E.5 | Performance benchmarks not measured | MISSING | `docs/benchmarks.md` | File exists but likely placeholder. Run actual benchmarks: graph rendering, API p95, extraction time per doc. |
+
+**Sprint E exit:** Observability, alerting, auto-deploy of visualizer assets, and performance validation complete.
+
+---
+
+### Sprint F: Ontology Quality Metrics (1.5 weeks)
+
+**Goal:** Implement the ontology quality metrics system referenced in PRD §3.2 (Success Metrics), FR-4.8 (Confidence scores), and FR-12.4 (Per-run metrics). Currently **zero** quality metrics are computed, tracked, or displayed — only pipeline run metrics (token count, cost, duration) exist.
+
+**PRD Gap Analysis:**
+
+| PRD Metric | Target | Current Status |
+|------------|--------|----------------|
+| Extraction precision (acceptance rate) | ≥ 80% classes accepted without edits | **MISSING** — curation decisions are recorded but never aggregated |
+| Extraction recall | ≥ 70% of gold-standard concepts found | **MISSING** — no gold-standard comparison mechanism |
+| Curation throughput | 50+ concepts/hour | **MISSING** — no time tracking in curation UI |
+| Deduplication accuracy | ≥ 85% merge suggestions correct | **MISSING** — merge accept/reject decisions not aggregated |
+| Time to first ontology | < 30 minutes | **MISSING** — no end-to-end pipeline timing |
+| Ontology structural quality | Not explicitly numeric in PRD, but implied | **MISSING** — no orphan detection, cycle detection, or completeness analysis |
+
+#### Sub-sprint F1: Backend Quality Metrics Service (4 days)
+
+| # | Task | Files | Fix |
+|---|------|-------|-----|
+| F1.1 | Extraction precision computation | `backend/app/services/quality_metrics.py` (new) | Query `curation_decisions` collection. Compute `acceptance_rate = accepted / (accepted + rejected + edited)` per ontology and per run. Count "accepted without edits" vs "accepted with edits" vs "rejected". |
+| F1.2 | Curation throughput tracking | `backend/app/services/curation.py`, `backend/app/db/curation_repo.py` | Add `decided_at` timestamp to each `curation_decision`. Compute `concepts_per_hour = count(decisions) / (max(decided_at) - min(decided_at)) * 3600` per curator session. |
+| F1.3 | Deduplication accuracy | `backend/app/services/quality_metrics.py` | Query ER merge decisions (accepted/rejected merge suggestions). Compute `dedup_accuracy = accepted_merges / total_merge_suggestions`. |
+| F1.4 | Time-to-first-ontology | `backend/app/services/quality_metrics.py` | Compute `time_to_ontology = extraction_run.completed_at - document.uploaded_at` using `documents` and `extraction_runs` collections. |
+| F1.5 | Ontology structural quality analysis | `backend/app/services/quality_metrics.py` | Compute per-ontology: (a) **Completeness** — % of classes with ≥1 property, % of properties with defined domain+range; (b) **Coherence** — detect subclass cycles via AQL traversal, count orphan classes (no parent, not a root); (c) **Avg confidence** — mean confidence score across all current classes; (d) **Coverage** — classes-per-chunk ratio vs source document chunk count. |
+| F1.6 | Gold-standard recall comparison | `backend/app/services/quality_metrics.py` | Import a reference OWL ontology, extract class labels, compute `recall = |extracted ∩ reference| / |reference|` using fuzzy string matching. Expose as `POST /api/v1/quality/recall` with uploaded reference file. |
+| F1.7 | Quality metrics API endpoints | `backend/app/api/quality.py` (new) | `GET /api/v1/quality/{ontology_id}` returns all quality scores. `GET /api/v1/quality/{ontology_id}/history` returns quality over time (leveraging temporal snapshots). `GET /api/v1/quality/summary` returns aggregate scores across all ontologies. `POST /api/v1/quality/recall` for gold-standard comparison. |
+
+#### Sub-sprint F2: Frontend Quality Dashboard (4 days)
+
+| # | Task | Files | Fix |
+|---|------|-------|-----|
+| F2.1 | Quality metrics types | `frontend/src/types/quality.ts` (new) | TypeScript interfaces for `OntologyQualityMetrics` (acceptance_rate, avg_confidence, completeness, coherence_issues, coverage, dedup_accuracy, time_to_ontology), `QualityHistory`, `QualitySummary`. |
+| F2.2 | Quality dashboard page | `frontend/src/app/quality/page.tsx` (new) | New route `/quality`. Summary cards showing aggregate metrics across all ontologies. Traffic-light indicators: green (meets PRD target), yellow (within 10%), red (below target). Trend sparklines using quality history API. |
+| F2.3 | Per-ontology quality panel in Library | `frontend/src/app/library/page.tsx` | Add a "Quality" tab or section to the inline detail panel when an ontology is selected. Show acceptance rate, avg confidence, completeness %, coherence issues, structural warnings (orphans, cycles). |
+| F2.4 | Curation session timer | `frontend/src/app/curation/[runId]/page.tsx` | Add session start timestamp on page load. On each curation decision, compute elapsed time and send to backend. Display "concepts reviewed / hour" counter in the curation UI header. |
+| F2.5 | Low-confidence highlighting in curation graph | `frontend/src/components/graph/GraphCanvas.tsx` | FR-4.8 requires low-confidence entities to be visually highlighted. Add conditional node styling: red border for confidence < 0.5, yellow for 0.5–0.7, green for > 0.7. |
+| F2.6 | Quality metrics in landing page | `frontend/src/app/page.tsx` | Add a "System Health" section showing aggregate extraction precision, active ontology count, and average quality score. |
+| F2.7 | Quality section in pipeline run detail | `frontend/src/components/pipeline/RunMetrics.tsx` | Extend the existing RunMetrics component to include per-run quality stats: acceptance rate (if curation has started), avg confidence of extracted entities, completeness %. |
+
+#### Sub-sprint F3: Visualizer Quality Queries (2 days)
+
+| # | Task | Files | Fix |
+|---|------|-------|-----|
+| F3.1 | Low-confidence classes query | `docs/visualizer/queries/ontology_queries.json` | Add saved AQL query: "Low Confidence Classes" — returns classes where `confidence < @threshold` (default 0.6). Color-coded by confidence band in the visualizer. |
+| F3.2 | Orphan classes query | `docs/visualizer/queries/ontology_queries.json` | Add saved AQL query: "Orphan Classes" — classes with no inbound `subclass_of` edge and no outbound `subclass_of` edge (isolated nodes). |
+| F3.3 | Incomplete classes query | `docs/visualizer/queries/ontology_queries.json` | Add saved AQL query: "Classes Without Properties" — classes with zero `has_property` outbound edges. |
+| F3.4 | Redeploy visualizer queries | `scripts/setup/install_visualizer.py` | Re-run installer to deploy new quality-oriented queries. |
+
+**Sprint F exit:** All five PRD §3.2 success metrics are computed and displayed. Ontology structural quality is analyzed and visible in both the custom UI and ArangoDB Visualizer. Low-confidence entities are highlighted in the curation graph. Quality trends are tracked over time.
+
+---
+
+### Sprint G: Multi-Document Ontologies & Incremental Extraction (1.5 weeks)
+
+**Goal:** Support building ontologies from multiple documents and adding documents to existing ontologies.
+
+| # | Task | Files | Description |
+|---|------|-------|-------------|
+| G.1 | Extend extraction API for multi-doc and target ontology | `backend/app/api/extraction.py`, `backend/app/models/extraction.py` | `StartRunRequest` accepts `doc_ids: list[str]` (optional) and `target_ontology_id: str` (optional). When `target_ontology_id` is set, extraction uses existing ontology as context (like Tier 2) and merges results into it instead of creating a new ontology. |
+| G.2 | Multi-document chunk batching in extraction service | `backend/app/services/extraction.py` | `start_run` loads chunks from all `doc_ids`, concatenates them, and passes to the pipeline. All materialized classes get the same `ontology_id`. Multiple `extracted_from` edges created (one per source doc). |
+| G.3 | Incremental extraction service | `backend/app/services/extraction.py` | When `target_ontology_id` is set: (a) serialize existing ontology classes as context, (b) run extraction, (c) Consistency Checker compares against existing classes, (d) new classes tagged as EXISTING/EXTENSION/NEW, (e) results go to staging for curation. |
+| G.4 | "Add Document" API endpoint | `backend/app/api/ontology.py` | `POST /library/{ontology_id}/add-document` accepts a file upload, creates a document, and triggers incremental extraction targeting the specified ontology. |
+| G.5 | "Add Document" button in Library UI | `frontend/src/app/library/page.tsx` | When an ontology is selected, show an "Add Document" button that opens a file picker and calls the add-document endpoint. Shows extraction progress. |
+| G.6 | Target ontology selector in Upload page | `frontend/src/app/upload/page.tsx` | Add a searchable dropdown: "Create New Ontology" (default) or select an existing ontology from the library. When existing is selected, extraction targets that ontology. |
+| G.7 | Document-ontology relationship API | `backend/app/api/ontology.py`, `backend/app/api/documents.py` | `GET /ontology/library/{id}/documents` lists source documents. `GET /documents/{id}/ontologies` lists ontologies extracted from a document. |
+| G.8 | Document list on ontology detail | `frontend/src/app/library/page.tsx` | When viewing an ontology, show list of source documents with links to each. |
+
+**Sprint G exit:** Users can build ontologies from multiple documents and incrementally add new documents to existing ontologies.
+
+---
+
+### Sprint H: Ontology Imports & Dependency Management (1.5 weeks)
+
+**Goal:** Represent, track, and visualize `owl:imports` relationships. Enable loading standard ontologies.
+
+| # | Task | Files | Description |
+|---|------|-------|-------------|
+| H.1 | Imports edge creation on OWL import | `backend/app/services/arangordf_bridge.py` | After PGT import, parse the source graph for `owl:imports` triples. For each imported IRI, look up the matching `ontology_registry` entry and create an `imports` edge. Warn if imported ontology not in library. |
+| H.2 | Imports graph named graph | `backend/migrations/014_imports_graph.py` (new) | Create `ontology_imports` named graph with `ontology_registry` as vertex collection and `imports` as edge collection. |
+| H.3 | Imports API endpoints | `backend/app/api/ontology.py` | `GET /library/{id}/imports`, `GET /library/{id}/imported-by`, `GET /imports-graph`. |
+| H.4 | Cascade analysis on delete | `backend/app/services/ontology_graphs.py` | Before deprecating an ontology, traverse `imports` graph to find dependents. Return list of affected ontologies. Frontend shows confirmation dialog. |
+| H.5 | Standard ontology catalog | `backend/app/services/ontology_catalog.py` (new), `docs/catalog/` | JSON catalog of standard ontologies (FIBO modules, Schema.org, Dublin Core, FOAF, PROV-O, SKOS, OWL-Time, GeoSPARQL) with URLs, descriptions, class counts. API: `GET /ontology/catalog`, `POST /ontology/catalog/{id}/import`. |
+| H.6 | Catalog import UI | `frontend/src/app/upload/page.tsx` or `frontend/src/app/library/page.tsx` | "Import Standard Ontology" button opening a catalog browser. One-click import with progress indicator. |
+| H.7 | Imports dependency graph in Library UI | `frontend/src/app/library/page.tsx` | New "Dependencies" tab showing a React Flow DAG of ontology imports. Click a node to navigate to that ontology. |
+| H.8 | Base ontology selector in extraction UI | `frontend/src/app/upload/page.tsx` | Searchable "Base Ontologies" multi-select. Selected ontologies are sent as `base_ontology_ids` in the extraction request. Backend injects their classes as context and records `imports` edges on the result. |
+| H.9 | Visualizer queries for imports | `docs/visualizer/queries/ontology_queries.json` | Saved AQL queries: "Ontology Dependencies" (traversal of imports graph), "Upstream Ontologies" (ancestors), "Downstream Dependents" (children). |
+
+**Sprint H exit:** `owl:imports` tracked as edges. Standard ontologies importable from catalog. Imports dependency graph visible in UI and ArangoDB Visualizer.
+
+---
+
+### Sprint I: Ontology Constraints (OWL Restrictions & SHACL) (1 week)
+
+**Goal:** Extract, import, store, display, and export OWL restrictions and SHACL shapes.
+
+| # | Task | Files | Description |
+|---|------|-------|-------------|
+| I.1 | Constraint extraction prompts | `backend/app/extraction/prompts/` | Extend extraction prompts to ask LLM for constraints: "For each class, identify cardinality constraints, value restrictions, and data validation rules." Add `constraints` field to `ExtractedClass` Pydantic model. |
+| I.2 | Constraint materialization | `backend/app/services/extraction.py` | `_materialize_to_graph` writes extracted constraints to `ontology_constraints` collection with temporal fields. |
+| I.3 | OWL restriction import via ArangoRDF | `backend/app/services/arangordf_bridge.py` | After PGT import, parse `owl:Restriction` blank nodes from the source rdflib graph. Create `ontology_constraints` documents linked to their target class and property. |
+| I.4 | SHACL shapes import | `backend/app/services/shacl_import.py` (new) | Parse SHACL shapes graphs (Turtle files). Create `ontology_constraints` documents with `constraint_type: "sh:NodeShape"` or `"sh:PropertyShape"`. Link to target classes via `target_class`. |
+| I.5 | Constraints API endpoint | `backend/app/api/ontology.py` | `GET /library/{ontology_id}/constraints` returns all OWL restrictions and SHACL shapes for an ontology. |
+| I.6 | Constraints display in Library UI | `frontend/src/app/library/page.tsx` | Class detail panel shows associated constraints: cardinality badges (e.g., "1..* holders"), value restrictions (e.g., "allValuesFrom: Currency"), SHACL rules with severity icons. |
+| I.7 | Constraints display in Curation UI | `frontend/src/app/curation/[runId]/page.tsx` | NodeDetail shows constraints alongside properties. Curators can approve/reject/edit constraints. |
+| I.8 | Constraints in OWL export | `backend/app/services/export.py` | OWL Turtle export includes `owl:Restriction` constructs. New `export_shacl()` function exports SHACL shapes as a separate shapes graph. |
+| I.9 | Constraints in temporal queries | `backend/app/services/temporal.py` | `get_snapshot` and `get_diff` include constraints from `ontology_constraints` collection. |
+
+**Sprint I exit:** Constraints extractable, importable, displayable, and exportable. SHACL shapes stored alongside OWL restrictions.
+
+---
+
+### Sprint J: Full CRUD, Search & Library Organization (1 week)
+
+**Goal:** Complete document and ontology lifecycle operations. Full-text search. Hierarchical library organization.
+
+| # | Task | Files | Description |
+|---|------|-------|-------------|
+| J.1 | Document re-upload (update) | `backend/app/api/documents.py`, `backend/app/db/documents_repo.py` | `PUT /documents/{doc_id}` soft-deletes old version, creates new document linked to the same `ontology_id`s. Triggers re-extraction warning if auto-extract enabled. |
+| J.2 | Document hard-delete with cascade analysis | `backend/app/api/documents.py` | `DELETE /documents/{doc_id}` shows affected ontologies (via `extracted_from` edges). Soft-deletes document and chunks. Expires `extracted_from` edges. Does NOT delete ontology classes. |
+| J.3 | Ontology metadata update | `backend/app/api/ontology.py` | `PUT /ontology/library/{id}` updates name, description, tags, tier, status. |
+| J.4 | Ontology deprecation with cascade | `backend/app/api/ontology.py`, `backend/app/services/ontology_graphs.py` | `DELETE /ontology/library/{id}` performs cascade analysis (imports graph traversal), returns affected list, requires confirmation. On confirm: expires all classes/properties/edges, removes per-ontology graph, marks registry as `deprecated`. |
+| J.5 | ArangoSearch view for library search | `backend/migrations/015_library_search.py` (new) | Create ArangoSearch view across `ontology_registry` (name, description), `ontology_classes` (label, description), `ontology_properties` (label). |
+| J.6 | Library search API | `backend/app/api/ontology.py` | `GET /ontology/search?q=...` performs full-text search via ArangoSearch. Returns ranked results with snippets and source ontology info. |
+| J.7 | Library search UI | `frontend/src/app/library/page.tsx` | Search bar at top of library page. Debounced input calls search API. Results grouped by ontology. |
+| J.8 | Hierarchical library view | `frontend/src/app/library/page.tsx` | Toggle between flat list and hierarchy view. Hierarchy uses `imports` graph: domain ontologies as top-level, local extensions nested under their parents. |
+| J.9 | Ontology tagging | `backend/app/db/registry_repo.py`, `frontend/src/app/library/page.tsx` | Add `tags: list[str]` to registry. UI shows tag chips; filterable by tag. |
+
+**Sprint J exit:** Full document and ontology lifecycle management. Full-text search across the library. Hierarchical organization via imports graph.
+
+---
+
+### Sprint K: Standalone Ontology Graph Editor (1.5 weeks)
+
+**Goal:** Provide a full ontology graph editor accessible from the library — not just the per-extraction-run staging curation page. This is the core PRD §6.4 feature that allows ongoing ontology management, manual class creation, and visual editing outside of extraction workflows.
+
+**Current State:**
+- `/curation/[runId]` exists with `GraphCanvas`, `NodeDetail`, `NodeActions`, `EdgeActions`, `BatchActions`, `ProvenancePanel`, `DiffView`, `PromotePanel`, `VCRTimeline` — all implemented but some components unwired (covered in Sprint A)
+- **There is no way to open an ontology graph editor from the library page.** The library shows a class hierarchy tree with inline detail, but no interactive graph view or editing capability outside of extraction run staging.
+- The PRD explicitly says the curation dashboard should work in both "Staging mode" (per run) and "Ontology mode" (per ontology) — the latter does not exist.
+
+| # | Task | Files | Description |
+|---|------|-------|-------------|
+| K.1 | Ontology editor page scaffold | `frontend/src/app/ontology/[ontologyId]/edit/page.tsx` (new) | New route `/ontology/[ontologyId]/edit`. Loads all current classes, properties, and edges for the ontology via existing API endpoints. Renders the same `GraphCanvas` and side panel as the curation page, but fed from ontology data instead of staging data. |
+| K.2 | Shared curation/editor layout component | `frontend/src/components/graph/OntologyEditor.tsx` (new) | Extract the shared layout (graph viewport + side panel + toolbar) from the curation page into a reusable component. Both `/curation/[runId]` and `/ontology/[ontologyId]/edit` use this component with different data sources. |
+| K.3 | Backend: create class endpoint | `backend/app/api/ontology.py` | `POST /ontology/{ontology_id}/classes` creates a new class with `source_type: "manual"`, temporal versioning (`created: now, expired: NEVER_EXPIRES`). Returns the created class. |
+| K.4 | Backend: create property endpoint | `backend/app/api/ontology.py` | `POST /ontology/{ontology_id}/properties` creates a new property, plus a `has_property` edge from the domain class. |
+| K.5 | Backend: create/update edge endpoint | `backend/app/api/ontology.py` | `POST /ontology/{ontology_id}/edges` creates a new edge (subclass_of, related_to, etc.) with temporal versioning. `PUT` to update (expires old, creates new). |
+| K.6 | Backend: update class/property endpoint | `backend/app/api/ontology.py` | `PUT /ontology/{ontology_id}/classes/{key}` updates class fields. Uses `temporal.update_entity` to expire old version and create new. `PUT .../properties/{key}` analogous. |
+| K.7 | Frontend: Add class dialog | `frontend/src/components/graph/AddClassDialog.tsx` (new) | Modal dialog for adding a new class: label, URI, description, parent class (optional select), properties (dynamic list). Calls create endpoints. |
+| K.8 | Frontend: Add property dialog | `frontend/src/components/graph/AddPropertyDialog.tsx` (new) | Modal for adding a property to a selected class: label, range type, description. |
+| K.9 | Frontend: Drag-and-drop reparenting | `frontend/src/components/graph/GraphCanvas.tsx` | On drag of a class node onto another, show drop indicator. On drop, call edge create/update endpoint to create `subclass_of` edge. Visual feedback for valid drop targets. |
+| K.10 | Frontend: Inline class rename | `frontend/src/components/graph/GraphCanvas.tsx`, `frontend/src/components/curation/NodeDetail.tsx` | Double-click a node label to edit it inline. Calls update endpoint on blur/enter. |
+| K.11 | Library-to-editor navigation | `frontend/src/app/library/page.tsx` | Add "Edit Graph" button on ontology cards and in the class detail panel. Links to `/ontology/{ontologyId}/edit`. When clicking a class in the hierarchy, optionally open editor focused on that class. |
+| K.12 | Editor toolbar | `frontend/src/app/ontology/[ontologyId]/edit/page.tsx` | Top toolbar with: "Add Class", "Add Property", "Add Edge", color mode toggle (confidence/status/type), VCR Timeline toggle, export button, link to ArangoDB Visualizer. |
+
+**Sprint K exit:** Users can open any ontology from the library in a full interactive graph editor. They can visually explore the graph, add/edit/delete classes and properties, reparent classes via drag-and-drop, view the VCR timeline, and navigate back to the library. This is the core visual curation experience described in PRD §6.4.
+
+---
+
+### Remediation Summary
+
+| Sprint | Duration | Tasks | Priority |
+|--------|----------|-------|----------|
+| A: Critical Bugs & Wiring | 1 week | 9 | **P0** — blocks demo & basic workflows |
+| B: Backend Stubs | 1 week | 8 | **P1** — completes feature parity with PRD |
+| C: Data Integrity & Reindex | 3 days | 4 | **P0** — temporal queries return wrong results without this |
+| D: Test Coverage & CI | 1 week | 5 | **P2** — quality gate before release |
+| E: Production Polish | 1 week | 5 | **P2** — required for v1.0.0 |
+| F: Ontology Quality Metrics | 1.5 weeks | 18 | **P1** — PRD §3.2 success metrics entirely unimplemented |
+| G: Multi-Document & Incremental Extraction | 1.5 weeks | 8 | **P1** — core ontology management gap |
+| H: Ontology Imports & Dependencies | 1.5 weeks | 9 | **P1** — `owl:imports`, standard ontology catalog |
+| I: Constraints (OWL + SHACL) | 1 week | 9 | **P2** — formal constraints support |
+| J: Full CRUD, Search & Library Organization | 1 week | 9 | **P1** — lifecycle management and discoverability |
+| K: Standalone Ontology Graph Editor | 1.5 weeks | 12 | **P0** — core PRD §6.4 feature, blocks ontology management |
+| **Total** | **~12 weeks** | **96 tasks** | |
+
+### Recommended Execution Order
+
+```
+Sprint C (data integrity)  ─┐
+                             ├─→ Sprint A (bugs & wiring) ─┬─→ Sprint K (ontology editor)
+                             │                              │
+                             └─ C.1–C.3 parallel with A    └─→ Sprint B (stubs) ─┬─→ Sprint G (multi-doc) ─→ Sprint H (imports) ─→ Sprint I (constraints)
+                                                                                  │
+                                                                                  ├─→ Sprint F (quality metrics)
+                                                                                  │
+                                                                                  └─→ Sprint J (CRUD, search) ─→ Sprint D (tests) ─→ Sprint E (polish)
+```
+
+- Sprint K (ontology editor) is **P0** and should follow Sprint A (wiring fixes), since it reuses the same `GraphCanvas`, `VCRTimeline`, and curation components that A wires up. Once A makes those components functional, K can build the standalone editor page on top of them.
+- Sprint C should start first or in parallel with Sprint A, since the `expired` field backfill (C.1) and MDI reindex (C.2) affect whether any temporal query returns correct results.
+- Sprint G (multi-doc) should follow B, as it extends extraction APIs that need to work properly first.
+- Sprint H (imports) depends on G, since import resolution needs the catalog and multi-ontology context injection.
+- Sprint I (constraints) can follow H, leveraging the import pipeline for OWL restriction parsing.
+- Sprint J (CRUD, search) can run in parallel with F, both depending only on B.
+- Sprint D (tests) and E (polish) are final gates.
+
+---
+
+### Addendum L: Pipeline Enrichment, Run Deletion & System Reset
+
+**Status: IMPLEMENTED**
+
+| ID | Task | Files | Depends On | Description |
+|----|------|-------|------------|-------------|
+| L.1 | Enrich extraction run list API | `backend/app/api/extraction.py` | — | `GET /extraction/runs` now joins against `documents` for `document_name` and `chunk_count`, queries `ontology_classes`/`ontology_properties` for live entity counts, and computes `duration_ms`, `error_count`, and includes `model`. |
+| L.2 | Delete extraction run API | `backend/app/api/extraction.py` | — | `DELETE /extraction/runs/{run_id}` removes the run document and its `results_*` document. Does not cascade to ontology data. |
+| L.3 | Admin reset endpoints | `backend/app/api/admin.py`, `backend/app/main.py` | — | `POST /admin/reset` truncates all ontology/extraction collections while preserving documents and chunks. `POST /admin/reset/full` purges everything. Both gated by `ALLOW_SYSTEM_RESET=true` env var. |
+| L.4 | Enriched RunList UI | `frontend/src/components/pipeline/RunList.tsx`, `frontend/src/types/pipeline.ts` | L.1 | Run cards show document name (primary), chunk count, classes extracted, properties extracted, error count, duration, and model. Delete button appears on hover. |
+| L.5 | Reset UI | `frontend/src/app/pipeline/page.tsx` | L.3 | "Reset" dropdown in Pipeline Monitor header with two options: soft reset (keeps docs) and full reset. Confirms before executing. Re-fetches run list after reset. |
+| L.6 | PRD updates | `PRD.md` | — | Added `DELETE /extraction/runs/{run_id}`, enriched `GET /extraction/runs` description, and new Section 7.2.1 (Admin endpoints). |

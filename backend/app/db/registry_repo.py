@@ -34,8 +34,10 @@ def create_registry_entry(entry: dict[str, Any]) -> dict[str, Any]:
     """
     _ensure_collection()
     db = get_db()
+    now = datetime.now(UTC).isoformat()
     entry.setdefault("status", "active")
-    entry.setdefault("created_at", datetime.now(UTC).isoformat())
+    entry.setdefault("created_at", now)
+    entry.setdefault("updated_at", now)
     result = db.collection(_COLLECTION).insert(entry, return_new=True)
     return result["new"]
 

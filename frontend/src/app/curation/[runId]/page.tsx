@@ -177,7 +177,8 @@ export default function CurationPage() {
     [runId],
   );
 
-  const ontologyId = graph?.classes[0]?.ontology_id ?? "";
+  const ontologyId = graph?.ontology_id ?? graph?.classes[0]?.ontology_id ?? "";
+  const hasData = graph != null && graph.classes.length > 0;
 
   return (
     <main className="min-h-screen bg-gray-50 text-gray-900">
@@ -197,35 +198,46 @@ export default function CurationPage() {
             <div className="flex rounded-lg border border-gray-200 overflow-hidden">
               <button
                 onClick={() => setColorMode("confidence")}
-                className={`text-xs px-3 py-1.5 ${colorMode === "confidence" ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-500 hover:bg-gray-50"}`}
+                disabled={!hasData}
+                className={`text-xs px-3 py-1.5 ${colorMode === "confidence" ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-500 hover:bg-gray-50"} disabled:opacity-40 disabled:cursor-not-allowed`}
               >
                 Confidence
               </button>
               <button
                 onClick={() => setColorMode("status")}
-                className={`text-xs px-3 py-1.5 border-l border-gray-200 ${colorMode === "status" ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-500 hover:bg-gray-50"}`}
+                disabled={!hasData}
+                className={`text-xs px-3 py-1.5 border-l border-gray-200 ${colorMode === "status" ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-500 hover:bg-gray-50"} disabled:opacity-40 disabled:cursor-not-allowed`}
               >
                 Status
               </button>
             </div>
             <button
               onClick={() => setTimelineOpen(!timelineOpen)}
-              className={`text-xs px-3 py-1.5 border rounded-lg transition-colors ${timelineOpen ? "bg-violet-50 text-violet-700 border-violet-200" : "border-gray-200 text-gray-500 hover:bg-gray-50"}`}
+              disabled={!hasData}
+              className={`text-xs px-3 py-1.5 border rounded-lg transition-colors ${timelineOpen ? "bg-violet-50 text-violet-700 border-violet-200" : "border-gray-200 text-gray-500 hover:bg-gray-50"} disabled:opacity-40 disabled:cursor-not-allowed`}
             >
               VCR Timeline
             </button>
             <button
               onClick={() => setActivePanel("diff")}
-              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50"
+              disabled={!hasData}
+              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Diff View
             </button>
             <button
               onClick={() => setActivePanel("promote")}
-              className="text-xs px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+              disabled={!hasData}
+              className="text-xs px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Promote
             </button>
+            <a
+              href="/library"
+              className="text-sm text-gray-500 hover:text-gray-700"
+            >
+              Library
+            </a>
             <a
               href="/"
               className="text-sm text-gray-500 hover:text-gray-700"
@@ -263,7 +275,39 @@ export default function CurationPage() {
               </div>
             )}
 
-            {!loading && !error && graph && (
+            {!loading && !error && !hasData && (
+              <div className="flex-1 flex items-center justify-center p-8">
+                <div className="text-center max-w-md">
+                  <div className="text-4xl text-gray-300 mb-4">
+                    {"\u{1F50D}"}
+                  </div>
+                  <h2 className="text-lg font-semibold text-gray-700 mb-2">
+                    No ontology data for this run
+                  </h2>
+                  <p className="text-sm text-gray-500 mb-4">
+                    This extraction run does not have any materialized ontology classes.
+                    It may have been created before auto-registration was enabled,
+                    or the extraction may not have produced results.
+                  </p>
+                  <div className="flex gap-3 justify-center">
+                    <a
+                      href="/pipeline"
+                      className="text-sm px-4 py-2 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50"
+                    >
+                      Back to Pipeline
+                    </a>
+                    <a
+                      href="/library"
+                      className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    >
+                      Browse Library
+                    </a>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!loading && !error && hasData && (
               <div className="flex-1 bg-white m-4 rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <GraphCanvas
                   classes={graph.classes}
@@ -281,7 +325,7 @@ export default function CurationPage() {
             )}
 
             {/* VCR Timeline */}
-            {timelineOpen && ontologyId && (
+            {timelineOpen && ontologyId && hasData && (
               <div className="mx-4 mb-4">
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
                   <VCRTimeline ontologyId={ontologyId} />

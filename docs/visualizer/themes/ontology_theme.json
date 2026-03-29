@@ -90,8 +90,25 @@
     "chunks": {
       "background": { "color": "#9CA3AF", "iconName": "fa6-solid:puzzle-piece" },
       "labelAttribute": "_key",
-      "hoverInfoAttributes": ["_key", "page", "section"],
+      "hoverInfoAttributes": ["_key", "doc_id", "chunk_index", "section_heading"],
       "rules": []
+    },
+    "extraction_runs": {
+      "background": { "color": "#EC4899", "iconName": "fa6-solid:gears" },
+      "labelAttribute": "_key",
+      "hoverInfoAttributes": ["_key", "doc_id", "status", "model", "started_at"],
+      "rules": [
+        {
+          "name": "Completed",
+          "condition": "status == 'completed'",
+          "background": { "color": "#10B981", "iconName": "fa6-solid:circle-check" }
+        },
+        {
+          "name": "Failed",
+          "condition": "status == 'failed'",
+          "background": { "color": "#EF4444", "iconName": "fa6-solid:circle-xmark" }
+        }
+      ]
     }
   },
   "edgeConfigMap": {
@@ -148,6 +165,20 @@
       "lineStyle": { "color": "#EAB308", "thickness": 1.2 },
       "arrowStyle": { "sourceArrowShape": "none", "targetArrowShape": "diamond" },
       "hoverInfoAttributes": ["ontology_id"],
+      "rules": [],
+      "labelStyle": { "color": "#1d2531" }
+    },
+    "has_chunk": {
+      "lineStyle": { "color": "#9CA3AF", "thickness": 0.8 },
+      "arrowStyle": { "sourceArrowShape": "none", "targetArrowShape": "triangle" },
+      "hoverInfoAttributes": [],
+      "rules": [],
+      "labelStyle": { "color": "#1d2531" }
+    },
+    "produced_by": {
+      "lineStyle": { "color": "#EAB308", "thickness": 1.0, "lineType": "dashed" },
+      "arrowStyle": { "sourceArrowShape": "none", "targetArrowShape": "triangle" },
+      "hoverInfoAttributes": [],
       "rules": [],
       "labelStyle": { "color": "#1d2531" }
     }

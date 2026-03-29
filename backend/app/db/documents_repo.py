@@ -153,9 +153,31 @@ def create_chunks(
 ) -> list[dict]:
     """Bulk-insert chunk documents.  Returns inserted docs with ``_key``."""
     db = db or get_db()
+
+    if not db.has_collection(CHUNKS_COLLECTION):
+        log.warning("chunks collection missing — creating it now")
+        db.create_collection(CHUNKS_COLLECTION)
+
     col = db.collection(CHUNKS_COLLECTION)
-    result = col.insert_many(chunks, return_new=True)
-    return [r["new"] for r in result]
+
+    inserted = []
+    first_error: Exception | None = None
+    for i, chunk in enumerate(chunks):
+        try:
+            meta = col.insert(chunk, return_new=True)
+            if isinstance(meta, dict) and "new" in meta:
+                inserted.append(meta["new"])
+            elif isinstance(meta, dict):
+                inserted.append(meta)
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+            log.warning("chunk %d insert failed: %s", i, exc)
+
+    if not inserted and first_error is not None:
+        raise first_error
+
+    return inserted
 
 
 def get_chunks_for_document(

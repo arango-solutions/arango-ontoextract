@@ -1,5 +1,6 @@
 import json
 import logging
+import sys
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse, Response
@@ -18,8 +19,9 @@ from app.services.arangordf_bridge import import_from_file
 from app.services.schema_extraction import (
     SchemaExtractionConfig,
     extract_schema,
-    get_extraction_status,
 )
+
+NEVER_EXPIRES: int = sys.maxsize
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +46,27 @@ async def list_ontology_library(
         db = get_db()
         has_col = db.has_collection("ontology_registry")
         total_count = db.collection("ontology_registry").count() if has_col else 0
+
+        for entry in entries:
+            oid = entry.get("_key", "")
+            entry.setdefault("edge_count", 0)
+            entry.setdefault("updated_at", entry.get("created_at"))
+            entry.setdefault("last_updated", entry.get("updated_at") or entry.get("created_at"))
+            try:
+                edge_count = 0
+                for edge_col in ("subclass_of", "has_property", "related_to"):
+                    if db.has_collection(edge_col):
+                        result = list(db.aql.execute(
+                            f"FOR e IN {edge_col} FILTER e.ontology_id == @oid "
+                            "AND e.expired == @never "
+                            "COLLECT WITH COUNT INTO cnt RETURN cnt",
+                            bind_vars={"oid": oid, "never": NEVER_EXPIRES},
+                        ))
+                        edge_count += result[0] if result else 0
+                entry["edge_count"] = edge_count
+            except Exception:
+                pass
+
         return {
             "data": entries,
             "cursor": next_cursor,
@@ -136,6 +159,23 @@ async def get_org_ontologies(org_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Per-ontology graphs
+# ---------------------------------------------------------------------------
+
+
+@router.get("/graphs")
+async def list_ontology_graphs() -> dict:
+    """List all per-ontology named graphs plus the composite graph."""
+    from app.services.ontology_graphs import list_ontology_graphs as _list_graphs
+    per_ontology = _list_graphs()
+    system_graphs = [
+        {"graph_name": "domain_ontology", "description": "Shared domain ontology (all classes across all ontologies)"},
+        {"graph_name": "aoe_process", "description": "Extraction pipeline lineage"},
+    ]
+    return {"system_graphs": system_graphs, "ontology_graphs": per_ontology}
+
+
+# ---------------------------------------------------------------------------
 # Domain / Local / Staging / Import / Export stubs (other subagents own these)
 # ---------------------------------------------------------------------------
 
@@ -163,9 +203,70 @@ async def get_local_ontology(org_id: str, offset: int = 0, limit: int = 100) -> 
 
 @router.get("/staging/{run_id}")
 async def get_staging(run_id: str) -> dict:
-    """Get the staging graph for curation."""
-    # TODO: implement staging graph query
-    return {"run_id": run_id, "classes": [], "edges": []}
+    """Get the staging graph for curation.
+
+    Resolves the ontology_id from the extraction run, then returns all
+    current classes, properties, and edges for that ontology.
+    """
+    db = get_db()
+
+    ontology_id: str | None = None
+    if db.has_collection("extraction_runs") and db.collection("extraction_runs").has(run_id):
+        run_doc = db.collection("extraction_runs").get(run_id)
+        ontology_id = (run_doc or {}).get("ontology_id")
+
+    if not ontology_id and db.has_collection("ontology_registry"):
+        matches = list(db.aql.execute(
+            "FOR o IN ontology_registry "
+            "FILTER o.extraction_run_id == @rid "
+            "LIMIT 1 RETURN o._key",
+            bind_vars={"rid": run_id},
+        ))
+        if matches:
+            ontology_id = matches[0]
+
+    if not ontology_id:
+        return {"run_id": run_id, "classes": [], "properties": [], "edges": []}
+
+    classes: list[dict] = []
+    if db.has_collection("ontology_classes"):
+        classes = list(db.aql.execute(
+            "FOR c IN ontology_classes "
+            "FILTER c.ontology_id == @oid AND c.expired == @never "
+            "SORT c.label ASC RETURN c",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        ))
+
+    properties: list[dict] = []
+    if db.has_collection("ontology_properties"):
+        properties = list(db.aql.execute(
+            "FOR p IN ontology_properties "
+            "FILTER p.ontology_id == @oid AND p.expired == @never "
+            "SORT p.label ASC RETURN p",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        ))
+
+    edges: list[dict] = []
+    for edge_col in ("subclass_of", "has_property", "related_to", "equivalent_class", "extracted_from"):
+        if db.has_collection(edge_col):
+            result = list(db.aql.execute(
+                f"FOR e IN {edge_col} FILTER e.ontology_id == @oid "
+                "AND e.expired == @never "
+                "RETURN MERGE(e, {type: @et})",
+                bind_vars={
+                    "oid": ontology_id, "et": edge_col,
+                    "never": NEVER_EXPIRES,
+                },
+            ))
+            edges.extend(result)
+
+    return {
+        "run_id": run_id,
+        "ontology_id": ontology_id,
+        "classes": classes,
+        "properties": properties,
+        "edges": edges,
+    }
 
 
 @router.post("/staging/{run_id}/promote")
@@ -173,6 +274,82 @@ async def promote_staging(run_id: str) -> dict:
     """Promote approved staging entities to production."""
     # TODO: implement promotion logic
     return {"run_id": run_id, "promoted": 0}
+
+
+# ---------------------------------------------------------------------------
+# Ontology classes and edges (used by library ClassHierarchy component)
+# Must come AFTER all static routes to avoid catching /domain/classes etc.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{ontology_id}/classes")
+async def list_ontology_classes(ontology_id: str) -> dict:
+    """List all classes belonging to an ontology."""
+    db = get_db()
+    if not db.has_collection("ontology_classes"):
+        return {"data": []}
+    classes = list(db.aql.execute(
+        "FOR c IN ontology_classes FILTER c.ontology_id == @oid "
+        "AND c.expired == @never "
+        "SORT c.label ASC RETURN c",
+        bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+    ))
+    return {"data": classes}
+
+
+@router.get("/{ontology_id}/properties")
+async def list_ontology_properties(
+    ontology_id: str,
+    keys: str | None = None,
+) -> dict:
+    """List properties for an ontology, optionally filtered by comma-separated keys."""
+    db = get_db()
+    if not db.has_collection("ontology_properties"):
+        return {"data": []}
+    if keys:
+        key_list = [k.strip() for k in keys.split(",") if k.strip()]
+        props = list(db.aql.execute(
+            "FOR p IN ontology_properties "
+            "FILTER p.ontology_id == @oid AND p._key IN @keys "
+            "AND p.expired == @never "
+            "SORT p.label ASC RETURN p",
+            bind_vars={
+                "oid": ontology_id, "keys": key_list,
+                "never": NEVER_EXPIRES,
+            },
+        ))
+    else:
+        props = list(db.aql.execute(
+            "FOR p IN ontology_properties "
+            "FILTER p.ontology_id == @oid "
+            "AND p.expired == @never "
+            "SORT p.label ASC RETURN p",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        ))
+    return {"data": props}
+
+
+@router.get("/{ontology_id}/edges")
+async def list_ontology_edges(ontology_id: str) -> dict:
+    """List all edges (subclass_of, has_property, related_to) for an ontology."""
+    db = get_db()
+    edges: list[dict] = []
+    for edge_col in ("subclass_of", "has_property", "related_to", "equivalent_class"):
+        if db.has_collection(edge_col):
+            query = (
+                f"FOR e IN {edge_col} FILTER e.ontology_id == @oid "
+                "AND e.expired == @never "
+                "RETURN MERGE(e, {edge_type: @et})"
+            )
+            result = list(db.aql.execute(
+                query,
+                bind_vars={
+                    "oid": ontology_id, "et": edge_col,
+                    "never": NEVER_EXPIRES,
+                },
+            ))
+            edges.extend(result)
+    return {"data": edges}
 
 
 @router.get("/{ontology_id}/export")

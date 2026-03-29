@@ -22,7 +22,8 @@ function buildTree(
   const hasParent = new Set<string>();
 
   for (const edge of edges) {
-    if (edge.type !== "subclass_of") continue;
+    const edgeType = (edge as Record<string, unknown>).edge_type ?? edge.type;
+    if (edgeType !== "subclass_of") continue;
     const childKey = edge._from.split("/").pop() ?? edge._from;
     const parentKey = edge._to.split("/").pop() ?? edge._to;
     if (!childMap.has(parentKey)) childMap.set(parentKey, []);
@@ -99,7 +100,7 @@ function TreeItem({
           {node.cls.label}
         </span>
         <span className="ml-auto text-xs text-gray-400 flex-shrink-0">
-          {(node.cls.confidence * 100).toFixed(0)}%
+          {((node.cls.confidence ?? 0) * 100).toFixed(0)}%
         </span>
       </button>
 

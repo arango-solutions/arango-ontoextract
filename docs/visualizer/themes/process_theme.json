@@ -1,0 +1,109 @@
+{
+  "name": "AOE Process Pipeline",
+  "graphId": "aoe_process",
+  "isDefault": true,
+  "createdAt": null,
+  "updatedAt": null,
+  "nodeConfigMap": {
+    "documents": {
+      "background": { "color": "#0EA5E9", "iconName": "fa6-solid:file-lines" },
+      "labelAttribute": "filename",
+      "hoverInfoAttributes": ["filename", "status", "content_type", "chunk_count", "uploaded_at"],
+      "rules": [
+        {
+          "name": "Processed",
+          "condition": "status == 'processed'",
+          "background": { "color": "#10B981", "iconName": "fa6-solid:file-circle-check" }
+        },
+        {
+          "name": "Failed",
+          "condition": "status == 'failed'",
+          "background": { "color": "#EF4444", "iconName": "fa6-solid:file-circle-xmark" }
+        }
+      ]
+    },
+    "chunks": {
+      "background": { "color": "#A78BFA", "iconName": "fa6-solid:puzzle-piece" },
+      "labelAttribute": "_key",
+      "hoverInfoAttributes": ["_key", "doc_id", "chunk_index", "section_heading", "token_count"],
+      "rules": []
+    },
+    "extraction_runs": {
+      "background": { "color": "#EC4899", "iconName": "fa6-solid:gears" },
+      "labelAttribute": "_key",
+      "hoverInfoAttributes": ["_key", "document_id", "status", "model", "started_at", "completed_at", "class_count"],
+      "rules": [
+        {
+          "name": "Completed",
+          "condition": "status == 'completed'",
+          "background": { "color": "#10B981", "iconName": "fa6-solid:circle-check" }
+        },
+        {
+          "name": "Running",
+          "condition": "status == 'running'",
+          "background": { "color": "#F59E0B", "iconName": "fa6-solid:spinner" }
+        },
+        {
+          "name": "Failed",
+          "condition": "status == 'failed'",
+          "background": { "color": "#EF4444", "iconName": "fa6-solid:circle-xmark" }
+        }
+      ]
+    },
+    "ontology_registry": {
+      "background": { "color": "#EAB308", "iconName": "fa6-solid:book" },
+      "labelAttribute": "name",
+      "hoverInfoAttributes": ["name", "description", "version", "class_count", "source_document", "created_at"],
+      "rules": []
+    },
+    "ontology_classes": {
+      "background": { "color": "#3B82F6", "iconName": "fa6-solid:shapes" },
+      "labelAttribute": "label",
+      "hoverInfoAttributes": ["label", "uri", "description", "ontology_id", "confidence", "rdf_type"],
+      "rules": []
+    },
+    "ontology_properties": {
+      "background": { "color": "#8B5CF6", "iconName": "fa6-solid:arrow-right-arrow-left" },
+      "labelAttribute": "label",
+      "hoverInfoAttributes": ["label", "uri", "description", "domain_class", "range", "rdf_type"],
+      "rules": []
+    }
+  },
+  "edgeConfigMap": {
+    "has_chunk": {
+      "lineStyle": { "color": "#7C3AED", "thickness": 1.0 },
+      "arrowStyle": { "sourceArrowShape": "none", "targetArrowShape": "triangle" },
+      "hoverInfoAttributes": [],
+      "rules": [],
+      "labelStyle": { "color": "#1d2531" }
+    },
+    "extracted_from": {
+      "lineStyle": { "color": "#F97316", "thickness": 1.2, "lineType": "dashed" },
+      "arrowStyle": { "sourceArrowShape": "none", "targetArrowShape": "triangle" },
+      "hoverInfoAttributes": ["run_id", "ontology_id"],
+      "rules": [],
+      "labelStyle": { "color": "#1d2531" }
+    },
+    "has_property": {
+      "lineStyle": { "color": "#6B7280", "thickness": 1.0 },
+      "arrowStyle": { "sourceArrowShape": "none", "targetArrowShape": "triangle" },
+      "hoverInfoAttributes": ["ontology_id"],
+      "rules": [],
+      "labelStyle": { "color": "#1d2531" }
+    },
+    "subclass_of": {
+      "lineStyle": { "color": "#1E40AF", "thickness": 1.5 },
+      "arrowStyle": { "sourceArrowShape": "none", "targetArrowShape": "triangle" },
+      "hoverInfoAttributes": ["ontology_id"],
+      "rules": [],
+      "labelStyle": { "color": "#1d2531" }
+    },
+    "produced_by": {
+      "lineStyle": { "color": "#EAB308", "thickness": 1.0, "lineType": "dashed" },
+      "arrowStyle": { "sourceArrowShape": "none", "targetArrowShape": "triangle" },
+      "hoverInfoAttributes": [],
+      "rules": [],
+      "labelStyle": { "color": "#1d2531" }
+    }
+  }
+}

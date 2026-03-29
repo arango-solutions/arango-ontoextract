@@ -46,6 +46,7 @@ class Settings(BaseSettings):
 
     # -- LLM ---------------------------------------------------------------
     openai_api_key: str = ""
+    openai_base_url: str = ""
     anthropic_api_key: str = ""
     llm_extraction_model: str = "claude-sonnet-4-20250514"
     embedding_model: str = "text-embedding-3-small"

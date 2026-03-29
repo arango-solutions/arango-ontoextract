@@ -8,7 +8,8 @@ interface RunMetricsProps {
   runId: string | null;
 }
 
-function formatDuration(ms: number): string {
+function formatDuration(ms: number | undefined): string {
+  if (ms == null || ms === 0) return "—";
   if (ms < 1000) return `${ms}ms`;
   const seconds = Math.floor(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
@@ -17,15 +18,18 @@ function formatDuration(ms: number): string {
   return `${minutes}m ${remainingSec}s`;
 }
 
-function formatNumber(n: number): string {
+function formatNumber(n: number | undefined): string {
+  if (n == null) return "0";
   return n.toLocaleString();
 }
 
-function formatCost(cost: number): string {
+function formatCost(cost: number | undefined): string {
+  if (cost == null) return "$0.00";
   return `$${cost.toFixed(2)}`;
 }
 
-function formatPercent(rate: number): string {
+function formatPercent(rate: number | undefined): string {
+  if (rate == null) return "—";
   return `${(rate * 100).toFixed(1)}%`;
 }
 
@@ -138,9 +142,9 @@ export default function RunMetrics({ runId }: RunMetricsProps) {
       <MetricCard
         label="Entity Counts"
         value={String(
-          metrics.classes_extracted + metrics.properties_extracted,
+          (metrics.classes_extracted ?? 0) + (metrics.properties_extracted ?? 0),
         )}
-        sublabel={`${metrics.classes_extracted} classes + ${metrics.properties_extracted} properties`}
+        sublabel={`${metrics.classes_extracted ?? 0} classes + ${metrics.properties_extracted ?? 0} properties`}
       />
       <MetricCard
         label="Agreement Rate"

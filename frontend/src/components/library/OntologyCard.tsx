@@ -24,15 +24,19 @@ const STATUS_CONFIG: Record<
   deprecated: { label: "Deprecated", dot: "bg-red-400" },
 };
 
-function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+function formatRelativeTime(value: string | number | undefined): string {
+  if (value == null) return "N/A";
+  const ts = typeof value === "number" ? value * 1000 : new Date(value).getTime();
+  if (Number.isNaN(ts)) return "N/A";
+  const diff = Date.now() - ts;
   const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return "just now";
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString();
+  return new Date(ts).toLocaleDateString();
 }
 
 export default function OntologyCard({ ontology, onClick }: OntologyCardProps) {
@@ -42,13 +46,14 @@ export default function OntologyCard({ ontology, onClick }: OntologyCardProps) {
   return (
     <button
       onClick={() => onClick?.(ontology._key)}
-      className="group block w-full text-left bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow overflow-hidden"
+      className="group block w-full text-left bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-blue-300 cursor-pointer transition-all overflow-hidden"
       data-testid={`ontology-card-${ontology._key}`}
+      title="Click to explore class hierarchy"
     >
       <div className="h-1 bg-gradient-to-r from-blue-500 to-emerald-500" />
       <div className="p-5">
         <div className="flex items-start justify-between mb-2">
-          <h3 className="font-semibold text-gray-900 group-hover:text-gray-700">
+          <h3 className="font-semibold text-gray-900 group-hover:text-blue-700 transition-colors">
             {ontology.name}
           </h3>
           <span
@@ -93,8 +98,15 @@ export default function OntologyCard({ ontology, onClick }: OntologyCardProps) {
             />
             <span>{status.label}</span>
           </div>
-          <span>Updated {formatRelativeTime(ontology.last_updated)}</span>
+          <span>Updated {formatRelativeTime(
+            (ontology as Record<string, unknown>).updated_at as string
+            ?? ontology.last_updated
+            ?? ontology.created_at
+          )}</span>
         </div>
+        <p className="text-xs text-gray-300 group-hover:text-blue-400 mt-3 text-center transition-colors">
+          Click to explore →
+        </p>
       </div>
     </button>
   );

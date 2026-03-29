@@ -1,13 +1,22 @@
-"""005 — MDI-prefixed persistent indexes on [created, expired].
+"""005 — MDI-prefixed indexes on temporal fields.
 
 Deployed on all versioned vertex and edge collections to accelerate
 point-in-time temporal queries.
 
+The ``mdi-prefixed`` index type uses:
+- ``prefixFields``: equality-match fields narrowing the search space first
+  (``ontology_id`` — every temporal query is scoped to an ontology)
+- ``fields``: multi-dimensional range fields for interval overlap queries
+  (``created``, ``expired``)
+
+This enables efficient point-in-time snapshot queries of the form:
+  FILTER doc.ontology_id == @oid
+    AND doc.created <= @t
+    AND (doc.expired == NEVER_EXPIRES OR doc.expired > @t)
+
 python-arango does not expose a dedicated ``add_mdi_prefixed_index`` method,
-so we use the generic HTTP API via ``db._conn.post`` to create the
-mdi-prefixed index type.  If the HTTP approach fails (e.g. ArangoDB version
-does not support mdi-prefixed), we fall back to a regular persistent index
-on the same fields.
+so we use the raw HTTP API.  If the cluster/version does not support
+mdi-prefixed, we fall back to a compound persistent index.
 """
 
 from __future__ import annotations
@@ -16,6 +25,7 @@ import logging
 
 from arango.database import StandardDatabase
 from arango.exceptions import IndexCreateError
+from arango.request import Request
 
 log = logging.getLogger(__name__)
 
@@ -48,24 +58,33 @@ def _create_mdi_index(db: StandardDatabase, collection_name: str) -> None:
         "type": "mdi-prefixed",
         "fields": ["created", "expired"],
         "fieldValueTypes": "double",
-        "prefixFields": ["created"],
+        "prefixFields": ["ontology_id"],
         "sparse": False,
         "name": idx_name,
     }
     try:
-        resp = db._conn.post(
-            f"/_api/index?collection={collection_name}",
+        req = Request(
+            method="post",
+            endpoint=f"/_api/index?collection={collection_name}",
             data=body,
         )
+        resp = db._conn.send_request(req)
         if resp.status_code in (200, 201):
             log.info("created mdi-prefixed index %s on %s", idx_name, collection_name)
             return
-    except Exception:
-        pass
+        log.warning(
+            "mdi-prefixed index creation returned %s on %s — trying fallback",
+            resp.status_code, collection_name,
+        )
+    except Exception as exc:
+        log.warning(
+            "mdi-prefixed index creation failed on %s: %s — trying fallback",
+            collection_name, exc,
+        )
 
     try:
         col.add_persistent_index(
-            fields=["created", "expired"],
+            fields=["ontology_id", "created", "expired"],
             name=idx_name,
         )
         log.info(
@@ -79,4 +98,5 @@ def _create_mdi_index(db: StandardDatabase, collection_name: str) -> None:
 
 def up(db: StandardDatabase) -> None:
     for name in VERSIONED_COLLECTIONS:
-        _create_mdi_index(db, name)
+        if db.has_collection(name):
+            _create_mdi_index(db, name)

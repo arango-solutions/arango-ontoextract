@@ -186,53 +186,86 @@ const EDGE_COLORS: Record<string, string> = {
 
 // --- Layout: simple hierarchical using dagre-like positioning ---
 
+const HIERARCHY_EDGE_TYPES = new Set([
+  "subclass_of",
+  "extends_domain",
+  "related_to",
+]);
+
 function computeLayout(
   classes: OntologyClass[],
   edges: OntologyEdge[],
 ): Map<string, { x: number; y: number }> {
   const positions = new Map<string, { x: number; y: number }>();
   const children = new Map<string, string[]>();
-  const parents = new Set<string>();
+  const hasParent = new Set<string>();
   const allKeys = new Set(classes.map((c) => c._key));
 
   for (const edge of edges) {
+    const edgeType = (edge as Record<string, unknown>).edge_type ?? edge.type;
+    if (!HIERARCHY_EDGE_TYPES.has(edgeType as string)) continue;
+
     const fromKey = edge._from.split("/").pop() ?? edge._from;
     const toKey = edge._to.split("/").pop() ?? edge._to;
-    if (!children.has(fromKey)) children.set(fromKey, []);
-    children.get(fromKey)!.push(toKey);
-    parents.add(toKey);
+    if (!allKeys.has(fromKey) || !allKeys.has(toKey)) continue;
+
+    if (!children.has(toKey)) children.set(toKey, []);
+    children.get(toKey)!.push(fromKey);
+    hasParent.add(fromKey);
   }
 
-  const roots = classes.filter((c) => !parents.has(c._key));
+  const roots = classes.filter((c) => !hasParent.has(c._key));
   if (roots.length === 0 && classes.length > 0) {
     roots.push(classes[0]);
   }
 
   const COL_WIDTH = 280;
-  const ROW_HEIGHT = 120;
-  let currentX = 0;
+  const ROW_HEIGHT = 140;
 
-  function placeSubtree(key: string, depth: number, visited: Set<string>) {
-    if (visited.has(key) || !allKeys.has(key)) return;
+  function placeSubtree(
+    key: string,
+    depth: number,
+    startX: number,
+    visited: Set<string>,
+  ): number {
+    if (visited.has(key) || !allKeys.has(key)) return startX;
     visited.add(key);
-    positions.set(key, { x: currentX, y: depth * ROW_HEIGHT });
-    const kids = children.get(key) ?? [];
-    for (const kid of kids) {
-      currentX += COL_WIDTH;
-      placeSubtree(kid, depth + 1, visited);
+
+    const kids = (children.get(key) ?? []).filter((k) => !visited.has(k) && allKeys.has(k));
+
+    if (kids.length === 0) {
+      positions.set(key, { x: startX, y: depth * ROW_HEIGHT });
+      return startX + COL_WIDTH;
     }
+
+    let nextX = startX;
+    for (const kid of kids) {
+      nextX = placeSubtree(kid, depth + 1, nextX, visited);
+    }
+
+    const childPositions = kids
+      .map((k) => positions.get(k))
+      .filter((p): p is { x: number; y: number } => p != null);
+    const avgX =
+      childPositions.length > 0
+        ? childPositions.reduce((s, p) => s + p.x, 0) / childPositions.length
+        : startX;
+
+    positions.set(key, { x: avgX, y: depth * ROW_HEIGHT });
+    return nextX;
   }
 
   const visited = new Set<string>();
+  let nextX = 0;
   for (const root of roots) {
-    placeSubtree(root._key, 0, visited);
-    currentX += COL_WIDTH;
+    nextX = placeSubtree(root._key, 0, nextX, visited);
+    nextX += COL_WIDTH / 2;
   }
 
   for (const cls of classes) {
     if (!positions.has(cls._key)) {
-      positions.set(cls._key, { x: currentX, y: 0 });
-      currentX += COL_WIDTH;
+      positions.set(cls._key, { x: nextX, y: 0 });
+      nextX += COL_WIDTH;
     }
   }
 
@@ -293,7 +326,7 @@ export default function GraphCanvas({
           uri: cls.uri,
           rdfType: cls.rdf_type,
           confidence: cls.confidence,
-          status: cls.status,
+          status: cls.status ?? "pending",
           classKey: cls._key,
           description: cls.description,
           colorMode,
@@ -303,35 +336,43 @@ export default function GraphCanvas({
       };
     });
 
-    const fe: Edge[] = edges.map((edge) => {
-      const fromKey = edge._from.split("/").pop() ?? edge._from;
-      const toKey = edge._to.split("/").pop() ?? edge._to;
-      const isExtendsDomain = edge.type === "extends_domain";
-      return {
-        id: edge._key,
-        source: fromKey,
-        target: toKey,
-        label: edge.label || edge.type,
-        type: "default",
-        markerEnd: { type: MarkerType.ArrowClosed },
-        style: {
-          stroke: isExtendsDomain ? "#a855f7" : (EDGE_COLORS[edge.type] ?? "#94a3b8"),
-          strokeWidth: isExtendsDomain ? 2.5 : 2,
-          strokeDasharray: isExtendsDomain ? "6 3" : undefined,
-        },
-        labelStyle: {
-          fill: isExtendsDomain ? "#7c3aed" : "#64748b",
-          fontSize: 11,
-          fontWeight: isExtendsDomain ? 600 : 500,
-        },
-        labelBgStyle: {
-          fill: "#f8fafc",
-          fillOpacity: 0.9,
-        },
-        labelBgPadding: [4, 2] as [number, number],
-        data: { edgeKey: edge._key },
-      };
-    });
+    const classKeySet = new Set(classes.map((c) => c._key));
+    const fe: Edge[] = edges
+      .filter((edge) => {
+        const fromKey = edge._from.split("/").pop() ?? edge._from;
+        const toKey = edge._to.split("/").pop() ?? edge._to;
+        return classKeySet.has(fromKey) && classKeySet.has(toKey);
+      })
+      .map((edge) => {
+        const fromKey = edge._from.split("/").pop() ?? edge._from;
+        const toKey = edge._to.split("/").pop() ?? edge._to;
+        const edgeType = ((edge as Record<string, unknown>).edge_type ?? edge.type) as string;
+        const isExtendsDomain = edgeType === "extends_domain";
+        return {
+          id: edge._key,
+          source: fromKey,
+          target: toKey,
+          label: edge.label || edgeType,
+          type: "default",
+          markerEnd: { type: MarkerType.ArrowClosed },
+          style: {
+            stroke: isExtendsDomain ? "#a855f7" : (EDGE_COLORS[edgeType] ?? "#94a3b8"),
+            strokeWidth: isExtendsDomain ? 2.5 : 2,
+            strokeDasharray: isExtendsDomain ? "6 3" : undefined,
+          },
+          labelStyle: {
+            fill: isExtendsDomain ? "#7c3aed" : "#64748b",
+            fontSize: 11,
+            fontWeight: isExtendsDomain ? 600 : 500,
+          },
+          labelBgStyle: {
+            fill: "#f8fafc",
+            fillOpacity: 0.9,
+          },
+          labelBgPadding: [4, 2] as [number, number],
+          data: { edgeKey: edge._key },
+        };
+      });
 
     if (showMergeCandidates && mergeCandidates.length > 0) {
       for (const mc of mergeCandidates) {

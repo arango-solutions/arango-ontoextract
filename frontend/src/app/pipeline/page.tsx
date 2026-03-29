@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import dynamic from "next/dynamic";
+import { api } from "@/lib/api-client";
 import RunList from "@/components/pipeline/RunList";
 import RunMetrics from "@/components/pipeline/RunMetrics";
 import ErrorLog from "@/components/pipeline/ErrorLog";
@@ -24,6 +25,28 @@ export default function PipelineMonitor() {
   const [activeTab, setActiveTab] = useState<DetailTab>("metrics");
   const { steps, isConnected, error: wsError } = useExtractionSocket(selectedRunId);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [runListKey, setRunListKey] = useState(0);
+
+  async function handleReset(full: boolean) {
+    const msg = full
+      ? "This will delete ALL data including documents and chunks. Continue?"
+      : "This will delete all ontology data (classes, properties, edges, runs, registry). Documents and chunks are preserved so you can re-extract. Continue?";
+    if (!confirm(msg)) return;
+    setResetBusy(true);
+    try {
+      const endpoint = full ? "/api/v1/admin/reset/full" : "/api/v1/admin/reset";
+      const result = await api.post<{ reset: boolean; collections_truncated: string[] }>(endpoint);
+      alert(`Reset complete. Truncated: ${result.collections_truncated.join(", ")}`);
+      setSelectedRunId(null);
+      setRunListKey((k) => k + 1);
+    } catch (err) {
+      alert(`Reset failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setResetBusy(false);
+    }
+  }
 
   const tabs: { key: DetailTab; label: string }[] = [
     { key: "metrics", label: "Metrics" },
@@ -54,6 +77,38 @@ export default function PipelineMonitor() {
                 </span>
               </div>
             )}
+            <div className="relative">
+              <button
+                disabled={resetBusy}
+                onClick={() => setResetOpen((v) => !v)}
+                onBlur={() => setTimeout(() => setResetOpen(false), 150)}
+                className="text-xs px-3 py-1.5 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 disabled:opacity-40 transition-colors"
+              >
+                {resetBusy ? "Resetting\u2026" : "Reset \u25BE"}
+              </button>
+              {resetOpen && (
+                <div className="absolute right-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
+                  <button
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => { setResetOpen(false); handleReset(false); }}
+                    disabled={resetBusy}
+                    className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 rounded-t-lg"
+                  >
+                    Reset Ontology Data
+                    <span className="block text-gray-400 mt-0.5">Keeps documents &amp; chunks</span>
+                  </button>
+                  <button
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => { setResetOpen(false); handleReset(true); }}
+                    disabled={resetBusy}
+                    className="w-full text-left px-3 py-2 text-xs text-red-600 hover:bg-red-50 border-t border-gray-100 rounded-b-lg"
+                  >
+                    Full Reset
+                    <span className="block text-red-400 mt-0.5">Deletes everything</span>
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="md:hidden text-sm px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50"
@@ -76,6 +131,7 @@ export default function PipelineMonitor() {
           className={`${sidebarOpen ? "block" : "hidden"} md:block w-full md:w-[350px] flex-shrink-0 bg-white border-r border-gray-200 md:min-h-[calc(100vh-73px)]`}
         >
           <RunList
+            key={runListKey}
             onSelectRun={(id) => {
               setSelectedRunId(id);
               setSidebarOpen(false);
@@ -116,9 +172,17 @@ export default function PipelineMonitor() {
                     <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
                       Agent Pipeline
                     </h2>
-                    <span className="text-xs text-gray-400 font-mono">
-                      {selectedRunId}
-                    </span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gray-400 font-mono">
+                        {selectedRunId}
+                      </span>
+                      <a
+                        href={`/curation/${selectedRunId}`}
+                        className="text-xs px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        Curate
+                      </a>
+                    </div>
                   </div>
                   <div className="h-[calc(100%-48px)]">
                     <AgentDAG steps={steps} />

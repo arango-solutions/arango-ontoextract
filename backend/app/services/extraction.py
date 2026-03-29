@@ -7,6 +7,7 @@ and tracks token usage and cost.
 from __future__ import annotations
 
 import logging
+import sys
 import time
 import uuid
 from typing import Any
@@ -123,6 +124,29 @@ async def start_run(
 
         if final_state.get("consistency_result"):
             _store_results(db, run_id=run_id, result=final_state["consistency_result"])
+            ontology_id = _auto_register_ontology(
+                db,
+                run_id=run_id,
+                document_id=document_id,
+                result=final_state["consistency_result"],
+            )
+            if ontology_id:
+                _materialize_to_graph(
+                    db,
+                    run_id=run_id,
+                    document_id=document_id,
+                    ontology_id=ontology_id,
+                    result=final_state["consistency_result"],
+                )
+                try:
+                    from app.services.ontology_graphs import ensure_ontology_graph
+                    graph_name = ensure_ontology_graph(ontology_id, db=db)
+                    log.info("ensured per-ontology graph %s", graph_name)
+                except Exception:
+                    log.warning(
+                        "per-ontology graph creation failed",
+                        exc_info=True,
+                    )
 
     except Exception as exc:
         log.exception("extraction pipeline failed", extra={"run_id": run_id})
@@ -253,15 +277,28 @@ def get_run_cost(
     token_usage = stats.get("token_usage", {})
     model = run.get("model", settings.llm_extraction_model)
 
-    total_tokens = token_usage.get("total_tokens", 0)
+    prompt_tokens = token_usage.get("prompt_tokens", 0)
+    completion_tokens = token_usage.get("completion_tokens", 0)
+    total_tokens = token_usage.get("total_tokens", prompt_tokens + completion_tokens)
     cost_per_1k = _COST_PER_1K_TOKENS.get(model, 0.003)
     estimated_cost = (total_tokens / 1000) * cost_per_1k
+
+    started = run.get("started_at", 0)
+    completed = run.get("completed_at", 0)
+    duration_ms = int((completed - started) * 1000) if started and completed else 0
 
     return {
         "run_id": run_id,
         "model": model,
+        "total_duration_ms": duration_ms,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "estimated_cost": round(estimated_cost, 6),
+        "classes_extracted": stats.get("classes_extracted", 0),
+        "properties_extracted": stats.get("properties_extracted", 0),
+        "pass_agreement_rate": stats.get("pass_agreement_rate", 0.0),
         "token_usage": token_usage,
-        "estimated_cost_usd": round(estimated_cost, 6),
         "cost_per_1k_tokens": cost_per_1k,
     }
 
@@ -305,6 +342,168 @@ def _store_results(
         col.insert(doc)
     except Exception:
         col.update({"_key": results_key, **doc})
+
+
+NEVER_EXPIRES: int = sys.maxsize
+
+
+def _materialize_to_graph(
+    db: StandardDatabase,
+    *,
+    run_id: str,
+    document_id: str,
+    ontology_id: str,
+    result: Any,
+) -> None:
+    """Write extracted classes/properties into graph collections with edges."""
+    now = time.time()
+    classes = result.classes if hasattr(result, "classes") else result.get("classes", [])
+
+    for col_name in ("ontology_classes", "ontology_properties",
+                     "has_property", "subclass_of", "related_to", "extracted_from"):
+        if not db.has_collection(col_name):
+            edge = col_name in ("has_property", "subclass_of", "related_to", "extracted_from")
+            db.create_collection(col_name, edge=edge)
+
+    cls_col = db.collection("ontology_classes")
+    prop_col = db.collection("ontology_properties")
+    has_prop_col = db.collection("has_property")
+    extracted_col = db.collection("extracted_from")
+    subclass_col = db.collection("subclass_of")
+    related_col = db.collection("related_to")
+
+    class_keys: dict[str, str] = {}
+
+    for cls in classes:
+        cls_data = cls.model_dump() if hasattr(cls, "model_dump") else dict(cls)
+        label = cls_data.get("label", "Unknown")
+        uri = cls_data.get("uri", f"http://example.org/ontology#{label.replace(' ', '')}")
+        key = uri.split("#")[-1].split("/")[-1]
+
+        class_doc = {
+            "_key": key,
+            "label": label,
+            "uri": uri,
+            "description": cls_data.get("description", ""),
+            "ontology_id": ontology_id,
+            "extraction_run_id": run_id,
+            "confidence": cls_data.get("confidence", 0.0),
+            "rdf_type": "owl:Class",
+            "created": now,
+            "expired": NEVER_EXPIRES,
+        }
+        try:
+            cls_col.insert(class_doc, overwrite=True)
+        except Exception as exc:
+            log.warning("class insert failed for %s: %s", key, exc)
+        class_keys[label] = key
+
+        props = cls_data.get("properties", [])
+        for prop in props:
+            prop_label = prop.get("label", "unknown_prop")
+            prop_key = f"{key}_{prop_label.replace(' ', '_').lower()}"
+            prop_doc = {
+                "_key": prop_key,
+                "label": prop_label,
+                "uri": f"{uri.rsplit('#', 1)[0]}#{prop_label.replace(' ', '')}",
+                "description": prop.get("description", ""),
+                "domain_class": key,
+                "range": prop.get("range", "xsd:string"),
+                "ontology_id": ontology_id,
+                "confidence": prop.get("confidence", 0.0),
+                "rdf_type": "owl:ObjectProperty" if prop.get("range", "").startswith("http") else "owl:DatatypeProperty",
+                "created": now,
+                "expired": NEVER_EXPIRES,
+            }
+            try:
+                prop_col.insert(prop_doc, overwrite=True)
+            except Exception as exc:
+                log.warning("property insert failed for %s: %s", prop_key, exc)
+
+            try:
+                has_prop_col.insert({
+                    "_from": f"ontology_classes/{key}",
+                    "_to": f"ontology_properties/{prop_key}",
+                    "ontology_id": ontology_id,
+                    "created": now,
+                    "expired": NEVER_EXPIRES,
+                })
+            except Exception:
+                pass
+
+        try:
+            extracted_col.insert({
+                "_from": f"ontology_classes/{key}",
+                "_to": f"documents/{document_id}",
+                "run_id": run_id,
+                "ontology_id": ontology_id,
+                "created": now,
+            })
+        except Exception:
+            pass
+
+        parent = cls_data.get("parent_class")
+        if parent and parent in class_keys:
+            try:
+                subclass_col.insert({
+                    "_from": f"ontology_classes/{key}",
+                    "_to": f"ontology_classes/{class_keys[parent]}",
+                    "ontology_id": ontology_id,
+                    "created": now,
+                    "expired": NEVER_EXPIRES,
+                })
+            except Exception:
+                pass
+
+    log.info(
+        "materialized extraction to graph",
+        extra={"run_id": run_id, "classes": len(class_keys), "ontology_id": ontology_id},
+    )
+
+
+def _auto_register_ontology(
+    db: StandardDatabase,
+    *,
+    run_id: str,
+    document_id: str,
+    result: Any,
+) -> str | None:
+    """Register an ontology in the library after successful extraction.
+
+    Returns the ontology_id (_key) on success, None on failure.
+    """
+    try:
+        from app.db import registry_repo, documents_repo
+
+        doc = documents_repo.get_document(document_id)
+        filename = doc.get("filename", "unknown") if doc else "unknown"
+        name = filename.rsplit(".", 1)[0].replace("-", " ").replace("_", " ").title()
+
+        classes = result.classes if hasattr(result, "classes") else result.get("classes", [])
+        class_count = len(classes)
+
+        entry = registry_repo.create_registry_entry({
+            "name": name,
+            "description": f"Ontology extracted from {filename}",
+            "tier": "local",
+            "source_document_id": document_id,
+            "extraction_run_id": run_id,
+            "class_count": class_count,
+            "property_count": sum(
+                len(c.properties if hasattr(c, "properties") else c.get("properties", []))
+                for c in classes
+            ),
+            "namespace": "http://example.org/ontology#",
+        })
+        ontology_id = entry.get("_key", run_id)
+        log.info(
+            "auto-registered ontology",
+            extra={"run_id": run_id, "name": name, "classes": class_count, "ontology_id": ontology_id},
+        )
+        return ontology_id
+    except Exception:
+        log.warning("auto-registration failed — ontology can be registered manually", exc_info=True)
+        return None
 
 
 def _serialize_step_log(step_log: dict[str, Any] | Any) -> dict[str, Any]:

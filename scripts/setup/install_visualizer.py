@@ -1,8 +1,11 @@
 """Idempotent installer for ArangoDB Graph Visualizer customization assets.
 
 Installs themes, canvas actions, saved queries, graph visualizer queries,
-viewpoints, and viewpoint-action/query links for ontology graphs in the
-AOE platform.
+viewpoints, and viewpoint-action/query links for all AOE graphs:
+  - domain_ontology (ontology exploration)
+  - aoe_process (extraction pipeline lineage)
+  - all_ontologies (composite view)
+  - Per-ontology graphs (ontology_{id})
 
 Usage:
     python scripts/setup/install_visualizer.py          # uses app.config.settings
@@ -28,11 +31,9 @@ from arango.database import StandardDatabase
 log = logging.getLogger(__name__)
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent.parent / "docs" / "visualizer"
-THEME_PATH = ASSETS_DIR / "themes" / "ontology_theme.json"
-ACTIONS_PATH = ASSETS_DIR / "actions" / "ontology_actions.json"
-QUERIES_PATH = ASSETS_DIR / "queries" / "ontology_queries.json"
-
-NEVER_EXPIRES = 9223372036854775807
+THEMES_DIR = ASSETS_DIR / "themes"
+ACTIONS_DIR = ASSETS_DIR / "actions"
+QUERIES_DIR = ASSETS_DIR / "queries"
 
 SYSTEM_COLLECTIONS = [
     "_graphThemeStore",
@@ -47,7 +48,18 @@ SYSTEM_EDGE_COLLECTIONS = [
     "_viewpointQueries",
 ]
 
-DEFAULT_GRAPH_NAME = "domain_ontology"
+GRAPH_CONFIGS = {
+    "domain_ontology": {
+        "theme": "ontology_theme.json",
+        "actions": "ontology_actions.json",
+        "queries": "ontology_queries.json",
+    },
+    "aoe_process": {
+        "theme": "process_theme.json",
+        "actions": "process_actions.json",
+        "queries": "process_queries.json",
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -65,8 +77,7 @@ def ensure_collection(
     *,
     edge: bool = False,
 ) -> None:
-    """Create a collection if it doesn't exist. System-prefixed collections
-    get ``system=True`` so ArangoDB accepts the ``_`` prefix."""
+    """Create a collection if it doesn't exist."""
     if db.has_collection(name):
         return
     is_system = name.startswith("_")
@@ -142,8 +153,7 @@ def prune_theme(
     vertex_colls: set[str],
     edge_colls: set[str],
 ) -> dict:
-    """Return a copy of the theme with configs pruned to only collections
-    that exist in the target graph."""
+    """Return a copy of the theme pruned to collections in the graph."""
     theme = copy.deepcopy(theme_raw)
     if "nodeConfigMap" in theme:
         theme["nodeConfigMap"] = {
@@ -156,75 +166,63 @@ def prune_theme(
     return theme
 
 
-def _load_theme(graph_name: str) -> dict:
-    raw = json.loads(THEME_PATH.read_text(encoding="utf-8"))
+def _load_theme(theme_file: str, graph_name: str) -> dict:
+    path = THEMES_DIR / theme_file
+    raw = json.loads(path.read_text(encoding="utf-8"))
     raw["graphId"] = graph_name
-    raw["_key"] = f"aoe_ontology_{graph_name}"
+    raw["_key"] = f"aoe_{graph_name}"
     ensure_visualizer_shape(raw)
     return raw
 
 
-def _default_theme(graph_name: str) -> dict:
-    """Plain default theme so users can switch back after DB recreation."""
-    return {
-        "_key": f"aoe_default_{graph_name}",
-        "name": "Default",
-        "graphId": graph_name,
-        "isDefault": False,
-        "nodeConfigMap": {},
-        "edgeConfigMap": {},
-    }
+def _demote_builtin_defaults(db: StandardDatabase, graph_name: str) -> None:
+    """Set isDefault=False on any built-in Default themes for this graph
+    so the AOE custom theme auto-applies instead."""
+    col = db.collection("_graphThemeStore")
+    for doc in col.find({"graphId": graph_name, "name": "Default"}):
+        if doc.get("_key", "").startswith("aoe_"):
+            continue
+        if doc.get("isDefault") is True:
+            col.update({"_key": doc["_key"], "isDefault": False}, check_rev=False)
+            log.debug("demoted built-in default theme %s", doc["_key"])
 
 
-def install_themes(db: StandardDatabase, graph_name: str) -> None:
-    """Install the ontology theme and a fallback default theme."""
-    ensure_collection(db, "_graphThemeStore")
-    theme = _load_theme(graph_name)
-    _upsert_by_key(db, "_graphThemeStore", theme)
-    _upsert_by_key(db, "_graphThemeStore", _default_theme(graph_name))
-    log.info(
-        "installed themes for graph %s (%d node types, %d edge types)",
-        graph_name,
-        len(theme.get("nodeConfigMap", {})),
-        len(theme.get("edgeConfigMap", {})),
-    )
-
-
-def install_pruned_theme(
+def install_themes(
     db: StandardDatabase,
     graph_name: str,
+    theme_file: str,
+    *,
+    prune_to_graph: bool = False,
 ) -> dict:
-    """Install a theme pruned to the collections actually present in the graph.
-    Returns the pruned theme dict."""
-    theme_raw = _load_theme(graph_name)
+    """Install the AOE theme and demote built-in defaults. Returns the theme dict."""
+    ensure_collection(db, "_graphThemeStore")
 
-    vertex_colls: set[str] = set()
-    edge_colls: set[str] = set()
+    theme = _load_theme(theme_file, graph_name)
 
-    if db.has_graph(graph_name):
+    if prune_to_graph and db.has_graph(graph_name):
         graph = db.graph(graph_name)
+        vertex_colls: set[str] = set()
+        edge_colls: set[str] = set()
         for edef in graph.edge_definitions():
             edge_colls.add(edef["edge_collection"])
             vertex_colls.update(edef["from_vertex_collections"])
             vertex_colls.update(edef["to_vertex_collections"])
+        theme = prune_theme(theme, vertex_colls, edge_colls)
+        theme["_key"] = f"aoe_{graph_name}"
+        theme["graphId"] = graph_name
+        theme["name"] = _load_theme(theme_file, graph_name)["name"]
+        theme["isDefault"] = True
+        ensure_visualizer_shape(theme)
 
-    pruned = prune_theme(theme_raw, vertex_colls, edge_colls)
-    pruned["_key"] = theme_raw["_key"]
-    pruned["graphId"] = graph_name
-    pruned["name"] = theme_raw["name"]
-    pruned["isDefault"] = True
-    ensure_visualizer_shape(pruned)
-
-    ensure_collection(db, "_graphThemeStore")
-    _upsert_by_key(db, "_graphThemeStore", pruned)
-    _upsert_by_key(db, "_graphThemeStore", _default_theme(graph_name))
+    _upsert_by_key(db, "_graphThemeStore", theme)
+    _demote_builtin_defaults(db, graph_name)
     log.info(
-        "installed pruned theme for %s (%d node types, %d edge types)",
+        "installed themes for %s (%d nodes, %d edges)",
         graph_name,
-        len(pruned.get("nodeConfigMap", {})),
-        len(pruned.get("edgeConfigMap", {})),
+        len(theme.get("nodeConfigMap", {})),
+        len(theme.get("edgeConfigMap", {})),
     )
-    return pruned
+    return theme
 
 
 # ---------------------------------------------------------------------------
@@ -232,48 +230,60 @@ def install_pruned_theme(
 # ---------------------------------------------------------------------------
 
 
-def _load_actions(graph_name: str) -> list[dict]:
-    actions = json.loads(ACTIONS_PATH.read_text(encoding="utf-8"))
+def _load_actions(actions_file: str, graph_name: str) -> list[dict]:
+    path = ACTIONS_DIR / actions_file
+    actions = json.loads(path.read_text(encoding="utf-8"))
     for action in actions:
         action["graphId"] = graph_name
+        if graph_name != "domain_ontology":
+            action["_key"] = f"{graph_name}_{action['_key']}"
     return actions
 
 
-def install_canvas_actions(db: StandardDatabase, graph_name: str) -> list[str]:
+def install_canvas_actions(
+    db: StandardDatabase,
+    graph_name: str,
+    actions_file: str,
+) -> list[str]:
     """Install canvas actions. Returns list of _id values."""
     ensure_collection(db, "_canvasActions")
-    actions = _load_actions(graph_name)
+    actions = _load_actions(actions_file, graph_name)
     ids = []
     for action in actions:
         doc_id = _upsert_by_key(db, "_canvasActions", action)
         ids.append(doc_id)
-    log.info("installed %d canvas actions for graph %s", len(ids), graph_name)
+    log.info("installed %d canvas actions for %s", len(ids), graph_name)
     return ids
 
 
 # ---------------------------------------------------------------------------
-# Saved Queries (global query editor: _editor_saved_queries)
+# Saved Queries
 # ---------------------------------------------------------------------------
 
 
-def _load_queries(db_name: str) -> list[dict]:
-    queries = json.loads(QUERIES_PATH.read_text(encoding="utf-8"))
+def _load_queries(queries_file: str, db_name: str, graph_name: str) -> list[dict]:
+    path = QUERIES_DIR / queries_file
+    queries = json.loads(path.read_text(encoding="utf-8"))
     for q in queries:
         q["databaseName"] = db_name
+        if graph_name != "domain_ontology":
+            q["_key"] = f"{graph_name}_{q['_key']}"
     return queries
 
 
-def install_saved_queries(db: StandardDatabase, graph_name: str) -> list[str]:
-    """Install saved queries into _editor_saved_queries (global query editor)
-    and _queries (Graph Visualizer Queries panel). Returns list of _id values
-    from _editor_saved_queries."""
+def install_saved_queries(
+    db: StandardDatabase,
+    graph_name: str,
+    queries_file: str,
+) -> list[str]:
+    """Install saved queries into _editor_saved_queries and _queries.
+    Returns list of _key values for viewpoint linking."""
     ensure_collection(db, "_editor_saved_queries")
     ensure_collection(db, "_queries")
-    queries = _load_queries(db.name)
-    editor_ids = []
+    queries = _load_queries(queries_file, db.name, graph_name)
+    keys = []
     for q in queries:
-        doc_id = _upsert_by_key(db, "_editor_saved_queries", q)
-        editor_ids.append(doc_id)
+        _upsert_by_key(db, "_editor_saved_queries", q)
 
         viz_query = {
             "_key": q["_key"],
@@ -284,9 +294,10 @@ def install_saved_queries(db: StandardDatabase, graph_name: str) -> list[str]:
             "bindVariables": q.get("bindVariables", {}),
         }
         _upsert_by_key(db, "_queries", viz_query)
+        keys.append(q["_key"])
 
-    log.info("installed %d saved queries for graph %s", len(editor_ids), graph_name)
-    return editor_ids
+    log.info("installed %d saved queries for %s", len(keys), graph_name)
+    return keys
 
 
 # ---------------------------------------------------------------------------
@@ -295,8 +306,7 @@ def install_saved_queries(db: StandardDatabase, graph_name: str) -> list[str]:
 
 
 def ensure_default_viewpoint(db: StandardDatabase, graph_name: str) -> str:
-    """Create a 'Default' viewpoint for the given graph if it doesn't exist.
-    Returns the viewpoint ``_id``."""
+    """Create a 'Default' viewpoint for the given graph. Returns ``_id``."""
     ensure_collection(db, "_viewpoints")
     col = db.collection("_viewpoints")
     existing = list(col.find({"graphId": graph_name, "name": "Default"}, limit=1))
@@ -323,7 +333,7 @@ def link_actions_to_viewpoint(
     viewpoint_id: str,
     action_ids: list[str],
 ) -> None:
-    """Create _viewpointActions edges from the viewpoint to each canvas action."""
+    """Create _viewpointActions edges."""
     ensure_collection(db, "_viewpointActions", edge=True)
     for action_id in action_ids:
         _ensure_edge(db, "_viewpointActions", viewpoint_id, action_id)
@@ -335,12 +345,66 @@ def link_queries_to_viewpoint(
     viewpoint_id: str,
     query_keys: list[str],
 ) -> None:
-    """Create _viewpointQueries edges from the viewpoint to each _queries doc."""
+    """Create _viewpointQueries edges."""
     ensure_collection(db, "_viewpointQueries", edge=True)
     for key in query_keys:
         query_id = f"_queries/{key}"
         _ensure_edge(db, "_viewpointQueries", viewpoint_id, query_id)
     log.info("linked %d queries to viewpoint %s", len(query_keys), viewpoint_id)
+
+
+# ---------------------------------------------------------------------------
+# Per-graph installer
+# ---------------------------------------------------------------------------
+
+
+def install_for_graph(
+    db: StandardDatabase,
+    graph_name: str,
+    *,
+    theme_file: str,
+    actions_file: str,
+    queries_file: str,
+    prune: bool = False,
+) -> dict:
+    """Install all visualizer assets for a single graph."""
+    theme = install_themes(db, graph_name, theme_file, prune_to_graph=prune)
+    action_ids = install_canvas_actions(db, graph_name, actions_file)
+    query_keys = install_saved_queries(db, graph_name, queries_file)
+
+    vp_id = ensure_default_viewpoint(db, graph_name)
+    link_actions_to_viewpoint(db, vp_id, action_ids)
+    link_queries_to_viewpoint(db, vp_id, query_keys)
+
+    return {
+        "graph_name": graph_name,
+        "theme_node_types": len(theme.get("nodeConfigMap", {})),
+        "theme_edge_types": len(theme.get("edgeConfigMap", {})),
+        "canvas_actions": len(action_ids),
+        "saved_queries": len(query_keys),
+        "viewpoint_id": vp_id,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Per-ontology graph installer
+# ---------------------------------------------------------------------------
+
+
+def install_for_ontology_graph(
+    db: StandardDatabase,
+    ontology_graph_name: str,
+) -> dict:
+    """Install visualizer assets for a per-ontology graph (ontology_{id}).
+    Reuses the ontology theme/actions/queries with the graph-specific name."""
+    return install_for_graph(
+        db,
+        ontology_graph_name,
+        theme_file="ontology_theme.json",
+        actions_file="ontology_actions.json",
+        queries_file="ontology_queries.json",
+        prune=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -350,46 +414,39 @@ def link_queries_to_viewpoint(
 
 def install_all(
     db: StandardDatabase,
-    graph_name: str = DEFAULT_GRAPH_NAME,
     *,
     prune: bool = False,
+    include_per_ontology: bool = True,
 ) -> dict:
-    """Install all visualizer assets for the given graph. Returns a summary dict.
-
-    Args:
-        db: ArangoDB database handle.
-        graph_name: Target graph name (default: ``domain_ontology``).
-        prune: If True, prune theme to collections that exist in the graph.
-    """
-    log.info("installing visualizer assets for graph %s (prune=%s)", graph_name, prune)
+    """Install all visualizer assets for all configured graphs plus any
+    existing per-ontology graphs. Returns a summary dict."""
+    log.info("installing visualizer assets (prune=%s)", prune)
 
     ensure_all_collections(db)
 
-    if prune:
-        theme = install_pruned_theme(db, graph_name)
-    else:
-        install_themes(db, graph_name)
-        theme = _load_theme(graph_name)
+    results = {}
 
-    action_ids = install_canvas_actions(db, graph_name)
-    install_saved_queries(db, graph_name)
+    for graph_name, cfg in GRAPH_CONFIGS.items():
+        results[graph_name] = install_for_graph(
+            db,
+            graph_name,
+            theme_file=cfg["theme"],
+            actions_file=cfg["actions"],
+            queries_file=cfg["queries"],
+            prune=prune,
+        )
 
-    vp_id = ensure_default_viewpoint(db, graph_name)
-    link_actions_to_viewpoint(db, vp_id, action_ids)
+    if include_per_ontology:
+        for g in db.graphs():
+            name = g["name"]
+            if name.startswith("ontology_") and name not in GRAPH_CONFIGS:
+                results[name] = install_for_ontology_graph(db, name)
 
-    query_keys = [q["_key"] for q in _load_queries(db.name)]
-    link_queries_to_viewpoint(db, vp_id, query_keys)
-
-    summary = {
-        "graph_name": graph_name,
-        "theme_node_types": len(theme.get("nodeConfigMap", {})),
-        "theme_edge_types": len(theme.get("edgeConfigMap", {})),
-        "canvas_actions": len(action_ids),
-        "saved_queries": len(query_keys),
-        "viewpoint_id": vp_id,
-    }
-    log.info("visualizer install complete: %s", summary)
-    return summary
+    log.info(
+        "visualizer install complete: %d graphs configured",
+        len(results),
+    )
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +455,7 @@ def install_all(
 
 
 def _connect_from_settings() -> StandardDatabase:
-    """Connect using app.config.settings (for use within the AOE project)."""
+    """Connect using app.config.settings."""
     backend_root = Path(__file__).resolve().parent.parent.parent / "backend"
     if str(backend_root) not in sys.path:
         sys.path.insert(0, str(backend_root))
@@ -435,13 +492,18 @@ def main() -> None:
     parser.add_argument("--password", default="", help="ArangoDB password")
     parser.add_argument(
         "--graph",
-        default=DEFAULT_GRAPH_NAME,
-        help=f"Target graph name (default: {DEFAULT_GRAPH_NAME})",
+        default=None,
+        help="Install for a single graph only (default: all)",
     )
     parser.add_argument(
         "--prune",
         action="store_true",
         help="Prune theme to collections present in the graph",
+    )
+    parser.add_argument(
+        "--skip-per-ontology",
+        action="store_true",
+        help="Skip per-ontology graph installation",
     )
     parser.add_argument(
         "--log-level",
@@ -460,7 +522,26 @@ def main() -> None:
     else:
         db = _connect_from_settings()
 
-    summary = install_all(db, graph_name=args.graph, prune=args.prune)
+    if args.graph:
+        if args.graph in GRAPH_CONFIGS:
+            cfg = GRAPH_CONFIGS[args.graph]
+            summary = install_for_graph(
+                db,
+                args.graph,
+                theme_file=cfg["theme"],
+                actions_file=cfg["actions"],
+                queries_file=cfg["queries"],
+                prune=args.prune,
+            )
+        else:
+            summary = install_for_ontology_graph(db, args.graph)
+    else:
+        summary = install_all(
+            db,
+            prune=args.prune,
+            include_per_ontology=not args.skip_per_ontology,
+        )
+
     print(json.dumps(summary, indent=2))
 
 

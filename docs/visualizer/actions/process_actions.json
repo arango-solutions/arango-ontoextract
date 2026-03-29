@@ -1,0 +1,65 @@
+[
+  {
+    "_key": "proc_show_chunks",
+    "name": "Show Document Chunks",
+    "title": "Show Document Chunks",
+    "description": "Show all chunks belonging to the selected document.",
+    "graphId": "aoe_process",
+    "queryText": "WITH documents, chunks, ontology_classes, ontology_properties, ontology_registry, extraction_runs, has_chunk, extracted_from, has_property, subclass_of, produced_by\nFOR node IN @nodes\n  FILTER IS_SAME_COLLECTION('documents', node)\n  FOR v, e IN 1..1 OUTBOUND node has_chunk\n    LIMIT 50\n    RETURN e",
+    "bindVariables": { "nodes": [] }
+  },
+  {
+    "_key": "proc_show_extracted_classes",
+    "name": "Show Extracted Classes",
+    "title": "Show Extracted Classes",
+    "description": "Show all ontology classes extracted from the selected document.",
+    "graphId": "aoe_process",
+    "queryText": "WITH documents, chunks, ontology_classes, ontology_properties, ontology_registry, extraction_runs, has_chunk, extracted_from, has_property, subclass_of, produced_by\nFOR node IN @nodes\n  FILTER IS_SAME_COLLECTION('documents', node)\n  FOR v, e IN 1..1 INBOUND node extracted_from\n    LIMIT 100\n    RETURN e",
+    "bindVariables": { "nodes": [] }
+  },
+  {
+    "_key": "proc_show_class_properties",
+    "name": "Show Class Properties",
+    "title": "Show Class Properties",
+    "description": "Show all properties of the selected ontology class.",
+    "graphId": "aoe_process",
+    "queryText": "WITH documents, chunks, ontology_classes, ontology_properties, ontology_registry, extraction_runs, has_chunk, extracted_from, has_property, subclass_of, produced_by\nFOR node IN @nodes\n  FILTER IS_SAME_COLLECTION('ontology_classes', node)\n  FOR v, e IN 1..1 OUTBOUND node has_property\n    LIMIT 50\n    RETURN e",
+    "bindVariables": { "nodes": [] }
+  },
+  {
+    "_key": "proc_show_class_hierarchy",
+    "name": "Show Class Hierarchy",
+    "title": "Show Class Hierarchy",
+    "description": "Show the subclass hierarchy of the selected class.",
+    "graphId": "aoe_process",
+    "queryText": "WITH documents, chunks, ontology_classes, ontology_properties, ontology_registry, extraction_runs, has_chunk, extracted_from, has_property, subclass_of, produced_by\nFOR node IN @nodes\n  FILTER IS_SAME_COLLECTION('ontology_classes', node)\n  FOR v, e IN 1..5 ANY node subclass_of\n    LIMIT 100\n    RETURN e",
+    "bindVariables": { "nodes": [] }
+  },
+  {
+    "_key": "proc_show_source_document",
+    "name": "Show Source Document",
+    "title": "Show Source Document",
+    "description": "Trace the selected class back to its source document.",
+    "graphId": "aoe_process",
+    "queryText": "WITH documents, chunks, ontology_classes, ontology_properties, ontology_registry, extraction_runs, has_chunk, extracted_from, has_property, subclass_of, produced_by\nFOR node IN @nodes\n  FILTER IS_SAME_COLLECTION('ontology_classes', node)\n  FOR v, e IN 1..1 OUTBOUND node extracted_from\n    LIMIT 10\n    RETURN e",
+    "bindVariables": { "nodes": [] }
+  },
+  {
+    "_key": "proc_show_extraction_run",
+    "name": "Show Extraction Run",
+    "title": "Show Extraction Run",
+    "description": "Show which extraction run produced the selected ontology.",
+    "graphId": "aoe_process",
+    "queryText": "WITH documents, chunks, ontology_classes, ontology_properties, ontology_registry, extraction_runs, has_chunk, extracted_from, has_property, subclass_of, produced_by\nFOR node IN @nodes\n  FILTER IS_SAME_COLLECTION('ontology_registry', node)\n  FOR v, e IN 1..1 OUTBOUND node produced_by\n    LIMIT 10\n    RETURN e",
+    "bindVariables": { "nodes": [] }
+  },
+  {
+    "_key": "proc_full_pipeline",
+    "name": "Full Pipeline View",
+    "title": "Full Pipeline View",
+    "description": "Expand all connections 1-2 hops from the selected node.",
+    "graphId": "aoe_process",
+    "queryText": "WITH documents, chunks, ontology_classes, ontology_properties, ontology_registry, extraction_runs, has_chunk, extracted_from, has_property, subclass_of, produced_by\nFOR node IN @nodes\n  FOR v, e IN 1..2 ANY node GRAPH 'aoe_process'\n    LIMIT 100\n    RETURN e",
+    "bindVariables": { "nodes": [] }
+  }
+]

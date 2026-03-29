@@ -22,8 +22,15 @@ export interface ExtractionRun {
   status: RunStatus;
   created_at: string;
   updated_at: string;
+  started_at?: number;
+  completed_at?: number;
   duration_ms?: number;
   current_step?: string;
+  chunk_count?: number;
+  classes_extracted?: number;
+  properties_extracted?: number;
+  error_count?: number;
+  model?: string;
   stats?: RunStats;
 }
 

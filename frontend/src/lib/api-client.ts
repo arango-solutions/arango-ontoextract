@@ -44,8 +44,8 @@ class ApiClient {
     this.baseUrl =
       baseUrl ??
       (typeof window !== "undefined"
-        ? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
-        : process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000");
+        ? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001"
+        : process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001");
   }
 
   private getHeaders(): Record<string, string> {

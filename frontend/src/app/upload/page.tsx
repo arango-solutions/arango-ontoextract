@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
 
 interface UploadResult {
@@ -18,20 +18,22 @@ interface DocumentEntry {
   chunk_count: number;
 }
 
-type UploadState = "idle" | "uploading" | "success" | "error";
+type UploadState = "idle" | "uploading" | "extracting" | "success" | "error";
 
 export default function UploadPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
   const [uploadState, setUploadState] = useState<UploadState>("idle");
   const [result, setResult] = useState<UploadResult | null>(null);
+  const [extractionRunId, setExtractionRunId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [documents, setDocuments] = useState<DocumentEntry[]>([]);
   const [docsLoaded, setDocsLoaded] = useState(false);
+  const [extractingDocs, setExtractingDocs] = useState<Set<string>>(new Set());
 
   const loadDocuments = useCallback(async () => {
     try {
-      const res = await api.get<{ data: DocumentEntry[] }>("/documents");
+      const res = await api.get<{ data: DocumentEntry[] }>("/api/v1/documents");
       setDocuments(res.data ?? []);
       setDocsLoaded(true);
     } catch {
@@ -39,23 +41,52 @@ export default function UploadPage() {
     }
   }, []);
 
-  useState(() => {
+  useEffect(() => {
     loadDocuments();
-  });
+  }, [loadDocuments]);
+
+  const triggerExtraction = async (docId: string): Promise<string | null> => {
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
+      const res = await fetch(`${baseUrl}/api/v1/extraction/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document_id: docId }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.run_id ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  const extractDocument = async (docId: string) => {
+    setExtractingDocs((prev) => new Set(prev).add(docId));
+    const runId = await triggerExtraction(docId);
+    setExtractingDocs((prev) => {
+      const next = new Set(prev);
+      next.delete(docId);
+      return next;
+    });
+    if (runId) {
+      window.location.href = `/pipeline`;
+    }
+  };
 
   const uploadFile = async (file: File) => {
     setUploadState("uploading");
     setErrorMsg("");
     setResult(null);
+    setExtractionRunId(null);
 
     const formData = new FormData();
     formData.append("file", file);
 
     try {
-      const baseUrl = (
-        process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001/api/v1"
-      );
-      const res = await fetch(`${baseUrl}/documents/upload`, {
+      const baseUrl =
+        process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
+      const res = await fetch(`${baseUrl}/api/v1/documents/upload`, {
         method: "POST",
         body: formData,
       });
@@ -69,8 +100,12 @@ export default function UploadPage() {
 
       const data: UploadResult = await res.json();
       setResult(data);
-      setUploadState("success");
       loadDocuments();
+
+      setUploadState("extracting");
+      const runId = await triggerExtraction(data.doc_id);
+      setExtractionRunId(runId);
+      setUploadState("success");
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
       setUploadState("error");
@@ -141,14 +176,25 @@ export default function UploadPage() {
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-3">
             <div className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
             <p className="text-blue-700 font-medium">
-              Uploading and processing…
+              Uploading and processing document…
+            </p>
+          </div>
+        )}
+
+        {uploadState === "extracting" && (
+          <div className="bg-violet-50 border border-violet-200 rounded-lg p-4 flex items-center gap-3">
+            <div className="h-5 w-5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-violet-700 font-medium">
+              Starting ontology extraction…
             </p>
           </div>
         )}
 
         {uploadState === "success" && result && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <p className="text-green-700 font-medium">Upload successful</p>
+            <p className="text-green-700 font-medium">
+              Upload successful — extraction {extractionRunId ? "started" : "queued"}
+            </p>
             <div className="mt-2 text-sm text-green-600 space-y-1">
               <p>
                 <span className="font-mono">doc_id:</span> {result.doc_id}
@@ -156,16 +202,24 @@ export default function UploadPage() {
               <p>
                 <span className="font-mono">filename:</span> {result.filename}
               </p>
-              <p>
-                <span className="font-mono">status:</span> {result.status}
-              </p>
+              {extractionRunId && (
+                <p>
+                  <span className="font-mono">run_id:</span> {extractionRunId}
+                </p>
+              )}
             </div>
             <div className="mt-3 flex gap-3">
               <a
-                href={`/pipeline`}
-                className="text-sm text-blue-600 hover:underline"
+                href="/pipeline"
+                className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
               >
-                View in Pipeline Monitor →
+                View Extraction Pipeline →
+              </a>
+              <a
+                href="/library"
+                className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Ontology Library
               </a>
             </div>
           </div>
@@ -206,19 +260,30 @@ export default function UploadPage() {
                           : ""}
                       </p>
                     </div>
-                    <span
-                      className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                        doc.status === "processed"
-                          ? "bg-green-100 text-green-700"
-                          : doc.status === "processing"
-                            ? "bg-yellow-100 text-yellow-700"
-                            : doc.status === "error"
-                              ? "bg-red-100 text-red-700"
-                              : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {doc.status}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {(doc.status === "ready" || doc.status === "processed") && (
+                        <button
+                          onClick={() => extractDocument(doc._key)}
+                          disabled={extractingDocs.has(doc._key)}
+                          className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                        >
+                          {extractingDocs.has(doc._key) ? "Starting…" : "Extract"}
+                        </button>
+                      )}
+                      <span
+                        className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+                          doc.status === "processed" || doc.status === "ready"
+                            ? "bg-green-100 text-green-700"
+                            : doc.status === "processing"
+                              ? "bg-yellow-100 text-yellow-700"
+                              : doc.status === "error"
+                                ? "bg-red-100 text-red-700"
+                                : "bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {doc.status}
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>

@@ -1,0 +1,47 @@
+[
+  {
+    "_key": "proc_document_pipeline",
+    "title": "Document Pipeline Overview",
+    "name": "Document Pipeline Overview",
+    "description": "Show all documents and their chunk counts, extraction status, and resulting ontology classes.",
+    "content": "FOR doc IN documents\n  LET chunk_count = LENGTH(FOR c IN chunks FILTER c.doc_id == doc._key RETURN 1)\n  LET runs = (FOR r IN extraction_runs FILTER r.document_id == doc._key RETURN { status: r.status, model: r.model })\n  LET class_count = LENGTH(FOR e IN extracted_from FILTER e._to == CONCAT('documents/', doc._key) RETURN 1)\n  RETURN {\n    _key: doc._key,\n    filename: doc.filename,\n    status: doc.status,\n    chunks: chunk_count,\n    extraction_runs: runs,\n    extracted_classes: class_count\n  }",
+    "value": "FOR doc IN documents\n  LET chunk_count = LENGTH(FOR c IN chunks FILTER c.doc_id == doc._key RETURN 1)\n  LET runs = (FOR r IN extraction_runs FILTER r.document_id == doc._key RETURN { status: r.status, model: r.model })\n  LET class_count = LENGTH(FOR e IN extracted_from FILTER e._to == CONCAT('documents/', doc._key) RETURN 1)\n  RETURN {\n    _key: doc._key,\n    filename: doc.filename,\n    status: doc.status,\n    chunks: chunk_count,\n    extraction_runs: runs,\n    extracted_classes: class_count\n  }",
+    "bindVariables": {}
+  },
+  {
+    "_key": "proc_extraction_runs_status",
+    "title": "Extraction Runs Status",
+    "name": "Extraction Runs Status",
+    "description": "All extraction runs with their status and timing info.",
+    "content": "FOR r IN extraction_runs\n  SORT r.started_at DESC\n  RETURN {\n    _key: r._key,\n    document_id: r.document_id,\n    status: r.status,\n    model: r.model,\n    strategy: r.strategy,\n    started_at: r.started_at,\n    completed_at: r.completed_at,\n    class_count: r.class_count,\n    error_message: r.error_message\n  }",
+    "value": "FOR r IN extraction_runs\n  SORT r.started_at DESC\n  RETURN {\n    _key: r._key,\n    document_id: r.document_id,\n    status: r.status,\n    model: r.model,\n    strategy: r.strategy,\n    started_at: r.started_at,\n    completed_at: r.completed_at,\n    class_count: r.class_count,\n    error_message: r.error_message\n  }",
+    "bindVariables": {}
+  },
+  {
+    "_key": "proc_doc_to_ontology_lineage",
+    "title": "Document-to-Ontology Lineage",
+    "name": "Document-to-Ontology Lineage",
+    "description": "Full lineage: document -> classes extracted from it, with provenance.",
+    "content": "FOR doc IN documents\n  LET classes = (\n    FOR cls, e IN 1..1 INBOUND doc extracted_from\n      RETURN { label: cls.label, uri: cls.uri, confidence: cls.confidence, ontology_id: cls.ontology_id }\n  )\n  FILTER LENGTH(classes) > 0\n  RETURN {\n    document: doc.filename,\n    doc_key: doc._key,\n    status: doc.status,\n    class_count: LENGTH(classes),\n    classes: classes\n  }",
+    "value": "FOR doc IN documents\n  LET classes = (\n    FOR cls, e IN 1..1 INBOUND doc extracted_from\n      RETURN { label: cls.label, uri: cls.uri, confidence: cls.confidence, ontology_id: cls.ontology_id }\n  )\n  FILTER LENGTH(classes) > 0\n  RETURN {\n    document: doc.filename,\n    doc_key: doc._key,\n    status: doc.status,\n    class_count: LENGTH(classes),\n    classes: classes\n  }",
+    "bindVariables": {}
+  },
+  {
+    "_key": "proc_registered_ontologies",
+    "title": "Registered Ontologies",
+    "name": "Registered Ontologies",
+    "description": "All ontologies in the registry with their class and property counts.",
+    "content": "FOR ont IN ontology_registry\n  LET cls_count = LENGTH(FOR c IN ontology_classes FILTER c.ontology_id == ont._key AND c.expired == 9223372036854775807 RETURN 1)\n  LET prop_count = LENGTH(FOR p IN ontology_properties FILTER p.ontology_id == ont._key AND p.expired == 9223372036854775807 RETURN 1)\n  RETURN {\n    _key: ont._key,\n    name: ont.name,\n    description: ont.description,\n    version: ont.version,\n    source_document: ont.source_document,\n    classes: cls_count,\n    properties: prop_count,\n    created_at: ont.created_at\n  }",
+    "value": "FOR ont IN ontology_registry\n  LET cls_count = LENGTH(FOR c IN ontology_classes FILTER c.ontology_id == ont._key AND c.expired == 9223372036854775807 RETURN 1)\n  LET prop_count = LENGTH(FOR p IN ontology_properties FILTER p.ontology_id == ont._key AND p.expired == 9223372036854775807 RETURN 1)\n  RETURN {\n    _key: ont._key,\n    name: ont.name,\n    description: ont.description,\n    version: ont.version,\n    source_document: ont.source_document,\n    classes: cls_count,\n    properties: prop_count,\n    created_at: ont.created_at\n  }",
+    "bindVariables": {}
+  },
+  {
+    "_key": "proc_unprocessed_documents",
+    "title": "Unprocessed Documents",
+    "name": "Unprocessed Documents",
+    "description": "Documents that have been uploaded but not yet fully processed.",
+    "content": "FOR doc IN documents\n  FILTER doc.status != 'processed'\n  SORT doc.uploaded_at DESC\n  RETURN {\n    _key: doc._key,\n    filename: doc.filename,\n    status: doc.status,\n    content_type: doc.content_type,\n    uploaded_at: doc.uploaded_at\n  }",
+    "value": "FOR doc IN documents\n  FILTER doc.status != 'processed'\n  SORT doc.uploaded_at DESC\n  RETURN {\n    _key: doc._key,\n    filename: doc.filename,\n    status: doc.status,\n    content_type: doc.content_type,\n    uploaded_at: doc.uploaded_at\n  }",
+    "bindVariables": {}
+  }
+]

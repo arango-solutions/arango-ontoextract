@@ -3,81 +3,63 @@
     "_key": "show_subclasses",
     "name": "Show Subclasses",
     "title": "Show Subclasses",
-    "description": "Traverse subclass_of edges from the selected class to find its subclasses (current edges only).",
+    "description": "Traverse subclass_of edges to find subclasses of the selected class.",
     "graphId": "domain_ontology",
-    "queryText": "WITH ontology_classes, ontology_properties, ontology_constraints, subclass_of, equivalent_class, has_property, extends_domain, extracted_from, related_to, merge_candidate, imports\nFOR node IN @nodes\n  FOR v, e IN 1..1 INBOUND node subclass_of\n    FILTER e.expired == 9223372036854775807\n    LIMIT 100\n    RETURN e",
+    "queryText": "WITH ontology_classes, ontology_properties, documents, subclass_of, equivalent_class, has_property, related_to, extracted_from\nFOR node IN @nodes\n  FOR v, e IN 1..1 INBOUND node subclass_of\n    FILTER e.expired == 9223372036854775807\n    LIMIT 100\n    RETURN e",
     "bindVariables": { "nodes": [] }
   },
   {
     "_key": "show_superclasses",
     "name": "Show Superclasses",
     "title": "Show Superclasses",
-    "description": "Reverse-traverse subclass_of edges to find ancestor classes (current edges only).",
+    "description": "Traverse upward to find parent classes.",
     "graphId": "domain_ontology",
-    "queryText": "WITH ontology_classes, ontology_properties, ontology_constraints, subclass_of, equivalent_class, has_property, extends_domain, extracted_from, related_to, merge_candidate, imports\nFOR node IN @nodes\n  FOR v, e IN 1..1 OUTBOUND node subclass_of\n    FILTER e.expired == 9223372036854775807\n    LIMIT 100\n    RETURN e",
+    "queryText": "WITH ontology_classes, ontology_properties, documents, subclass_of, equivalent_class, has_property, related_to, extracted_from\nFOR node IN @nodes\n  FOR v, e IN 1..1 OUTBOUND node subclass_of\n    FILTER e.expired == 9223372036854775807\n    LIMIT 100\n    RETURN e",
     "bindVariables": { "nodes": [] }
   },
   {
     "_key": "show_properties",
     "name": "Show Properties",
     "title": "Show Properties",
-    "description": "Traverse has_property edges from the selected class to show its properties (current edges only).",
+    "description": "Show all properties defined on the selected class.",
     "graphId": "domain_ontology",
-    "queryText": "WITH ontology_classes, ontology_properties, ontology_constraints, subclass_of, equivalent_class, has_property, extends_domain, extracted_from, related_to, merge_candidate, imports\nFOR node IN @nodes\n  FOR v, e IN 1..1 OUTBOUND node has_property\n    FILTER e.expired == 9223372036854775807\n    LIMIT 100\n    RETURN e",
+    "queryText": "WITH ontology_classes, ontology_properties, documents, subclass_of, equivalent_class, has_property, related_to, extracted_from\nFOR node IN @nodes\n  FOR v, e IN 1..1 OUTBOUND node has_property\n    FILTER e.expired == 9223372036854775807\n    LIMIT 100\n    RETURN e",
     "bindVariables": { "nodes": [] }
   },
   {
     "_key": "show_full_hierarchy",
     "name": "Show Full Hierarchy",
     "title": "Show Full Hierarchy",
-    "description": "Multi-hop subclass_of traversal (up to depth 10) to show the full class hierarchy (current edges only).",
+    "description": "Full class hierarchy (up to 10 levels deep).",
     "graphId": "domain_ontology",
-    "queryText": "WITH ontology_classes, ontology_properties, ontology_constraints, subclass_of, equivalent_class, has_property, extends_domain, extracted_from, related_to, merge_candidate, imports\nFOR node IN @nodes\n  FOR v, e IN 1..10 ANY node subclass_of\n    FILTER e.expired == 9223372036854775807\n    LIMIT 200\n    RETURN e",
+    "queryText": "WITH ontology_classes, ontology_properties, documents, subclass_of, equivalent_class, has_property, related_to, extracted_from\nFOR node IN @nodes\n  FOR v, e IN 1..10 ANY node subclass_of\n    FILTER e.expired == 9223372036854775807\n    LIMIT 200\n    RETURN e",
     "bindVariables": { "nodes": [] }
   },
   {
     "_key": "show_related_classes",
     "name": "Show Related Classes",
     "title": "Show Related Classes",
-    "description": "Traverse related_to edges from the selected class (current edges only).",
+    "description": "Traverse related_to edges from the selected class.",
     "graphId": "domain_ontology",
-    "queryText": "WITH ontology_classes, ontology_properties, ontology_constraints, subclass_of, equivalent_class, has_property, extends_domain, extracted_from, related_to, merge_candidate, imports\nFOR node IN @nodes\n  FOR v, e IN 1..1 ANY node related_to\n    FILTER e.expired == 9223372036854775807\n    LIMIT 100\n    RETURN e",
-    "bindVariables": { "nodes": [] }
-  },
-  {
-    "_key": "show_cross_tier_links",
-    "name": "Show Cross-Tier Links",
-    "title": "Show Cross-Tier Links",
-    "description": "Traverse extends_domain edges to show links between local (Tier 2) and domain (Tier 1) classes.",
-    "graphId": "domain_ontology",
-    "queryText": "WITH ontology_classes, ontology_properties, ontology_constraints, subclass_of, equivalent_class, has_property, extends_domain, extracted_from, related_to, merge_candidate, imports\nFOR node IN @nodes\n  FOR v, e IN 1..1 ANY node extends_domain\n    FILTER e.expired == 9223372036854775807\n    LIMIT 100\n    RETURN e",
-    "bindVariables": { "nodes": [] }
-  },
-  {
-    "_key": "show_version_history",
-    "name": "Show Version History",
-    "title": "Show Version History",
-    "description": "Query all versions of the selected entity by matching its URI across all created/expired pairs.",
-    "graphId": "domain_ontology",
-    "queryText": "FOR node IN @nodes\n  LET uri = node.uri\n  FOR cls IN ontology_classes\n    FILTER cls.uri == uri\n    SORT cls.created DESC\n    RETURN cls",
+    "queryText": "WITH ontology_classes, ontology_properties, documents, subclass_of, equivalent_class, has_property, related_to, extracted_from\nFOR node IN @nodes\n  FOR v, e IN 1..1 ANY node related_to\n    FILTER e.expired == 9223372036854775807\n    LIMIT 100\n    RETURN e",
     "bindVariables": { "nodes": [] }
   },
   {
     "_key": "show_provenance",
     "name": "Show Provenance",
     "title": "Show Provenance",
-    "description": "Traverse extracted_from edges to trace the selected entity back to its source document chunks.",
+    "description": "Trace the selected class back to its source document.",
     "graphId": "domain_ontology",
-    "queryText": "WITH ontology_classes, ontology_properties, ontology_constraints, documents, chunks, subclass_of, equivalent_class, has_property, extends_domain, extracted_from, related_to, merge_candidate, imports\nFOR node IN @nodes\n  FOR v, e IN 1..1 OUTBOUND node extracted_from\n    LIMIT 50\n    RETURN e",
+    "queryText": "WITH ontology_classes, ontology_properties, documents, subclass_of, equivalent_class, has_property, related_to, extracted_from\nFOR node IN @nodes\n  FOR v, e IN 1..1 OUTBOUND node extracted_from\n    LIMIT 50\n    RETURN e",
     "bindVariables": { "nodes": [] }
   },
   {
     "_key": "full_neighborhood",
     "name": "Full Neighborhood",
     "title": "Full Neighborhood",
-    "description": "Expand all current relationships 1-2 hops from the selected node.",
+    "description": "Expand all relationships 1-2 hops from the selected node.",
     "graphId": "domain_ontology",
-    "queryText": "WITH ontology_classes, ontology_properties, ontology_constraints, subclass_of, equivalent_class, has_property, extends_domain, extracted_from, related_to, merge_candidate, imports\nFOR node IN @nodes\n  FOR v, e IN 1..2 ANY node GRAPH 'domain_ontology'\n    FILTER e.expired == 9223372036854775807\n    LIMIT 100\n    RETURN e",
+    "queryText": "WITH ontology_classes, ontology_properties, documents, subclass_of, equivalent_class, has_property, related_to, extracted_from\nFOR node IN @nodes\n  FOR v, e IN 1..2 ANY node GRAPH 'domain_ontology'\n    FILTER e.expired == 9223372036854775807\n    LIMIT 100\n    RETURN e",
     "bindVariables": { "nodes": [] }
   }
 ]

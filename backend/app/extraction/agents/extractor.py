@@ -31,11 +31,14 @@ def _get_llm(model_name: str) -> Any:
         )
     from langchain_openai import ChatOpenAI
 
-    return ChatOpenAI(
-        model=model_name,
-        api_key=settings.openai_api_key,
-        max_tokens=4096,
-    )
+    kwargs: dict[str, Any] = {
+        "model": model_name,
+        "api_key": settings.openai_api_key,
+        "max_tokens": 4096,
+    }
+    if settings.openai_base_url:
+        kwargs["base_url"] = settings.openai_base_url
+    return ChatOpenAI(**kwargs)
 
 
 def _batch_chunks(chunks: list[dict[str, Any]], batch_size: int) -> list[str]:

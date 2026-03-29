@@ -5,8 +5,15 @@ interface StatusBadgeProps {
   size?: "sm" | "md";
 }
 
+const DEFAULT_CONFIG = {
+  label: "Unknown",
+  bg: "bg-gray-100",
+  text: "text-gray-600",
+  dot: "bg-gray-400",
+};
+
 const STATUS_CONFIG: Record<
-  RunStatus,
+  string,
   { label: string; bg: string; text: string; dot: string; pulse?: boolean }
 > = {
   queued: {
@@ -28,6 +35,12 @@ const STATUS_CONFIG: Record<
     text: "text-green-700",
     dot: "bg-green-500",
   },
+  completed_with_errors: {
+    label: "Completed (warnings)",
+    bg: "bg-amber-50",
+    text: "text-amber-700",
+    dot: "bg-amber-500",
+  },
   failed: {
     label: "Failed",
     bg: "bg-red-50",
@@ -43,7 +56,7 @@ const STATUS_CONFIG: Record<
 };
 
 export default function StatusBadge({ status, size = "md" }: StatusBadgeProps) {
-  const config = STATUS_CONFIG[status];
+  const config = STATUS_CONFIG[status] ?? DEFAULT_CONFIG;
   const sizeClasses =
     size === "sm" ? "text-xs px-1.5 py-0.5 gap-1" : "text-sm px-2 py-1 gap-1.5";
   const dotSize = size === "sm" ? "h-1.5 w-1.5" : "h-2 w-2";

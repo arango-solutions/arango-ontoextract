@@ -21,9 +21,8 @@ export default function Home() {
   const [statsError, setStatsError] = useState(false);
 
   useEffect(() => {
-    const backendRoot = (
-      process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001/api/v1"
-    ).replace(/\/api\/v1$/, "");
+    const backendRoot =
+      process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
 
     fetch(`${backendRoot}/ready`)
       .then((r) => r.json())
@@ -37,7 +36,7 @@ export default function Home() {
       });
 
     api
-      .get<LibraryStats>("/ontology/library?limit=1")
+      .get<LibraryStats>("/api/v1/ontology/library?limit=1")
       .then((data) => {
         setOntologyCount(data.total_count);
       })
