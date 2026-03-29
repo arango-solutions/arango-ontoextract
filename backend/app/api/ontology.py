@@ -24,6 +24,7 @@ from app.models.ontology import (
 )
 from app.services import export as export_svc
 from app.services import ontology_context as ctx_svc
+from app.services import promotion as promotion_svc
 from app.services import temporal as temporal_svc
 from app.services.arangordf_bridge import import_from_file
 from app.services.schema_extraction import (
@@ -192,24 +193,231 @@ async def list_ontology_graphs() -> dict:
 
 
 @router.get("/domain")
-async def get_domain_ontology(offset: int = 0, limit: int = 100) -> dict:
-    """Get the full domain ontology graph, paginated."""
-    # TODO: implement domain graph query
-    return {"classes": [], "edges": [], "offset": offset, "limit": limit}
+async def get_domain_ontology(
+    offset: int = Query(0, ge=0, description="Number of classes to skip"),
+    limit: int = Query(100, ge=1, le=500, description="Max classes to return"),
+) -> dict:
+    """Get the full domain ontology graph from the composite graph, paginated.
+
+    Returns all current classes across every registered ontology together
+    with their ``subclass_of`` and ``has_property`` edges.
+    """
+    db = get_db()
+
+    classes: list[dict] = []
+    total_classes = 0
+    if db.has_collection("ontology_classes"):
+        count_result = list(db.aql.execute(
+            "FOR c IN ontology_classes FILTER c.expired == @never "
+            "COLLECT WITH COUNT INTO cnt RETURN cnt",
+            bind_vars={"never": NEVER_EXPIRES},
+        ))
+        total_classes = count_result[0] if count_result else 0
+
+        classes = list(db.aql.execute(
+            "FOR c IN ontology_classes "
+            "FILTER c.expired == @never "
+            "SORT c.label ASC "
+            "LIMIT @offset, @limit "
+            "RETURN c",
+            bind_vars={"never": NEVER_EXPIRES, "offset": offset, "limit": limit},
+        ))
+
+    class_ids = {c["_id"] for c in classes}
+
+    edges: list[dict] = []
+    for edge_col in ("subclass_of", "has_property"):
+        if not db.has_collection(edge_col):
+            continue
+        result = list(db.aql.execute(
+            f"FOR e IN {edge_col} "
+            "FILTER e.expired == @never "
+            "AND (e._from IN @ids OR e._to IN @ids) "
+            "RETURN MERGE(e, {{edge_type: @et}})",
+            bind_vars={
+                "never": NEVER_EXPIRES,
+                "ids": list(class_ids),
+                "et": edge_col,
+            },
+        ))
+        edges.extend(result)
+
+    return {
+        "classes": classes,
+        "edges": edges,
+        "offset": offset,
+        "limit": limit,
+        "total_classes": total_classes,
+        "has_more": offset + limit < total_classes,
+    }
 
 
 @router.get("/domain/classes")
-async def list_domain_classes(offset: int = 0, limit: int = 100) -> dict:
-    """List domain ontology classes."""
-    # TODO: implement class listing with filters
-    return {"classes": [], "offset": offset, "limit": limit}
+async def list_domain_classes(
+    offset: int = Query(0, ge=0, description="Number of classes to skip"),
+    limit: int = Query(100, ge=1, le=500, description="Max classes to return"),
+    label: str | None = Query(None, description="Partial match on class label (case-insensitive)"),
+    tier: str | None = Query(None, description="Filter by tier: domain or local"),
+    confidence: float | None = Query(None, ge=0.0, le=1.0, description="Minimum confidence threshold"),
+    ontology_id: str | None = Query(None, description="Filter by ontology ID"),
+) -> dict:
+    """List domain ontology classes with optional filters.
+
+    Each returned class includes the ``ontology_name`` resolved from the
+    ontology registry.
+    """
+    db = get_db()
+
+    if not db.has_collection("ontology_classes"):
+        return {"classes": [], "offset": offset, "limit": limit, "total": 0, "has_more": False}
+
+    filters: list[str] = ["c.expired == @never"]
+    bind_vars: dict = {"never": NEVER_EXPIRES, "offset": offset, "limit": limit}
+
+    if label:
+        filters.append("CONTAINS(LOWER(c.label), LOWER(@label))")
+        bind_vars["label"] = label
+    if tier:
+        filters.append("c.tier == @tier")
+        bind_vars["tier"] = tier
+    if confidence is not None:
+        filters.append("c.confidence >= @confidence")
+        bind_vars["confidence"] = confidence
+    if ontology_id:
+        filters.append("c.ontology_id == @ontology_id")
+        bind_vars["ontology_id"] = ontology_id
+
+    filter_clause = " AND ".join(filters)
+
+    count_result = list(db.aql.execute(
+        f"FOR c IN ontology_classes FILTER {filter_clause} "
+        "COLLECT WITH COUNT INTO cnt RETURN cnt",
+        bind_vars={k: v for k, v in bind_vars.items() if k not in ("offset", "limit")},
+    ))
+    total = count_result[0] if count_result else 0
+
+    classes = list(db.aql.execute(
+        f"FOR c IN ontology_classes "
+        f"FILTER {filter_clause} "
+        "SORT c.label ASC "
+        "LIMIT @offset, @limit "
+        "RETURN c",
+        bind_vars=bind_vars,
+    ))
+
+    ontology_ids_in_page = {c.get("ontology_id") for c in classes if c.get("ontology_id")}
+    ontology_names: dict[str, str] = {}
+    if ontology_ids_in_page and db.has_collection("ontology_registry"):
+        name_results = list(db.aql.execute(
+            "FOR o IN ontology_registry "
+            "FILTER o._key IN @ids "
+            "RETURN {id: o._key, name: o.name}",
+            bind_vars={"ids": list(ontology_ids_in_page)},
+        ))
+        ontology_names = {r["id"]: r["name"] for r in name_results}
+
+    for cls in classes:
+        cls["ontology_name"] = ontology_names.get(cls.get("ontology_id", ""), "")
+
+    return {
+        "classes": classes,
+        "offset": offset,
+        "limit": limit,
+        "total": total,
+        "has_more": offset + limit < total,
+    }
 
 
 @router.get("/local/{org_id}")
-async def get_local_ontology(org_id: str, offset: int = 0, limit: int = 100) -> dict:
-    """Get an organization's local ontology extension."""
-    # TODO: implement local ontology query
-    return {"org_id": org_id, "classes": [], "edges": [], "offset": offset, "limit": limit}
+async def get_local_ontology(
+    org_id: str,
+    offset: int = Query(0, ge=0, description="Number of classes to skip"),
+    limit: int = Query(100, ge=1, le=500, description="Max classes to return"),
+) -> dict:
+    """Get an organization's local ontology extension.
+
+    Finds all ontologies registered with the given ``org_id``, then returns
+    their current classes and edges — including ``extends_domain`` edges that
+    link local classes to domain classes.
+    """
+    db = get_db()
+
+    org_ontology_ids: list[str] = []
+    if db.has_collection("ontology_registry"):
+        org_ontology_ids = list(db.aql.execute(
+            "FOR o IN ontology_registry "
+            "FILTER o.org_id == @org_id "
+            "RETURN o._key",
+            bind_vars={"org_id": org_id},
+        ))
+
+    if not org_ontology_ids:
+        return {
+            "org_id": org_id,
+            "classes": [],
+            "edges": [],
+            "offset": offset,
+            "limit": limit,
+            "total_classes": 0,
+            "has_more": False,
+            "message": f"No ontology data found for organization '{org_id}'. "
+                       "Upload documents and run extraction to create a local ontology.",
+        }
+
+    classes: list[dict] = []
+    total_classes = 0
+    if db.has_collection("ontology_classes"):
+        count_result = list(db.aql.execute(
+            "FOR c IN ontology_classes "
+            "FILTER c.ontology_id IN @oids AND c.expired == @never "
+            "COLLECT WITH COUNT INTO cnt RETURN cnt",
+            bind_vars={"oids": org_ontology_ids, "never": NEVER_EXPIRES},
+        ))
+        total_classes = count_result[0] if count_result else 0
+
+        classes = list(db.aql.execute(
+            "FOR c IN ontology_classes "
+            "FILTER c.ontology_id IN @oids AND c.expired == @never "
+            "SORT c.label ASC "
+            "LIMIT @offset, @limit "
+            "RETURN c",
+            bind_vars={
+                "oids": org_ontology_ids,
+                "never": NEVER_EXPIRES,
+                "offset": offset,
+                "limit": limit,
+            },
+        ))
+
+    class_ids = {c["_id"] for c in classes}
+
+    edges: list[dict] = []
+    for edge_col in ("subclass_of", "has_property", "related_to", "extends_domain"):
+        if not db.has_collection(edge_col):
+            continue
+        result = list(db.aql.execute(
+            f"FOR e IN {edge_col} "
+            "FILTER e.expired == @never "
+            "AND (e._from IN @ids OR e._to IN @ids) "
+            "RETURN MERGE(e, {{edge_type: @et}})",
+            bind_vars={
+                "never": NEVER_EXPIRES,
+                "ids": list(class_ids),
+                "et": edge_col,
+            },
+        ))
+        edges.extend(result)
+
+    return {
+        "org_id": org_id,
+        "classes": classes,
+        "edges": edges,
+        "offset": offset,
+        "limit": limit,
+        "total_classes": total_classes,
+        "has_more": offset + limit < total_classes,
+        "ontology_ids": org_ontology_ids,
+    }
 
 
 @router.get("/staging/{run_id}")
@@ -281,10 +489,20 @@ async def get_staging(run_id: str) -> dict:
 
 
 @router.post("/staging/{run_id}/promote")
-async def promote_staging(run_id: str) -> dict:
-    """Promote approved staging entities to production."""
-    # TODO: implement promotion logic
-    return {"run_id": run_id, "promoted": 0}
+async def promote_staging(run_id: str, ontology_id: str | None = Query(None, description="Target ontology ID for promoted entities")) -> dict:
+    """Promote approved staging entities to the production graph.
+
+    Delegates to the promotion service (same logic as ``POST /curation/promote/{run_id}``).
+    """
+    try:
+        report = promotion_svc.promote_staging(
+            run_id=run_id,
+            ontology_id=ontology_id,
+        )
+        return report
+    except Exception as exc:
+        log.exception("Staging promotion failed for run %s", run_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
