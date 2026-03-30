@@ -1,0 +1,336 @@
+# AOE — Remaining Work Plan
+
+**Document Version:** 1.0
+**Date:** March 30, 2026
+**Baseline:** v0.1.0 tag + subsequent Sprint A–K, B, G, F, J commits
+**PRD Reference:** `PRD.md` — Arango-OntoExtract Product Requirements Document
+
+---
+
+## Executive Summary
+
+The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline, ontology editor, pipeline monitor, quality metrics, and multi-document support. This document details the remaining work required to achieve full PRD compliance and production readiness.
+
+**Completed:** ~70% of PRD requirements (§6.1–6.6, §6.10–6.12, most of §6.8, §6.13)
+**Remaining:** ~30% across 7 work streams, estimated 8–9 weeks total
+
+---
+
+## Current State Summary
+
+### What's Working
+
+| Area | Status | Key Capabilities |
+|------|--------|-----------------|
+| Document Ingestion (§6.1) | **Complete** | Upload (PDF, DOCX, MD), chunking, auto-extraction trigger, multi-doc, CRUD |
+| Extraction Pipeline (§6.2, §6.11) | **Complete** | 6-agent LangGraph pipeline (strategy, extractor, consistency, quality judge, ER stub, filter), async/concurrent, 7-signal confidence scoring |
+| Tier 2 Extensions (§6.3) | **Complete** | Domain context injection, tier2 prompts, strategy auto-detection |
+| Visual Curation (§6.4) | **Complete** | Graph canvas (React Flow), node/edge actions, VCR timeline, diff view, provenance, standalone editor with CRUD |
+| Temporal Time Travel (§6.5) | **Mostly Complete** | Edge-interval versioning, snapshot API, timeline events, VCR slider. Missing: playback animation |
+| ArangoDB Visualizer (§6.6) | **Complete** | Themes, canvas actions, saved queries (temporal-aware), viewpoints, auto-install |
+| MCP Server (§6.10) | **Complete** | Runtime MCP tools for ontology operations |
+| Pipeline Monitor (§6.12) | **Complete** | Real-time step DAG with polling, metrics (tokens, cost, entities, confidence, completeness, agreement), error log |
+| Quality Metrics (§6.13) | **Mostly Complete** | Multi-signal confidence (7 signals incl. faithfulness judge + semantic validator), ontology health score, quality panel in library |
+| Import/Export (§6.8 partial) | **Partial** | Export (Turtle, JSON-LD, CSV), OWL import via ArangoRDF, library search (ArangoSearch), tagging, CRUD |
+| Admin (§7.2.1) | **Complete** | Soft/full reset, extraction run deletion |
+
+### What's Not Done
+
+| Area | Status | Gap |
+|------|--------|-----|
+| Entity Resolution (§6.7) | **Stub** | ER agent exists but uses placeholder logic. No real `arango-entity-resolution` library integration. |
+| Imports & Dependencies (§6.15, §6.8.8–8.16) | **Not Started** | No `owl:imports` edge tracking, no standard ontology catalog, no dependency graph UI |
+| Constraints (§6.14) | **Not Started** | No OWL restriction or SHACL shape extraction, import, display, or export |
+| Schema Extraction (§6.9) | **Stub** | Service shell exists but minimal implementation |
+| Quality Dashboard (§6.13.7) | **Not Started** | No dedicated `/quality` page, no history tracking, no gold-standard recall |
+| Testing & CI (§8) | **Partial** | ~500 unit tests exist but no CI pipeline, no coverage enforcement |
+| Production Ops (§8.5) | **Not Started** | No OpenTelemetry, no alerting, no performance benchmarks |
+| Visualizer Migration | **Not Started** | React Flow → Sigma.js/graphology (PRD target architecture) |
+
+---
+
+## Work Streams
+
+### Stream 1: Ontology Imports & Dependency Management
+**PRD:** §6.15 FR-15.1–15.6, §6.8 FR-8.8–8.11, FR-8.16
+**Duration:** 1.5 weeks
+**Priority:** P1 — blocks standard ontology usage
+**Dependencies:** None
+**Team Size:** 1 backend + 1 frontend developer
+
+#### Objectives
+- Track `owl:imports` relationships as edges between ontology registry entries
+- Enable loading standard ontologies (FIBO, Schema.org, Dublin Core) from a built-in catalog
+- Visualize the ontology dependency graph in the Library UI
+- Cascade analysis before ontology deletion (warn about dependents)
+
+#### Tasks
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| H.1 | `imports` edge creation on OWL import | Backend | 4h | After ArangoRDF PGT import, parse `owl:imports` triples and create `imports` edges between registry entries. Warn if imported ontology not in library. |
+| H.2 | `ontology_imports` named graph | Backend | 2h | Create named graph with `ontology_registry` as vertices and `imports` as edges. Migration script. |
+| H.3 | Imports API endpoints | Backend | 4h | `GET /library/{id}/imports` (what this ontology imports), `GET /library/{id}/imported-by` (what depends on this), `GET /imports-graph` (full dependency graph). |
+| H.4 | Cascade analysis on delete | Backend | 3h | Before deprecating an ontology, traverse `imports` graph to find dependents. Return list. Frontend shows confirmation dialog with affected ontologies. |
+| H.5 | Standard ontology catalog | Backend | 6h | JSON catalog of standard ontologies (FIBO modules, Schema.org, Dublin Core, FOAF, PROV-O, SKOS, OWL-Time) with URLs, descriptions, class counts. API: `GET /ontology/catalog`, `POST /ontology/catalog/{id}/import`. |
+| H.6 | Catalog import UI | Frontend | 4h | "Import Standard Ontology" button in library. Opens catalog browser with descriptions, one-click import with progress indicator. |
+| H.7 | Imports dependency graph in Library UI | Frontend | 6h | New "Dependencies" tab in library showing a DAG of ontology imports. Click a node to navigate to that ontology. |
+| H.8 | Base ontology selector in extraction UI | Frontend | 3h | Searchable "Base Ontologies" multi-select on upload page. Selected ontologies sent as `base_ontology_ids`. Backend injects their classes as context and records `imports` edges. |
+| H.9 | Visualizer queries for imports | Backend | 2h | Saved AQL queries: "Ontology Dependencies" (traversal), "Upstream Ontologies" (ancestors), "Downstream Dependents" (children). |
+
+**Exit Criteria:** `owl:imports` tracked as edges. Standard ontologies importable from catalog. Imports dependency graph visible in UI and ArangoDB Visualizer.
+
+---
+
+### Stream 2: Entity Resolution Integration
+**PRD:** §6.7 FR-7.1–7.11
+**Duration:** 1.5 weeks
+**Priority:** P1 — key differentiator for ontology quality
+**Dependencies:** None (can run in parallel with Stream 1)
+**Team Size:** 1 backend + 1 frontend developer
+
+#### Objectives
+- Replace the ER agent stub with real `arango-entity-resolution` library integration
+- Configure blocking, scoring, clustering, and merge workflows for ontology concepts
+- Surface merge candidates in the curation UI with explanations
+
+#### Tasks
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| ER.1 | Install and configure `arango-entity-resolution` | Backend | 3h | Add library dependency. Create `ERPipelineConfig` for ontology matching: vector blocking on class label/description embeddings, BM25 on labels, weighted field similarity (Jaro-Winkler on label, Levenshtein on description). |
+| ER.2 | Replace ER agent stub | Backend | 6h | `er_agent_node` calls `ConfigurableERPipeline` with the ontology config. Writes similarity edges to `similarTo` collection. Stores merge candidates in pipeline state. |
+| ER.3 | Topological similarity scoring | Backend | 4h | AOE-specific scoring layer: compare graph neighborhoods (shared properties via `has_property`, shared parents via `subclass_of`). Add as additional dimension to `final_score`. |
+| ER.4 | WCC clustering | Backend | 3h | Configure `WCCClusteringService` with auto backend selection. Group similar entities into clusters. |
+| ER.5 | Merge execution service | Backend | 4h | Wire `GoldenRecordService` for merge execution. Field-level strategy: `most_complete_with_quality`. Merged entity gets combined properties; losing entity expires with temporal versioning. |
+| ER.6 | ER run API endpoints | Backend | 3h | `POST /er/run` (trigger ER on an ontology), `GET /er/runs/{id}` (status), `GET /er/runs/{id}/candidates` (pairs with scores), `GET /er/runs/{id}/clusters` (WCC clusters). |
+| ER.7 | Merge candidate UI | Frontend | 6h | Merge candidates panel in curation UI: show candidate pairs with similarity scores, field-by-field comparison, `explain_match` evidence, accept/reject/skip actions. |
+| ER.8 | Cross-tier resolution | Backend | 4h | `resolve_entity_cross_collection` matches local concepts against domain ontology. Suggests `owl:equivalentClass` or `rdfs:subClassOf` links. |
+| ER.9 | ER MCP tools integration | Backend | 3h | Proxy ER-specific MCP tool calls to the `arango-entity-resolution` MCP server. |
+
+**Exit Criteria:** ER agent produces real merge candidates. Candidates visible in curation UI with scores and explanations. Merge execution preserves temporal history.
+
+---
+
+### Stream 3: OWL Constraints & SHACL Shapes
+**PRD:** §6.14 FR-14.1–14.7
+**Duration:** 1 week
+**Priority:** P2 — formal ontology completeness
+**Dependencies:** Stream 1 (imports needed for constraint context)
+**Team Size:** 1 developer
+
+#### Objectives
+- Extract OWL restrictions and SHACL shapes from LLM extraction and OWL imports
+- Store, display, and export constraints
+
+#### Tasks
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| I.1 | Constraint extraction prompts | Backend | 4h | Extend extraction prompts: "For each class, identify cardinality constraints, value restrictions, and data validation rules." Add `constraints` field to `ExtractedClass`. |
+| I.2 | Constraint materialization | Backend | 3h | `_materialize_to_graph` writes constraints to `ontology_constraints` collection with temporal fields. |
+| I.3 | OWL restriction import via ArangoRDF | Backend | 4h | After PGT import, parse `owl:Restriction` blank nodes. Create `ontology_constraints` documents linked to target class and property. |
+| I.4 | SHACL shapes import | Backend | 4h | Parse SHACL shapes graphs (Turtle). Create `ontology_constraints` with `constraint_type: "sh:NodeShape"` or `"sh:PropertyShape"`. |
+| I.5 | Constraints API endpoint | Backend | 2h | `GET /library/{ontology_id}/constraints` returns all OWL restrictions and SHACL shapes. |
+| I.6 | Constraints display in Library UI | Frontend | 3h | Class detail panel shows constraints: cardinality badges, value restrictions, SHACL rules with severity icons. |
+| I.7 | Constraints display in Curation UI | Frontend | 3h | NodeDetail shows constraints alongside properties. Curators can approve/reject/edit. |
+| I.8 | Constraints in OWL export | Backend | 3h | Turtle export includes `owl:Restriction` constructs. New `export_shacl()` for SHACL shapes graph. |
+| I.9 | Constraints in temporal queries | Backend | 2h | `get_snapshot` and `get_diff` include constraints from `ontology_constraints`. |
+
+**Exit Criteria:** Constraints extractable, importable, displayable, and exportable. SHACL shapes stored alongside OWL restrictions.
+
+---
+
+### Stream 4: Quality Dashboard & History
+**PRD:** §6.13 FR-13.7, FR-13.8, FR-13.5, FR-13.2
+**Duration:** 3 days
+**Priority:** P1 — completes the quality metrics story
+**Dependencies:** None
+**Team Size:** 1 frontend developer
+
+#### Objectives
+- Dedicated quality dashboard page with traffic-light indicators
+- Quality history tracking over time
+- Gold-standard recall comparison
+- Curation throughput timer
+
+#### Tasks
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| Q.1 | Quality dashboard page | Frontend | 6h | New `/quality` route. Summary cards showing aggregate metrics across all ontologies. Traffic-light indicators against PRD targets (green ≥ target, yellow within 10%, red below). Per-ontology drill-down. |
+| Q.2 | Quality history API | Backend | 4h | `GET /quality/{ontology_id}/history` returns quality scores over time. Store quality snapshots in a `quality_history` collection on each extraction completion. |
+| Q.3 | Trend sparklines | Frontend | 3h | Small sparkline charts on the quality dashboard showing metric trends from history data. |
+| Q.4 | Gold-standard recall comparison | Backend | 4h | `POST /quality/recall` accepts a reference OWL/TTL file. Computes `recall = |extracted ∩ reference| / |reference|` using fuzzy label matching. Returns per-class match details. |
+| Q.5 | Curation throughput timer | Frontend | 3h | Session start timestamp on curation page load. On each decision, compute elapsed time. Display "concepts reviewed / hour" counter in curation header. Send timing data to backend. |
+
+**Exit Criteria:** All five PRD §3.2 success metrics visible on a single dashboard page with trend visualization.
+
+---
+
+### Stream 5: Schema Extraction from ArangoDB
+**PRD:** §6.9 FR-9.1–9.7
+**Duration:** 1 week
+**Priority:** P2 — value-add for existing ArangoDB users
+**Dependencies:** Stream 1 (imports), Stream 3 (constraints)
+**Team Size:** 1 developer
+
+#### Objectives
+- Connect to any ArangoDB instance and reverse-engineer its schema into an ontology
+- Leverage `arango-schema-mapper` library for schema extraction
+
+#### Tasks
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| S.1 | Wire `arango-schema-mapper` integration | Backend | 6h | Call `snapshot_physical_schema()` and `AgenticSchemaAnalyzer` to produce conceptual model. Handle connection credentials securely. |
+| S.2 | OWL export from schema | Backend | 3h | Call `export_conceptual_model_as_owl_turtle()` and feed into ArangoRDF import pipeline. |
+| S.3 | Schema extraction API | Backend | 3h | `POST /schema/extract` accepts connection URL + credentials, triggers extraction. `GET /schema/extract/{run_id}` returns status and results. |
+| S.4 | Schema extraction UI | Frontend | 4h | New page or section for entering ArangoDB connection details and triggering schema extraction. Progress indicator, results preview. |
+| S.5 | Provenance tracking for schema sources | Backend | 2h | Extracted classes link to source database URL + collection name (not document chunks). |
+| S.6 | Schema diff for evolution tracking | Backend | 4h | Re-extract periodically. Diff against previous extraction to detect schema drift. Reuse temporal diff infrastructure. |
+
+**Exit Criteria:** Users can point AOE at any ArangoDB instance and generate an ontology from its schema. Results land in staging for curation.
+
+---
+
+### Stream 6: Testing, CI & Quality Gates
+**PRD:** §8 (Non-Functional Requirements)
+**Duration:** 1 week
+**Priority:** P2 — required before v1.0.0 release
+**Dependencies:** All feature streams should be complete
+**Team Size:** 1 developer
+
+#### Current Test Coverage
+
+| Layer | Tests | Coverage | Gap |
+|-------|-------|----------|-----|
+| Backend unit tests | ~500 | ~65% | Missing: GraphCanvas, some API routes |
+| Backend integration tests | ~80 | ~40% | Missing: full pipeline integration with DB |
+| Backend E2E tests | ~27 | ~20% | Not in CI |
+| Frontend unit tests | ~60 | ~30% | Missing: most components |
+| Frontend E2E (Playwright) | 0 | 0% | Not started |
+
+#### Tasks
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| D.1 | GitHub Actions CI pipeline | DevOps | 4h | Workflow: lint → type-check → unit test → integration test (with ArangoDB service container) → frontend test. Run on PR and push to main. |
+| D.2 | Coverage gates | DevOps | 2h | Fail CI if backend coverage < 80% or frontend coverage < 60%. Upload coverage reports to Codecov or similar. |
+| D.3 | Missing backend integration tests | Backend | 6h | Full extraction pipeline with real DB, temporal versioning round-trip, quality metrics computation, import/export round-trip. |
+| D.4 | Missing frontend component tests | Frontend | 6h | Tests for: GraphCanvas, ClassHierarchy, QualityPanel, AddClassDialog, AddPropertyDialog, OntologyCard, VCRTimeline. |
+| D.5 | Playwright E2E tests | Frontend | 8h | Core flows: upload document → extraction completes → view in library → edit in editor → export. Login flow. Reset flow. |
+| D.6 | `.env.example` completion | DevOps | 1h | Add all required settings with comments. |
+| D.7 | Root `AGENTS.md` | Docs | 2h | Repository structure, module boundaries, development conventions for AI agents. |
+
+**Exit Criteria:** CI runs all test types on every PR. Coverage ≥ 80% backend, ≥ 60% frontend. Playwright tests cover core user flows.
+
+---
+
+### Stream 7: Production Polish & Observability
+**PRD:** §8.5 (Observability), §8.3 (Performance)
+**Duration:** 1 week
+**Priority:** P2 — required for production deployment
+**Dependencies:** Stream 6 (tests must pass first)
+**Team Size:** 1 developer
+
+#### Tasks
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| E.1 | OpenTelemetry tracing | Backend | 6h | Instrument key services with `opentelemetry-api` + `opentelemetry-sdk`. Spans across ingestion → extraction → materialization → graph creation. Export to Jaeger or OTLP endpoint. |
+| E.2 | Alerting rules | DevOps | 3h | Define alerts for: extraction failure rate > 20%, API p95 > 2s, extraction queue depth > 10, database connection failures. |
+| E.3 | TTL garbage collection | Backend | 2h | Verify `ttlExpireAt` is set on expired entities. Configure ArangoDB TTL index for automatic cleanup of historical versions older than configurable retention period (default: 90 days). |
+| E.4 | Auto-install visualizer post-extraction | Backend | 2h | After `ensure_ontology_graph()`, call `install_for_ontology_graph()` to deploy theme/actions/queries for each new per-ontology graph. |
+| E.5 | Performance benchmarks | Backend | 4h | Measure and document: extraction time per chunk, graph rendering time by node count, API p95 latency, concurrent extraction throughput. |
+| E.6 | Docker Compose production config | DevOps | 4h | Production-grade docker-compose with health checks, resource limits, log aggregation, and environment-specific config. |
+| E.7 | README update | Docs | 2h | Update README with current architecture, setup instructions, demo walkthrough, and API reference. |
+
+**Exit Criteria:** Traces visible in observability platform. Alerts configured. Performance baselines documented. Production deployment guide complete.
+
+---
+
+### Stream 8: Visualizer Migration (Future Phase)
+**PRD:** §6.4 FR-4.1 (target architecture), §6.4 FR-4.10 (TopBraid-class editor)
+**Duration:** 2–3 weeks
+**Priority:** P1 (future phase — after v1.0.0)
+**Dependencies:** All other streams complete
+**Team Size:** 1–2 frontend developers
+
+#### Objectives
+- Replace React Flow (DOM-based, limited to ~100 nodes) with Sigma.js + graphology (WebGL, handles 100K+ nodes)
+- Implement TopBraid Composer-class editing panels
+
+#### Tasks
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| V.1 | Sigma.js + graphology integration | Frontend | 8h | Install `@react-sigma/core`, `graphology`, `graphology-layout-forceatlas2`. Create `SigmaGraphCanvas` component with same props interface as current `GraphCanvas`. |
+| V.2 | ForceAtlas2 layout | Frontend | 4h | Replace dagre with ForceAtlas2 for organic, force-directed layout. Add layout toggle (hierarchy vs. force-directed). |
+| V.3 | Semantic zoom | Frontend | 4h | At low zoom: show only class labels and group clusters. At medium zoom: show properties count. At high zoom: show full detail. |
+| V.4 | Edge bundling | Frontend | 3h | Use graphology-edge-bundling for clean edge rendering in dense graphs. |
+| V.5 | Class tree browser panel | Frontend | 6h | Left sidebar with hierarchical class tree (from `subclass_of` traversal), search, drag-to-reparent. |
+| V.6 | Property matrix panel | Frontend | 6h | Spreadsheet-style view of all properties across classes (domain × range). Sortable, filterable, editable. |
+| V.7 | Restriction editor panel | Frontend | 6h | Visual builder for OWL restrictions (cardinality, value, has-value, qualified). Generates `owl:Restriction` constructs. |
+| V.8 | Namespace manager | Frontend | 3h | Settings dialog for managing ontology prefixes and namespaces. |
+| V.9 | Validation console | Frontend | 4h | Bottom panel showing real-time OWL consistency issues and SHACL validation results. |
+| V.10 | Migrate curation page to Sigma.js | Frontend | 4h | Replace `GraphCanvas` usage in `/curation/[runId]` with `SigmaGraphCanvas`. |
+| V.11 | Migrate editor page to Sigma.js | Frontend | 4h | Replace `GraphCanvas` usage in `/ontology/[id]/edit` with `SigmaGraphCanvas`. |
+
+**Exit Criteria:** All graph visualization uses Sigma.js/graphology. TopBraid-class editor panels available. Graphs with 1000+ nodes render smoothly.
+
+---
+
+## Recommended Execution Order
+
+```
+Week 1-2:    Stream 1 (Imports) + Stream 2 (ER) — in parallel
+Week 3:      Stream 3 (Constraints) + Stream 4 (Quality Dashboard) — in parallel
+Week 4:      Stream 5 (Schema Extraction)
+Week 5:      Stream 6 (Testing & CI)
+Week 6:      Stream 7 (Production Polish)
+             → v1.0.0 Release
+Week 7-9:    Stream 8 (Sigma.js Migration) — post-release
+```
+
+### Parallelization Opportunities
+
+| Parallel Track A | Parallel Track B | Notes |
+|-----------------|-----------------|-------|
+| Stream 1 (Imports) — backend heavy | Stream 2 (ER) — backend heavy | No dependencies between them |
+| Stream 3 (Constraints) — backend | Stream 4 (Quality Dashboard) — frontend | No overlap |
+| Stream 6 (Testing) — DevOps | Stream 5 (Schema Extraction) — backend | Possible overlap |
+
+### Risk Factors
+
+| Risk | Impact | Mitigation |
+|------|--------|-----------|
+| `arango-entity-resolution` library API changes | Stream 2 delay | Pin library version, review API before starting |
+| Large ontology import performance (FIBO = 20K+ classes) | Stream 1 delay | Test with FIBO early, optimize batch imports |
+| LLM extraction unreliability (empty responses) | Ongoing | Already mitigated with 5 retries + backoff; consider adding Anthropic fallback |
+| React Flow → Sigma.js migration complexity | Stream 8 delay | Build Sigma component alongside React Flow first, switch over when ready |
+
+---
+
+## Metrics & Definition of Done
+
+### v1.0.0 Release Criteria
+
+- [ ] All PRD §6 features implemented (Streams 1–5)
+- [ ] CI pipeline passes on every commit (Stream 6)
+- [ ] Backend test coverage ≥ 80%
+- [ ] Frontend test coverage ≥ 60%
+- [ ] No critical or high-severity bugs open
+- [ ] Performance benchmarks documented (Stream 7)
+- [ ] Production deployment guide complete
+- [ ] README updated with current state
+
+### Quality Targets (PRD §3.2)
+
+| Metric | Target | How Measured |
+|--------|--------|-------------|
+| Extraction precision | ≥ 80% classes accepted without edits | Curation acceptance rate |
+| Extraction recall | ≥ 70% of gold-standard concepts found | Gold-standard comparison |
+| Curation throughput | 50+ concepts/hour | Curation timer |
+| Deduplication accuracy | ≥ 85% merge suggestions correct | ER acceptance rate |
+| Time to first ontology | < 30 minutes | Upload-to-completion timing |
