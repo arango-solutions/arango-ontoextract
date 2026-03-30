@@ -350,11 +350,20 @@ export default function GraphCanvas({
         const toKey = edge._to.split("/").pop() ?? edge._to;
         const edgeType = ((edge as Record<string, unknown>).edge_type ?? edge.type) as string;
         const isExtendsDomain = edgeType === "extends_domain";
+        const isHierarchy = edgeType === "subclass_of" || edgeType === "extends_domain";
+
+        const OWL_LABELS: Record<string, string> = {
+          subclass_of: "rdfs:subClassOf",
+          extends_domain: "aoe:extendsDomain",
+          related_to: "owl:relatedTo",
+        };
+        const displayLabel = edge.label || OWL_LABELS[edgeType] || edgeType;
+
         return {
           id: edge._key,
-          source: fromKey,
-          target: toKey,
-          label: edge.label || edgeType,
+          source: isHierarchy ? toKey : fromKey,
+          target: isHierarchy ? fromKey : toKey,
+          label: displayLabel,
           type: "default",
           markerEnd: { type: MarkerType.ArrowClosed },
           style: {
