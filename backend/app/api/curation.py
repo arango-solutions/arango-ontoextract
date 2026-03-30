@@ -21,6 +21,7 @@ from app.models.curation import (
     PromotionRequest,
     PromotionStatusResponse,
 )
+from app.db.client import get_db
 from app.services import curation as curation_svc
 from app.services import promotion as promotion_svc
 
@@ -119,6 +120,79 @@ async def promote_staging(run_id: str, body: PromotionRequest | None = None) -> 
         ontology_id=ontology_id,
     )
     return report
+
+
+@router.get("/diff/{run_id}")
+async def get_curation_diff(
+    run_id: str,
+    ontology_id: str = Query("", description="Ontology to diff against"),
+) -> dict:
+    """Compare staging extraction results against the current ontology state.
+
+    Returns classes that are new (in staging but not in ontology),
+    changed (in both but different), and removed (in ontology but not staging).
+    """
+    import sys
+    db = get_db()
+    NEVER_EXPIRES = sys.maxsize
+
+    staging_classes: list[dict] = []
+    if db.has_collection("extraction_runs"):
+        results_key = f"results_{run_id}"
+        col = db.collection("extraction_runs")
+        results_doc = col.get(results_key) if col.has(results_key) else None
+        if results_doc and "extraction_result" in results_doc:
+            raw = results_doc["extraction_result"]
+            classes = raw.get("classes", []) if isinstance(raw, dict) else []
+            for c in classes:
+                if isinstance(c, dict):
+                    staging_classes.append(c)
+                elif hasattr(c, "model_dump"):
+                    staging_classes.append(c.model_dump())
+
+    current_classes: list[dict] = []
+    if ontology_id and db.has_collection("ontology_classes"):
+        current_classes = list(db.aql.execute(
+            "FOR c IN ontology_classes "
+            "FILTER c.ontology_id == @oid AND c.expired == @never "
+            "RETURN c",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        ))
+
+    staging_by_uri = {c.get("uri", ""): c for c in staging_classes if c.get("uri")}
+    current_by_uri = {c.get("uri", ""): c for c in current_classes if c.get("uri")}
+
+    added = [
+        {"entity_key": c.get("uri", ""), "entity_type": "class",
+         "label": c.get("label", ""), "new_value": c}
+        for uri, c in staging_by_uri.items() if uri not in current_by_uri
+    ]
+    removed = [
+        {"entity_key": c.get("uri", ""), "entity_type": "class",
+         "label": c.get("label", ""), "old_value": c}
+        for uri, c in current_by_uri.items() if uri not in staging_by_uri
+    ]
+    changed = []
+    for uri in staging_by_uri:
+        if uri in current_by_uri:
+            s, cur = staging_by_uri[uri], current_by_uri[uri]
+            diffs = [k for k in ("label", "description", "parent_uri") if s.get(k) != cur.get(k)]
+            if diffs:
+                changed.append({
+                    "entity_key": uri, "entity_type": "class",
+                    "label": s.get("label", ""),
+                    "fields_changed": diffs,
+                    "old_value": {k: cur.get(k) for k in diffs},
+                    "new_value": {k: s.get(k) for k in diffs},
+                })
+
+    return {
+        "t1": "current",
+        "t2": f"run_{run_id}",
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+    }
 
 
 @router.get("/promote/{run_id}/status", response_model=PromotionStatusResponse)

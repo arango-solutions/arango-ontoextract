@@ -1384,6 +1384,27 @@ async def get_snapshot(
     return temporal_svc.get_snapshot(ontology_id=ontology_id, timestamp=at)
 
 
+@router.get("/class/{class_key}/provenance")
+async def get_class_provenance(class_key: str) -> dict:
+    """Source chunks that contributed to extracting this class."""
+    db = get_db()
+    chunks: list[dict] = []
+    if db.has_collection("extracted_from") and db.has_collection("chunks"):
+        rows = list(db.aql.execute(
+            "FOR e IN extracted_from "
+            "  FILTER e._from == CONCAT('ontology_classes/', @key) "
+            "  LET doc_id = PARSE_IDENTIFIER(e._to).key "
+            "  FOR c IN chunks "
+            "    FILTER c.doc_id == doc_id "
+            "    SORT c.chunk_index ASC "
+            "    RETURN { _key: c._key, text: c.text, chunk_index: c.chunk_index, "
+            "             doc_id: c.doc_id, section_heading: c.section_heading }",
+            bind_vars={"key": class_key},
+        ))
+        chunks = rows
+    return {"data": chunks, "total_count": len(chunks)}
+
+
 @router.get("/class/{class_key}/history")
 async def get_class_history(class_key: str) -> list[dict]:
     """All versions of a class sorted by created DESC."""

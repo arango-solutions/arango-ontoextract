@@ -145,10 +145,28 @@ export default function EntityHistory({
     setLoading(true);
     setError(null);
     try {
-      const res = await api.get<VersionHistory>(
+      const res = await api.get<VersionHistory | Record<string, unknown>[]>(
         `/api/v1/ontology/class/${classKey}/history`,
       );
-      setHistory(res);
+      if (Array.isArray(res)) {
+        const versions: VersionEntry[] = res.map((doc, idx) => ({
+          version_number: (doc as Record<string, unknown>).version as number ?? idx + 1,
+          data: doc as Record<string, unknown>,
+          created: String((doc as Record<string, unknown>).created ?? ""),
+          expired: (doc as Record<string, unknown>).expired != null
+            ? String((doc as Record<string, unknown>).expired)
+            : null,
+        }));
+        const first = res[0] as Record<string, unknown> | undefined;
+        setHistory({
+          class_key: classKey,
+          uri: String(first?.uri ?? ""),
+          label: String(first?.label ?? classKey),
+          versions,
+        });
+      } else {
+        setHistory(res as VersionHistory);
+      }
     } catch (err) {
       setError(
         err instanceof ApiError
@@ -189,7 +207,7 @@ export default function EntityHistory({
           <h3 className="text-sm font-semibold text-gray-800">
             Version History
           </h3>
-          {history && (
+          {history && history.versions && (
             <p className="text-xs text-gray-500 mt-0.5">
               {history.label}{" "}
               <span className="font-mono text-gray-400">
@@ -222,7 +240,7 @@ export default function EntityHistory({
         </div>
       )}
 
-      {!loading && history && (
+      {!loading && history && history.versions && (
         <div className="relative ml-1 max-h-[500px] overflow-y-auto">
           {history.versions.map((version, i) => (
             <VersionCard

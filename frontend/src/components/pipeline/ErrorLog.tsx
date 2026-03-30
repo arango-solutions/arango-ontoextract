@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { api } from "@/lib/api-client";
 import type { StepStatus } from "@/types/pipeline";
 import { STEP_LABELS, type PipelineStep } from "@/types/pipeline";
@@ -33,6 +33,22 @@ export default function ErrorLog({ steps, runId }: ErrorLogProps) {
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [retryResult, setRetryResult] = useState<string | null>(null);
+  const [runErrors, setRunErrors] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!runId) return;
+    let cancelled = false;
+    api
+      .get<Record<string, unknown>>(`/api/v1/extraction/runs/${runId}`)
+      .then((run) => {
+        if (cancelled) return;
+        const stats = (run.stats ?? {}) as Record<string, unknown>;
+        const errs = (stats.errors ?? []) as string[];
+        if (Array.isArray(errs)) setRunErrors(errs);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [runId]);
 
   const errors: ErrorEntry[] = [];
   steps.forEach((step, key) => {
@@ -46,6 +62,17 @@ export default function ErrorLog({ steps, runId }: ErrorLogProps) {
       });
     }
   });
+
+  for (const errMsg of runErrors) {
+    if (!errors.some((e) => e.error === errMsg)) {
+      errors.push({
+        stepKey: "pipeline",
+        stepLabel: "Pipeline",
+        error: errMsg,
+        timestamp: "",
+      });
+    }
+  }
 
   const handleRetry = useCallback(async () => {
     if (!runId) return;
