@@ -51,6 +51,9 @@ async function fetchStepsFromRest(
     if (!res.ok) return null;
     const run = await res.json();
 
+    const runStatus: string = run?.status ?? "unknown";
+    const isRunning = runStatus === "running";
+
     const stepLogs: {
       step: string;
       status: string;
@@ -61,9 +64,11 @@ async function fetchStepsFromRest(
       tokens?: Record<string, unknown>;
     }[] = run?.stats?.step_logs ?? [];
 
-    if (stepLogs.length === 0) return null;
+    if (stepLogs.length === 0 && !isRunning) return null;
 
     const map = buildInitialSteps();
+
+    const completedFrontendSteps = new Set<string>();
 
     for (const log of stepLogs) {
       const frontendStep = BACKEND_TO_FRONTEND_STEP[log.step] ?? log.step;
@@ -74,6 +79,10 @@ async function fetchStepsFromRest(
       else if (log.status === "failed") status = "failed";
       else if (log.status === "running") status = "running";
       else if (log.status === "skipped") status = "completed";
+
+      if (status === "completed" || status === "failed") {
+        completedFrontendSteps.add(frontendStep);
+      }
 
       map.set(frontendStep, {
         status,
@@ -86,6 +95,21 @@ async function fetchStepsFromRest(
         error: log.error ?? undefined,
         data: { ...log.metadata, ...log.tokens },
       });
+    }
+
+    if (isRunning) {
+      let foundRunning = false;
+      for (const step of PIPELINE_STEPS) {
+        if (completedFrontendSteps.has(step)) continue;
+        if (!foundRunning) {
+          map.set(step, { ...map.get(step)!, status: "running" });
+          foundRunning = true;
+        }
+        break;
+      }
+      if (!foundRunning && completedFrontendSteps.size === 0) {
+        map.set(PIPELINE_STEPS[0], { status: "running" });
+      }
     }
 
     return map;
@@ -172,21 +196,37 @@ export function useExtractionSocket(
     };
   }, []);
 
-  // REST API fallback: fetch step data when WS isn't available
+  // REST API fallback: poll step data when WS isn't available
   useEffect(() => {
     if (!runId) return;
     restFetchedRef.current = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
 
-    const timer = setTimeout(async () => {
-      if (!mountedRef.current || restFetchedRef.current) return;
-      const restSteps = await fetchStepsFromRest(runId);
-      if (restSteps && mountedRef.current && !restFetchedRef.current) {
-        restFetchedRef.current = true;
-        setSteps(restSteps);
+    async function poll() {
+      if (!mountedRef.current) return;
+      const restSteps = await fetchStepsFromRest(runId!);
+      if (!restSteps || !mountedRef.current) return;
+
+      setSteps(restSteps);
+
+      const allDone = [...restSteps.values()].every(
+        (s) => s.status === "completed" || s.status === "failed",
+      );
+      if (allDone && intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
       }
+    }
+
+    const initialTimer = setTimeout(() => {
+      poll();
+      intervalId = setInterval(poll, 5000);
     }, 500);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(initialTimer);
+      if (intervalId) clearInterval(intervalId);
+    };
   }, [runId]);
 
   useEffect(() => {
