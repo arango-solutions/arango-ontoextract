@@ -151,10 +151,10 @@ export default function AgentDAG({ steps }: AgentDAGProps) {
         nodeTypes={nodeTypes}
         onInit={onInit}
         fitView
-        panOnDrag={false}
-        zoomOnScroll={false}
-        zoomOnPinch={false}
-        zoomOnDoubleClick={false}
+        panOnDrag
+        zoomOnScroll
+        zoomOnPinch
+        zoomOnDoubleClick
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}

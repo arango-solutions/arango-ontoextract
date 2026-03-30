@@ -93,6 +93,7 @@ export const PIPELINE_STEPS = [
   "strategy_selector",
   "extraction_agent",
   "consistency_checker",
+  "quality_judge",
   "entity_resolution_agent",
   "pre_curation_filter",
 ] as const;
@@ -103,6 +104,7 @@ export const STEP_LABELS: Record<PipelineStep, string> = {
   strategy_selector: "Strategy Selector",
   extraction_agent: "Extraction Agent",
   consistency_checker: "Consistency Checker",
+  quality_judge: "Quality Judge",
   entity_resolution_agent: "Entity Resolution Agent",
   pre_curation_filter: "Pre-Curation Filter",
 };

@@ -19,7 +19,7 @@ const BACKEND_TO_FRONTEND_STEP: Record<string, PipelineStep> = {
   strategy_selector: "strategy_selector",
   extractor: "extraction_agent",
   consistency_checker: "consistency_checker",
-  quality_judge: "consistency_checker",
+  quality_judge: "quality_judge",
   er_agent: "entity_resolution_agent",
   filter: "pre_curation_filter",
 };
@@ -109,6 +109,13 @@ async function fetchStepsFromRest(
       }
       if (!foundRunning && completedFrontendSteps.size === 0) {
         map.set(PIPELINE_STEPS[0], { status: "running" });
+      }
+    } else if (runStatus === "completed" || runStatus === "completed_with_errors" || runStatus === "failed") {
+      for (const step of PIPELINE_STEPS) {
+        const current = map.get(step);
+        if (current && current.status === "pending") {
+          map.set(step, { ...current, status: "completed" });
+        }
       }
     }
 
