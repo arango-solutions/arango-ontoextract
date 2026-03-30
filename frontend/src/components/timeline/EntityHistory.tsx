@@ -49,7 +49,7 @@ function VersionCard({
         className={`absolute left-[-5px] top-1 w-2.5 h-2.5 rounded-full border-2 ${
           isLatest
             ? "bg-blue-500 border-blue-500"
-            : version.expired
+            : (version.expired != null && Number(version.expired) !== 9223372036854775807 && Number(version.expired) > 0)
               ? "bg-gray-300 border-gray-300"
               : "bg-green-500 border-green-500"
         }`}
@@ -68,7 +68,11 @@ function VersionCard({
             )}
           </div>
           <span className="text-xs text-gray-400">
-            {new Date(version.created).toLocaleString()}
+            {(() => {
+              const ts = typeof version.created === "number" ? version.created * 1000 : version.created;
+              const d = new Date(ts);
+              return isNaN(d.getTime()) ? "" : d.toLocaleString();
+            })()}
           </span>
         </div>
 
@@ -110,9 +114,13 @@ function VersionCard({
         </div>
 
         {/* Expired */}
-        {version.expired && (
+        {version.expired != null && Number(version.expired) !== 9223372036854775807 && Number(version.expired) > 0 && (
           <div className="text-xs text-gray-400 mt-1">
-            Expired: {new Date(version.expired).toLocaleString()}
+            Expired: {(() => {
+              const ts = typeof version.expired === "number" ? version.expired * 1000 : version.expired;
+              const d = new Date(ts);
+              return isNaN(d.getTime()) ? "" : d.toLocaleString();
+            })()}
           </div>
         )}
 
