@@ -53,6 +53,9 @@ class ExtractionPipelineState(TypedDict, total=False):
     step_logs: list[StepLog]
     metadata: dict[str, Any]
 
+    faithfulness_scores: dict[str, float]
+    validity_scores: dict[str, float]
+
     er_results: dict[str, Any]
     filter_results: dict[str, Any]
     merge_candidates: list[dict[str, Any]]

@@ -18,6 +18,7 @@ from app.extraction.agents.er_agent import er_agent_node
 from app.extraction.agents.extractor import extractor_node
 from app.extraction.agents.filter import filter_agent_node
 from app.extraction.agents.strategy import strategy_selector_node
+from app.extraction.judges.quality_judge_node import quality_judge_node
 from app.extraction.state import ExtractionPipelineState
 
 log = logging.getLogger(__name__)
@@ -27,7 +28,8 @@ _EVENT_BUS: dict[str, Any] | None = None
 _NEXT_STEP: dict[str, str] = {
     "strategy_selector": "extractor",
     "extractor": "consistency_checker",
-    "consistency_checker": "er_agent",
+    "consistency_checker": "quality_judge",
+    "quality_judge": "er_agent",
     "er_agent": "filter",
 }
 
@@ -77,6 +79,7 @@ def build_pipeline() -> StateGraph:
     graph.add_node("strategy_selector", strategy_selector_node)
     graph.add_node("extractor", extractor_node)
     graph.add_node("consistency_checker", consistency_checker_node)
+    graph.add_node("quality_judge", quality_judge_node)
     graph.add_node("er_agent", er_agent_node)
     graph.add_node("filter", filter_agent_node)
 
@@ -97,10 +100,11 @@ def build_pipeline() -> StateGraph:
         _should_retry_consistency,
         {
             "end": END,
-            "continue": "er_agent",
+            "continue": "quality_judge",
         },
     )
 
+    graph.add_edge("quality_judge", "er_agent")
     graph.add_edge("er_agent", "filter")
 
     graph.add_conditional_edges(
@@ -194,6 +198,8 @@ async def run_pipeline(
         "metadata": {
             "domain_ontology_ids": domain_ontology_ids or [],
         },
+        "faithfulness_scores": {},
+        "validity_scores": {},
         "er_results": {},
         "filter_results": {},
         "merge_candidates": [],
