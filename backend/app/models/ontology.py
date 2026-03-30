@@ -112,6 +112,9 @@ class ExtractedClass(BaseModel):
     classification: ExtractionClassification = ExtractionClassification.NEW
     confidence: float = Field(ge=0.0, le=1.0)
     llm_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    faithfulness_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    semantic_validity_score: float = Field(default=0.8, ge=0.0, le=1.0)
+    property_agreement: float = Field(default=1.0, ge=0.0, le=1.0)
     properties: list["ExtractedProperty"] = []
 
 

@@ -9,6 +9,7 @@ from collections import Counter
 from app.config import settings
 from app.extraction.state import ExtractionPipelineState, StepLog
 from app.models.ontology import ExtractedClass, ExtractedProperty, ExtractionResult
+from app.services.confidence import _property_agreement_score
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +127,11 @@ def consistency_checker_node(state: ExtractionPipelineState) -> dict:
         all_property_lists = [v.properties for v in variants]
         merged_props = _merge_properties(all_property_lists)
 
+        prop_uris_per_pass: list[set[str]] = [
+            {_property_key(p) for p in v.properties} for v in variants
+        ]
+        prop_agreement = round(_property_agreement_score(prop_uris_per_pass), 3)
+
         best_variant = max(variants, key=lambda v: len(v.description))
         parent_uris = [v.parent_uri for v in variants if v.parent_uri]
         parent_uri = Counter(parent_uris).most_common(1)[0][0] if parent_uris else None
@@ -144,6 +150,7 @@ def consistency_checker_node(state: ExtractionPipelineState) -> dict:
                 classification=best_variant.classification,
                 confidence=round(agreement_ratio, 3),
                 llm_confidence=round(avg_llm_confidence, 3),
+                property_agreement=prop_agreement,
                 properties=merged_props,
             )
         )

@@ -274,6 +274,8 @@ async def execute_run(
                         document_id=did,
                         ontology_id=ontology_id,
                         result=final_state["consistency_result"],
+                        faithfulness_scores=final_state.get("faithfulness_scores"),
+                        validity_scores=final_state.get("validity_scores"),
                     )
                 _create_produced_by_edge(db, ontology_id=ontology_id, run_id=run_id)
                 try:
@@ -559,6 +561,8 @@ def _materialize_to_graph(
     document_id: str,
     ontology_id: str,
     result: Any,
+    faithfulness_scores: dict[str, float] | None = None,
+    validity_scores: dict[str, float] | None = None,
 ) -> None:
     """Write extracted classes/properties into graph collections with edges."""
     now = time.time()
@@ -696,6 +700,8 @@ def _materialize_to_graph(
         classes=classes,
         class_keys=class_keys,
         uri_to_key=uri_to_key,
+        faithfulness_scores=faithfulness_scores,
+        validity_scores=validity_scores,
     )
 
     log.info(
@@ -711,16 +717,41 @@ def _recompute_multi_signal_confidence(
     classes: list[Any],
     class_keys: dict[str, str],
     uri_to_key: dict[str, str],
+    faithfulness_scores: dict[str, float] | None = None,
+    validity_scores: dict[str, float] | None = None,
+    property_agreement_scores: dict[str, float] | None = None,
 ) -> None:
     """Second pass: recompute confidence for each class using multi-signal scoring.
 
     Runs AFTER all classes, properties, and edges have been materialized so
     that structural connectivity is fully available.
+
+    Parameters
+    ----------
+    faithfulness_scores:
+        Per-class URI → faithfulness score from the LLM judge. Defaults to
+        the class's ``llm_confidence`` when not available.
+    validity_scores:
+        Per-class URI → semantic validity score from the validator.
+    property_agreement_scores:
+        Per-class URI → cross-pass property agreement (Jaccard). Falls back
+        to the ``property_agreement`` field on the class model.
     """
+    if faithfulness_scores is None:
+        faithfulness_scores = {}
+    if validity_scores is None:
+        validity_scores = {}
+    if property_agreement_scores is None:
+        property_agreement_scores = {}
+
     cls_col = db.collection("ontology_classes")
+    prop_col = db.collection("ontology_properties")
     has_prop_col = db.collection("has_property")
     subclass_col = db.collection("subclass_of")
     extracted_col = db.collection("extracted_from")
+
+    has_related = db.has_collection("related_to")
+    has_extends = db.has_collection("extends_domain")
 
     all_descriptions: list[str] = []
     for cls in classes:
@@ -736,19 +767,37 @@ def _recompute_multi_signal_confidence(
             continue
 
         agreement_ratio = cls_data.get("confidence", 0.5)
-        llm_confidence = cls_data.get("llm_confidence", 0.5)
         description = cls_data.get("description", "")
         class_id = f"ontology_classes/{key}"
 
-        has_properties = bool(list(db.aql.execute(
-            "FOR e IN @@col FILTER e._from == @cls_id AND e.ontology_id == @oid "
-            "LIMIT 1 RETURN true",
+        faithfulness = faithfulness_scores.get(
+            uri, cls_data.get("llm_confidence", 0.5),
+        )
+        semantic_validity = validity_scores.get(uri, 0.5)
+        prop_agreement = property_agreement_scores.get(
+            uri, cls_data.get("property_agreement", 1.0),
+        )
+
+        prop_type_counts = list(db.aql.execute(
+            "FOR e IN @@hp FILTER e._from == @cls_id AND e.ontology_id == @oid "
+            "LET prop = DOCUMENT(e._to) "
+            "COLLECT rdf = prop.rdf_type WITH COUNT INTO cnt "
+            "RETURN {rdf, cnt}",
             bind_vars={
-                "@col": has_prop_col.name,
+                "@hp": has_prop_col.name,
                 "cls_id": class_id,
                 "oid": ontology_id,
             },
-        )))
+        ))
+        datatype_count = 0
+        object_count = 0
+        for row in prop_type_counts:
+            rdf = row.get("rdf", "")
+            cnt = row.get("cnt", 0)
+            if rdf == "owl:ObjectProperty":
+                object_count += cnt
+            else:
+                datatype_count += cnt
 
         has_parent = bool(list(db.aql.execute(
             "FOR e IN @@col FILTER e._from == @cls_id AND e.ontology_id == @oid "
@@ -770,6 +819,24 @@ def _recompute_multi_signal_confidence(
             },
         )))
 
+        has_lateral = False
+        if has_related:
+            has_lateral = bool(list(db.aql.execute(
+                "FOR e IN related_to "
+                "FILTER (e._from == @cls_id OR e._to == @cls_id) "
+                "AND e.ontology_id == @oid "
+                "LIMIT 1 RETURN true",
+                bind_vars={"cls_id": class_id, "oid": ontology_id},
+            )))
+        if not has_lateral and has_extends:
+            has_lateral = bool(list(db.aql.execute(
+                "FOR e IN extends_domain "
+                "FILTER (e._from == @cls_id OR e._to == @cls_id) "
+                "AND e.ontology_id == @oid "
+                "LIMIT 1 RETURN true",
+                bind_vars={"cls_id": class_id, "oid": ontology_id},
+            )))
+
         provenance_count_result = list(db.aql.execute(
             "FOR e IN @@col FILTER e._from == @cls_id "
             "COLLECT WITH COUNT INTO cnt RETURN cnt",
@@ -782,13 +849,17 @@ def _recompute_multi_signal_confidence(
 
         new_confidence = compute_class_confidence(
             agreement_ratio=agreement_ratio,
-            llm_confidence=llm_confidence,
-            has_properties=has_properties,
+            faithfulness=faithfulness,
+            semantic_validity=semantic_validity,
+            datatype_property_count=datatype_count,
+            object_property_count=object_count,
             has_parent=has_parent,
             has_children=has_children,
+            has_lateral_edges=has_lateral,
             description=description,
             all_descriptions=all_descriptions,
             provenance_count=provenance_count,
+            property_agreement=prop_agreement,
         )
 
         try:
