@@ -611,11 +611,13 @@ FOR doc IN @@col
   SORT doc.created ASC
   RETURN {
     timestamp: doc.created,
-    event_type: doc.change_type,
+    event_type: doc.source_type == "manual" ? "created_manual"
+      : doc.expired != @never ? "expired"
+      : "created",
     entity_key: doc._key,
-    entity_label: doc.label,
+    entity_label: doc.label || doc._key,
     collection: @col_name,
-    change_summary: doc.change_summary
+    extraction_run_id: doc.extraction_run_id
   }"""
 
     for col_name in _VERTEX_COLLECTIONS:
@@ -624,7 +626,12 @@ FOR doc IN @@col
         col_events = list(
             db.aql.execute(
                 event_query,
-                bind_vars={"@col": col_name, "oid": ontology_id, "col_name": col_name},
+                bind_vars={
+                    "@col": col_name,
+                    "oid": ontology_id,
+                    "col_name": col_name,
+                    "never": NEVER_EXPIRES,
+                },
             )
         )
         events.extend(col_events)

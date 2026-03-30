@@ -11,8 +11,10 @@ interface VCRTimelineProps {
 
 const PLAYBACK_SPEEDS = [0.5, 1, 2, 4];
 
-function formatTimestamp(iso: string): string {
-  const d = new Date(iso);
+function formatTimestamp(ts: string | number): string {
+  const ms = typeof ts === "number" ? ts * 1000 : new Date(ts).getTime();
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return String(ts);
   return d.toLocaleString(undefined, {
     year: "numeric",
     month: "short",
@@ -42,12 +44,16 @@ export default function VCRTimeline({
     setLoading(true);
     setError(null);
     try {
-      const res = await api.get<{ data: TimelineEvent[] }>(
+      const res = await api.get<TimelineEvent[] | { data: TimelineEvent[] }>(
         `/api/v1/ontology/${ontologyId}/timeline`,
       );
-      const sorted = (res.data ?? []).sort(
-        (a, b) =>
-          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+      const raw: TimelineEvent[] = Array.isArray(res) ? res : (res.data ?? []);
+      const sorted = raw.sort(
+        (a, b) => {
+          const ta = typeof a.timestamp === "number" ? a.timestamp : new Date(a.timestamp).getTime() / 1000;
+          const tb = typeof b.timestamp === "number" ? b.timestamp : new Date(b.timestamp).getTime() / 1000;
+          return ta - tb;
+        },
       );
       setEvents(sorted);
       if (sorted.length > 0) {
