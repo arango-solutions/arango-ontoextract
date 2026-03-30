@@ -1249,24 +1249,65 @@ The agent DAG is a small, fixed-topology graph (5–6 nodes) — unlike the onto
 
 **Problem:** A single-signal confidence score (e.g., cross-pass agreement alone) produces identical values for all classes that clear the consistency threshold (e.g., every class shows 67%). This provides no differentiation and no actionable signal to curators.
 
-**Solution:** Each class receives a **multi-signal confidence score** that blends five independent quality signals into a single value:
+**Solution:** Each class receives a **multi-signal confidence score** that blends seven independent quality signals into a single value:
 
 | Signal | Weight | What it measures | Range | Source |
 |--------|--------|-----------------|-------|--------|
-| **Cross-pass agreement** | 0.25 | How consistently the LLM extracts this class across N passes | 0.0–1.0 | `pass_count / total_passes` from consistency checker |
-| **LLM self-reported confidence** | 0.25 | The LLM's own certainty about this extraction (already requested in extraction prompts) | 0.0–1.0 | Average of per-pass `confidence` fields before consistency merging |
-| **Structural quality** | 0.20 | Does this class have properties? Does it have a parent? Is it connected in the hierarchy? | 0.0–1.0 | `has_properties: +0.4`, `has_parent: +0.3`, `has_children: +0.3` — orphans with no properties score 0.0 |
-| **Description quality** | 0.15 | Does the class have a meaningful description? Is it distinct from other classes? | 0.0–1.0 | `min(len(description) / 100, 1.0) * 0.7 + uniqueness * 0.3` where uniqueness penalizes near-duplicate descriptions |
-| **Provenance strength** | 0.15 | How many distinct source chunks support this class? More evidence = higher confidence | 0.0–1.0 | `min(supporting_chunk_count / 3, 1.0)` — 3+ chunks = full score |
+| **Cross-pass agreement** | 0.20 | How consistently the LLM extracts this class across N passes | 0.0–1.0 | `pass_count / total_passes` from consistency checker |
+| **Faithfulness (LLM-as-Judge)** | 0.20 | Whether the class is grounded in the source text vs. hallucinated or inferred beyond the evidence | 0.0–1.0 | Post-extraction LLM judge pass (see below) |
+| **Semantic validity** | 0.15 | Whether the class's properties and relationships are logically consistent (domain/range correctness, no disjointness violations) | 0.0–1.0 | LLM-based semantic validation pass (see below) |
+| **Structural quality** | 0.15 | Graph connectivity including hierarchy AND relationship richness | 0.0–1.0 | Differentiated scoring for object vs. datatype properties (see below) |
+| **Description quality** | 0.10 | Does the class have a meaningful description? Is it distinct from other classes? | 0.0–1.0 | `min(len(description) / 100, 1.0) * 0.7 + uniqueness * 0.3` where uniqueness penalizes near-duplicate descriptions |
+| **Provenance strength** | 0.10 | How many distinct source chunks support this class? More evidence = higher confidence | 0.0–1.0 | `min(supporting_chunk_count / 3, 1.0)` — 3+ chunks = full score |
+| **Cross-pass property agreement** | 0.10 | How consistently the class's properties are extracted across passes | 0.0–1.0 | Jaccard similarity of property URIs across passes |
 
-**Formula:** `confidence = 0.25 * agreement + 0.25 * llm_confidence + 0.20 * structural + 0.15 * description + 0.15 * provenance`
+**Formula:** `confidence = 0.20 * agreement + 0.20 * faithfulness + 0.15 * semantic_validity + 0.15 * structural + 0.10 * description + 0.10 * provenance + 0.10 * property_agreement`
+
+**Signal Details:**
+
+**Faithfulness (LLM-as-Judge):** Replaces the naive "LLM self-reported confidence" (which is poorly calibrated — LLMs tend to be overconfident). After extraction, a separate LLM call evaluates each class against the source chunks:
+
+```
+For each extracted class, given the original source text:
+1. Is this class explicitly mentioned in the text? (EXPLICIT = 1.0)
+2. Is it reasonably inferred from the text? (INFERRED = 0.7)
+3. Is it a reasonable domain concept but not grounded in the text? (PLAUSIBLE = 0.4)
+4. Is it hallucinated / not supported? (HALLUCINATED = 0.1)
+```
+
+This is the RAG Faithfulness pattern: the judge LLM assesses grounding in source material, producing calibrated scores that differentiate well-grounded classes from speculative ones.
+
+**Semantic Validity (LLM-based):** After extraction, a validation pass checks each class for OWL-level logical consistency:
+
+| Check | Penalty | Example |
+|-------|---------|---------|
+| **Domain/range mismatch** | −0.3 | A property claims `domain: Customer, range: Temperature` — semantically nonsensical |
+| **Disjointness violation** | −0.4 | A class is declared as subclass of two classes that should be disjoint |
+| **Circular dependency** | −0.5 | A is subClassOf B which is subClassOf A |
+| **Range type mismatch** | −0.2 | An object property points to an XSD datatype, or a datatype property points to a class |
+
+The validation is performed by an LLM prompt that reviews the extracted class in context of its properties and relationships. Future enhancement: formal OWL reasoner (owlready2 or HermiT) for provably correct validation.
+
+**Structural Quality (Relationship Richness):** The structural score now differentiates between hierarchy edges (vertical) and object property edges (lateral):
+
+| Component | Contribution | Why |
+|-----------|-------------|-----|
+| Has datatype properties | +0.15 | Basic data modeling |
+| Has object properties (relationships to other classes) | +0.30 | Lateral connections are the most valuable ontological structure |
+| Has `subclass_of` parent | +0.20 | Vertical hierarchy placement |
+| Has `subclass_of` children | +0.15 | Acts as a useful generalization |
+| Has `related_to` or `extends_domain` edges | +0.20 | Cross-cutting relationships |
+
+An orphan class with only datatype properties scores 0.15. A well-connected class with object properties, a parent, and lateral edges scores 0.85–1.0.
 
 **Expected outcomes:**
-- A well-extracted class appearing in all passes, with a clear description, properties, a parent, and supported by 3+ chunks: confidence ≈ 0.90–0.95
-- A class from 2/3 passes with no properties and a generic description: confidence ≈ 0.40–0.50
-- An orphan class from 1 pass with an empty description: confidence ≈ 0.15–0.25
+- A well-grounded class appearing in all passes, faithfulness=EXPLICIT, semantically valid, with object properties and hierarchy placement: confidence ≈ 0.85–0.95
+- A class from 2/3 passes, faithfulness=INFERRED, some properties but orphan: confidence ≈ 0.50–0.60
+- A hallucinated class from 1 pass with domain/range mismatches: confidence ≈ 0.15–0.25
 
-**When computed:** Multi-signal confidence is calculated during `_materialize_to_graph()` after the consistency checker produces the merged class list. It replaces the raw agreement ratio stored on the class document.
+**When computed:** Multi-signal confidence is calculated in two phases:
+1. **During pipeline execution** (after consistency checker): The faithfulness judge and semantic validator run as sub-steps, producing per-class scores stored alongside the extraction results.
+2. **During materialization** (`_materialize_to_graph()`): Structural, description, and provenance signals are computed from the graph, and the final blended score is written to each class document.
 
 #### 6.13.2 Composite Ontology Health Score
 
