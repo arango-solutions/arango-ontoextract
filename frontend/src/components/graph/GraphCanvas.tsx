@@ -365,7 +365,9 @@ export default function GraphCanvas({
           target: isHierarchy ? fromKey : toKey,
           label: displayLabel,
           type: "default",
-          markerEnd: { type: MarkerType.ArrowClosed },
+          ...(isHierarchy
+            ? { markerStart: { type: MarkerType.ArrowClosed } }
+            : { markerEnd: { type: MarkerType.ArrowClosed } }),
           style: {
             stroke: isExtendsDomain ? "#a855f7" : (EDGE_COLORS[edgeType] ?? "#94a3b8"),
             strokeWidth: isExtendsDomain ? 2.5 : 2,
