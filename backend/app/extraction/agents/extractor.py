@@ -1,4 +1,7 @@
-"""Extraction Agent — N-pass LLM extraction with Pydantic validation and self-correction."""
+"""Extraction Agent — N-pass LLM extraction with Pydantic validation and self-correction.
+
+Batches within each pass and all passes run concurrently, capped by a semaphore.
+"""
 
 from __future__ import annotations
 
@@ -17,7 +20,8 @@ from app.models.ontology import ExtractionResult
 
 log = logging.getLogger(__name__)
 
-_MAX_RETRIES_PER_PASS = 5
+_MAX_RETRIES_PER_BATCH = 5
+_MAX_CONCURRENCY = 40
 
 
 def _get_llm(model_name: str) -> Any:
@@ -126,8 +130,154 @@ FOR chunk IN chunks
         return chunks
 
 
+async def _extract_batch(
+    llm: Any,
+    template: Any,
+    batch_idx: int,
+    batch_text: str,
+    pass_num: int,
+    model_name: str,
+    domain_context: str,
+    document_id: str,
+    chunks: list[dict[str, Any]],
+    run_id: str,
+    semaphore: asyncio.Semaphore,
+) -> tuple[list[Any], list[str], dict[str, int]]:
+    """Extract ontology classes from a single batch. Returns (classes, errors, token_counts)."""
+    async with semaphore:
+        relevant_chunks = _retrieve_relevant_chunks(document_id, chunks, batch_text)
+        if relevant_chunks and relevant_chunks is not chunks:
+            rag_text = "\n\n".join(c.get("text", "") for c in relevant_chunks[:5])
+            batch_text = f"{batch_text}\n\n--- RELATED CONTEXT ---\n{rag_text}"
+
+        extra_vars = {"pass_number": pass_num, "model_name": model_name}
+        system_msg, user_msg = template.render(
+            chunks_text=batch_text,
+            domain_context=domain_context,
+            extra_vars=extra_vars,
+        )
+
+        tokens = {"prompt_tokens": 0, "completion_tokens": 0}
+        last_error: str | None = None
+        result: ExtractionResult | None = None
+        errors: list[str] = []
+
+        for retry in range(_MAX_RETRIES_PER_BATCH):
+            try:
+                messages = [SystemMessage(content=system_msg), HumanMessage(content=user_msg)]
+                if last_error and "Expecting value" not in last_error:
+                    messages.append(
+                        HumanMessage(
+                            content=(
+                                f"Your previous response failed validation: {last_error}\n"
+                                "Please fix the JSON and try again."
+                            )
+                        )
+                    )
+
+                response = await llm.ainvoke(messages)
+                raw_text = (
+                    response.content
+                    if isinstance(response.content, str)
+                    else str(response.content)
+                )
+
+                if not raw_text or not raw_text.strip():
+                    raise ValueError("LLM returned empty response")
+
+                if hasattr(response, "usage_metadata") and response.usage_metadata:
+                    usage = response.usage_metadata
+                    tokens["prompt_tokens"] += usage.get("input_tokens", 0)
+                    tokens["completion_tokens"] += usage.get("output_tokens", 0)
+
+                result = _parse_llm_response(raw_text, pass_num, model_name)
+                break
+
+            except Exception as exc:
+                last_error = str(exc)
+                log.warning(
+                    "extractor parse error, retrying",
+                    extra={
+                        "run_id": run_id,
+                        "pass": pass_num,
+                        "batch": batch_idx,
+                        "retry": retry + 1,
+                        "error": last_error,
+                    },
+                )
+                if "empty response" in last_error.lower() or "Expecting value" in last_error:
+                    await asyncio.sleep(2 * (retry + 1))
+                if retry == _MAX_RETRIES_PER_BATCH - 1:
+                    errors.append(
+                        f"Pass {pass_num} batch {batch_idx}: "
+                        f"failed after {_MAX_RETRIES_PER_BATCH} retries: {last_error}"
+                    )
+
+        classes = list(result.classes) if result else []
+        return classes, errors, tokens
+
+
+async def _run_single_pass(
+    pass_num: int,
+    llm: Any,
+    template: Any,
+    chunk_batches: list[str],
+    model_name: str,
+    domain_context: str,
+    document_id: str,
+    chunks: list[dict[str, Any]],
+    run_id: str,
+    semaphore: asyncio.Semaphore,
+) -> tuple[ExtractionResult, list[str], dict[str, int]]:
+    """Run one extraction pass with all batches concurrent."""
+    log.info("extractor pass %d started (%d batches)", pass_num, len(chunk_batches))
+
+    tasks = [
+        _extract_batch(
+            llm=llm,
+            template=template,
+            batch_idx=idx,
+            batch_text=batch_text,
+            pass_num=pass_num,
+            model_name=model_name,
+            domain_context=domain_context,
+            document_id=document_id,
+            chunks=chunks,
+            run_id=run_id,
+            semaphore=semaphore,
+        )
+        for idx, batch_text in enumerate(chunk_batches)
+    ]
+
+    results = await asyncio.gather(*tasks)
+
+    all_classes = []
+    all_errors = []
+    pass_tokens = {"prompt_tokens": 0, "completion_tokens": 0}
+
+    for classes, errors, tokens in results:
+        all_classes.extend(classes)
+        all_errors.extend(errors)
+        pass_tokens["prompt_tokens"] += tokens["prompt_tokens"]
+        pass_tokens["completion_tokens"] += tokens["completion_tokens"]
+
+    pass_result = ExtractionResult(
+        classes=all_classes,
+        pass_number=pass_num,
+        model=model_name,
+        token_usage=(pass_tokens["prompt_tokens"] + pass_tokens["completion_tokens"]) or None,
+    )
+
+    log.info(
+        "extractor pass %d completed: %d classes, %d errors",
+        pass_num, len(all_classes), len(all_errors),
+    )
+
+    return pass_result, all_errors, pass_tokens
+
+
 async def extractor_node(state: ExtractionPipelineState) -> dict:
-    """LangGraph node: run N-pass extraction with self-correction."""
+    """LangGraph node: run N-pass extraction concurrently with self-correction."""
     start = time.time()
     run_id = state.get("run_id", "unknown")
     document_id = state.get("document_id", "")
@@ -148,116 +298,46 @@ async def extractor_node(state: ExtractionPipelineState) -> dict:
             "model": model_name,
             "num_passes": num_passes,
             "chunk_count": len(chunks),
+            "batch_size": batch_size,
         },
     )
 
     llm = _get_llm(model_name)
     template = get_template(template_key)
-    pass_results: list[ExtractionResult] = []
     total_tokens = TokenUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
 
     chunk_batches = _batch_chunks(chunks, batch_size)
+    semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
 
-    for pass_num in range(1, num_passes + 1):
-        log.info("extractor pass started", extra={"run_id": run_id, "pass": pass_num})
-        all_classes = []
-        pass_token_total = 0
-
-        for batch_idx, batch_text in enumerate(chunk_batches):
-            relevant_chunks = _retrieve_relevant_chunks(document_id, chunks, batch_text)
-            if relevant_chunks and relevant_chunks is not chunks:
-                rag_text = "\n\n".join(c.get("text", "") for c in relevant_chunks[:5])
-                batch_text = f"{batch_text}\n\n--- RELATED CONTEXT ---\n{rag_text}"
-
-            extra_vars = {"pass_number": pass_num, "model_name": model_name}
-            system_msg, user_msg = template.render(
-                chunks_text=batch_text,
-                domain_context=domain_context,
-                extra_vars=extra_vars,
-            )
-
-            last_error: str | None = None
-            result: ExtractionResult | None = None
-
-            for retry in range(_MAX_RETRIES_PER_PASS):
-                try:
-                    messages = [SystemMessage(content=system_msg), HumanMessage(content=user_msg)]
-                    if last_error and "Expecting value" not in last_error:
-                        messages.append(
-                            HumanMessage(
-                                content=(
-                                    f"Your previous response failed validation: {last_error}\n"
-                                    "Please fix the JSON and try again."
-                                )
-                            )
-                        )
-
-                    response = await llm.ainvoke(messages)
-                    raw_text = (
-                        response.content
-                        if isinstance(response.content, str)
-                        else str(response.content)
-                    )
-
-                    if not raw_text or not raw_text.strip():
-                        raise ValueError("LLM returned empty response")
-
-                    if hasattr(response, "usage_metadata") and response.usage_metadata:
-                        usage = response.usage_metadata
-                        pass_token_total += usage.get("total_tokens", 0)
-                        total_tokens["prompt_tokens"] = total_tokens.get(
-                            "prompt_tokens", 0
-                        ) + usage.get("input_tokens", 0)
-                        total_tokens["completion_tokens"] = total_tokens.get(
-                            "completion_tokens", 0
-                        ) + usage.get("output_tokens", 0)
-
-                    result = _parse_llm_response(raw_text, pass_num, model_name)
-                    break
-
-                except Exception as exc:
-                    last_error = str(exc)
-                    log.warning(
-                        "extractor parse error, retrying",
-                        extra={
-                            "run_id": run_id,
-                            "pass": pass_num,
-                            "batch": batch_idx,
-                            "retry": retry + 1,
-                            "error": last_error,
-                        },
-                    )
-                    if "empty response" in last_error.lower() or "Expecting value" in last_error:
-                        await asyncio.sleep(2 * (retry + 1))
-                    if retry == _MAX_RETRIES_PER_PASS - 1:
-                        errors.append(
-                            f"Pass {pass_num} batch {batch_idx}: "
-                            f"failed after {_MAX_RETRIES_PER_PASS} retries: {last_error}"
-                        )
-
-            if result:
-                all_classes.extend(result.classes)
-
-        total_tokens["total_tokens"] = (
-            total_tokens.get("prompt_tokens", 0) + total_tokens.get("completion_tokens", 0)
+    # Run all passes concurrently — each pass runs its batches concurrently too
+    pass_tasks = [
+        _run_single_pass(
+            pass_num=p,
+            llm=llm,
+            template=template,
+            chunk_batches=chunk_batches,
+            model_name=model_name,
+            domain_context=domain_context,
+            document_id=document_id,
+            chunks=chunks,
+            run_id=run_id,
+            semaphore=semaphore,
         )
+        for p in range(1, num_passes + 1)
+    ]
 
-        pass_result = ExtractionResult(
-            classes=all_classes,
-            pass_number=pass_num,
-            model=model_name,
-            token_usage=pass_token_total or None,
-        )
+    pass_outputs = await asyncio.gather(*pass_tasks)
+
+    pass_results: list[ExtractionResult] = []
+    for pass_result, pass_errors, pass_tokens in pass_outputs:
         pass_results.append(pass_result)
-        log.info(
-            "extractor pass completed",
-            extra={
-                "run_id": run_id,
-                "pass": pass_num,
-                "classes_found": len(all_classes),
-                "tokens": pass_token_total,
-            },
-        )
+        errors.extend(pass_errors)
+        total_tokens["prompt_tokens"] = total_tokens.get("prompt_tokens", 0) + pass_tokens["prompt_tokens"]
+        total_tokens["completion_tokens"] = total_tokens.get("completion_tokens", 0) + pass_tokens["completion_tokens"]
+
+    total_tokens["total_tokens"] = (
+        total_tokens.get("prompt_tokens", 0) + total_tokens.get("completion_tokens", 0)
+    )
 
     duration = time.time() - start
     step_log = StepLog(
@@ -276,6 +356,13 @@ async def extractor_node(state: ExtractionPipelineState) -> dict:
 
     existing_logs = list(state.get("step_logs", []))
     existing_logs.append(step_log)
+
+    log.info(
+        "extractor completed: %d passes, %d total classes, %.1fs",
+        len(pass_results),
+        sum(len(r.classes) for r in pass_results),
+        duration,
+    )
 
     return {
         "extraction_passes": pass_results,

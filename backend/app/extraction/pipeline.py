@@ -249,9 +249,8 @@ async def run_pipeline(
                 if isinstance(node_output, dict):
                     final_state = node_output
     except Exception as stream_exc:
-        log.warning(
-            "pipeline stream error, capturing partial state",
-            extra={"run_id": run_id, "error": str(stream_exc)},
+        log.exception(
+            "pipeline stream error, capturing partial state (run_id=%s)", run_id,
         )
         if final_state is None:
             final_state = dict(initial_state)

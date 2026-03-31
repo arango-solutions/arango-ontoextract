@@ -112,6 +112,16 @@ def _ensure_vector_index() -> None:
             return  # already exists
 
     from arango.request import Request
+    import math
+
+    chunk_count = col.count()
+    n_lists = max(1, int(math.sqrt(chunk_count) * 15))
+    # nLists cannot exceed the number of training points
+    n_lists = min(n_lists, chunk_count)
+    n_probe = max(1, int(math.sqrt(n_lists)))
+
+    log.info("[ingest] vector index params: chunks=%d, nLists=%d, nProbe=%d",
+             chunk_count, n_lists, n_probe)
 
     body = {
         "type": "vector",
@@ -120,8 +130,8 @@ def _ensure_vector_index() -> None:
         "params": {
             "metric": "cosine",
             "dimension": _EMBEDDING_DIMENSION,
-            "nLists": 100,
-            "defaultNProbe": 1,
+            "nLists": n_lists,
+            "defaultNProbe": n_probe,
             "trainingIterations": 25,
         },
     }

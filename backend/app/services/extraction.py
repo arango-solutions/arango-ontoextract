@@ -974,7 +974,7 @@ def _auto_register_ontology(
         ontology_id = entry.get("_key", run_id)
         log.info(
             "auto-registered ontology",
-            extra={"run_id": run_id, "name": name, "classes": class_count, "ontology_id": ontology_id},
+            extra={"run_id": run_id, "ontology_name": name, "classes": class_count, "ontology_id": ontology_id},
         )
         return ontology_id
     except Exception:

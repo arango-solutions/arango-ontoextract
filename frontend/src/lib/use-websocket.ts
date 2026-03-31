@@ -150,8 +150,10 @@ export function useExtractionSocket(
   const applyEvent = useCallback((evt: WebSocketEvent) => {
     setSteps((prev) => {
       const next = new Map(prev);
-      const stepName = evt.step as PipelineStep | undefined;
-      if (!stepName) return next;
+      const rawStep = evt.step;
+      if (!rawStep) return next;
+      const stepName = (BACKEND_TO_FRONTEND_STEP[rawStep] ?? rawStep) as PipelineStep;
+      if (!next.has(stepName)) return next;
 
       const current = next.get(stepName) ?? { status: "pending" as StepStatusValue };
 
