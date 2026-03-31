@@ -40,24 +40,32 @@ async def process_document(doc_id: str, file_bytes: bytes, mime_type: str) -> No
     """
     try:
         # --- parsing ---
+        log.info("[ingest:%s] stage=parsing mime=%s bytes=%d", doc_id, mime_type, len(file_bytes))
         documents_repo.update_document_status(doc_id, DocumentStatus.PARSING)
         parsed = await _parse(file_bytes, mime_type)
+        log.info("[ingest:%s] parsing done, sections=%d", doc_id, len(parsed.sections))
 
         # --- chunking ---
+        log.info("[ingest:%s] stage=chunking", doc_id)
         documents_repo.update_document_status(doc_id, DocumentStatus.CHUNKING)
         chunks = chunk_document(parsed)
         if not chunks:
+            log.warning("[ingest:%s] no chunks produced — marking ready with warning", doc_id)
             documents_repo.update_document_status(
                 doc_id, DocumentStatus.READY, error_message="No content extracted"
             )
             return
+        log.info("[ingest:%s] chunking done, num_chunks=%d", doc_id, len(chunks))
 
         # --- embedding ---
+        log.info("[ingest:%s] stage=embedding, num_texts=%d", doc_id, len(chunks))
         documents_repo.update_document_status(doc_id, DocumentStatus.EMBEDDING)
         texts = [c.text for c in chunks]
-        embeddings = await asyncio.to_thread(embedding_svc.embed_texts, texts)
+        embeddings = await embedding_svc.embed_texts(texts)
+        log.info("[ingest:%s] embedding done, num_embeddings=%d", doc_id, len(embeddings))
 
         # --- store chunks ---
+        log.info("[ingest:%s] stage=storing chunks", doc_id)
         chunk_dicts = _build_chunk_dicts(doc_id, chunks, embeddings)
         stored = documents_repo.create_chunks(chunk_dicts)
         if not stored:
@@ -66,15 +74,15 @@ async def process_document(doc_id: str, file_bytes: bytes, mime_type: str) -> No
             )
         documents_repo.update_document_chunk_count(doc_id, len(stored))
         log.info(
-            "chunks stored",
-            extra={"doc_id": doc_id, "requested": len(chunk_dicts), "stored": len(stored)},
+            "[ingest:%s] chunks stored, requested=%d stored=%d",
+            doc_id, len(chunk_dicts), len(stored),
         )
 
         documents_repo.update_document_status(doc_id, DocumentStatus.READY)
-        log.info("document processing complete", extra={"doc_id": doc_id, "chunks": len(chunks)})
+        log.info("[ingest:%s] COMPLETE — document ready", doc_id)
 
     except Exception as exc:
-        log.exception("document processing failed", extra={"doc_id": doc_id})
+        log.exception("[ingest:%s] FAILED at current stage", doc_id)
         documents_repo.update_document_status(
             doc_id, DocumentStatus.FAILED, error_message=str(exc)
         )

@@ -208,8 +208,8 @@ export default function OntologyEditorPage() {
   const ontologyName = ontologyMeta?.name ?? ontologyId;
   const ontologyDescription = ontologyMeta?.description ?? "";
   const baseUrl = typeof window !== "undefined"
-    ? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001"
-    : "http://localhost:8001";
+    ? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
+    : "http://localhost:8000";
 
   return (
     <main className="min-h-screen bg-gray-50 text-gray-900">

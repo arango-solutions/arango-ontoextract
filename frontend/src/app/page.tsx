@@ -22,7 +22,7 @@ export default function Home() {
 
   useEffect(() => {
     const backendRoot =
-      process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
+      process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
     fetch(`${backendRoot}/ready`)
       .then((r) => r.json())

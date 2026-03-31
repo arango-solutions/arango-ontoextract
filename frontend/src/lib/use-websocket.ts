@@ -46,7 +46,7 @@ async function fetchStepsFromRest(
 ): Promise<Map<string, StepStatus> | null> {
   try {
     const baseUrl =
-      process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
+      process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     const res = await fetch(`${baseUrl}/api/v1/extraction/runs/${runId}`);
     if (!res.ok) return null;
     const run = await res.json();

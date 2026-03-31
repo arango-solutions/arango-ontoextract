@@ -101,7 +101,12 @@ async def start_extraction(
 
 
 def _resolve_doc_ids(body: StartRunRequest) -> list[str]:
-    """Normalize document_id / document_ids into a single list."""
+    """Normalize document_id / document_ids into a single list.
+
+    Also validates that every referenced document exists and has finished
+    ingestion (status ``ready``).  Raises 422 if any document is missing
+    or not yet ready.
+    """
     ids: list[str] = []
     if body.document_ids:
         ids.extend(body.document_ids)
@@ -112,6 +117,27 @@ def _resolve_doc_ids(body: StartRunRequest) -> list[str]:
             status_code=422,
             detail="At least one of document_id or document_ids is required",
         )
+
+    db = get_db()
+    if db.has_collection("documents"):
+        docs_col = db.collection("documents")
+        for did in ids:
+            doc = docs_col.get(did)
+            if doc is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Document '{did}' not found",
+                )
+            status = doc.get("status", "")
+            if status != "ready":
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Document '{did}' is not ready for extraction "
+                        f"(current status: {status}). Wait for ingestion to complete."
+                    ),
+                )
+
     return ids
 
 

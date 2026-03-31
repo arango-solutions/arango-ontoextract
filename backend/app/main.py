@@ -1,6 +1,8 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import logging
+
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +29,11 @@ from app.api.metrics import PrometheusMiddleware
 from app.api.rate_limit import RateLimitMiddleware
 from app.config import settings
 from app.db.client import close_db
+
+logging.basicConfig(
+    level=getattr(logging, settings.app_log_level.upper(), logging.INFO),
+    format="%(levelname)-5s %(name)s: %(message)s",
+)
 
 structlog.configure(
     processors=[

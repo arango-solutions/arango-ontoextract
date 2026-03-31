@@ -71,7 +71,7 @@ export default function UploadPage() {
     ontologyId?: string,
   ): Promise<string | null> => {
     try {
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
       const payload: Record<string, unknown> = { document_id: docId };
       if (ontologyId) {
         payload.target_ontology_id = ontologyId;
@@ -105,6 +105,36 @@ export default function UploadPage() {
     }
   };
 
+  const waitForDocumentReady = async (
+    docId: string,
+    maxWaitMs = 120_000,
+  ): Promise<void> => {
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const start = Date.now();
+    const pollInterval = 1500;
+
+    while (Date.now() - start < maxWaitMs) {
+      try {
+        const res = await fetch(`${baseUrl}/api/v1/documents/${docId}`);
+        if (res.ok) {
+          const doc = await res.json();
+          const status = doc.status ?? doc.data?.status;
+          if (status === "ready") return;
+          if (status === "failed") {
+            const errMsg = doc.error_message ?? doc.data?.error_message ?? "Ingestion failed";
+            throw new Error(`Document processing failed: ${errMsg}`);
+          }
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith("Document processing failed")) {
+          throw err;
+        }
+      }
+      await new Promise((r) => setTimeout(r, pollInterval));
+    }
+    throw new Error("Document processing timed out — please try extracting manually once it's ready.");
+  };
+
   const uploadFile = async (file: File) => {
     setUploadState("uploading");
     setErrorMsg("");
@@ -116,7 +146,7 @@ export default function UploadPage() {
 
     try {
       const baseUrl =
-        process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
+        process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
       const res = await fetch(`${baseUrl}/api/v1/documents/upload`, {
         method: "POST",
         body: formData,
@@ -131,6 +161,10 @@ export default function UploadPage() {
 
       const data: UploadResult = await res.json();
       setResult(data);
+      loadDocuments();
+
+      // Wait for ingestion pipeline (parse → chunk → embed) to finish
+      await waitForDocumentReady(data.doc_id);
       loadDocuments();
 
       setUploadState("extracting");
@@ -238,7 +272,7 @@ export default function UploadPage() {
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-3">
             <div className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
             <p className="text-blue-700 font-medium">
-              Uploading and processing document…
+              Uploading and processing document (parsing, chunking, embedding)…
             </p>
           </div>
         )}
