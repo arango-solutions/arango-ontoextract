@@ -39,10 +39,13 @@ You MUST output valid JSON matching the following schema exactly:
 Guidelines:
 - Identify owl:Class concepts with their hierarchical relationships (rdfs:subClassOf)
 - Extract owl:ObjectProperty and owl:DatatypeProperty with domain/range
+- For object properties (relationships between classes), set property_type to "object" and set range to the target class URI (e.g., "http://example.org/domain#Account"). This captures inter-class relationships like "Customer holds Account", "Order contains LineItem"
+- For datatype properties, set property_type to "datatype" and set range to an XSD type (e.g., "xsd:string", "xsd:integer", "xsd:date")
 - Use consistent URI namespaces (e.g., http://example.org/domain#ClassName)
 - Assign confidence scores: 1.0 for explicitly stated, lower for inferred
 - Set parent_uri for subclass relationships; null for root classes
-- Focus on domain-specific concepts, not generic terms"""
+- Focus on domain-specific concepts, not generic terms
+- IMPORTANT: Extract ALL relationships between classes as object properties. If the text says "A Customer holds Accounts", extract an object property on Customer with label "holds", property_type "object", and range set to the Account class URI"""
 
 _USER = """\
 Extract an OWL ontology from the following text chunks. Identify all domain \

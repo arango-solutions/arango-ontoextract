@@ -181,7 +181,7 @@ const EDGE_COLORS: Record<string, string> = {
   equivalent_class: "#8b5cf6",
   has_property: "#0891b2",
   extends_domain: "#d97706",
-  related_to: "#64748b",
+  related_to: "#2563eb",
   extracted_from: "#059669",
   imports: "#e11d48",
 };
@@ -191,7 +191,6 @@ const EDGE_COLORS: Record<string, string> = {
 const HIERARCHY_EDGE_TYPES = new Set([
   "subclass_of",
   "extends_domain",
-  "related_to",
 ]);
 
 function computeLayout(

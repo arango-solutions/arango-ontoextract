@@ -660,6 +660,23 @@ def _materialize_to_graph(
                     "expired": NEVER_EXPIRES,
                 })
 
+            prop_range = prop.get("range", "")
+            prop_type = prop.get("property_type", "")
+            if prop_type == "object" or prop_range.startswith("http"):
+                range_frag = prop_range.split("#")[-1].split("/")[-1]
+                range_class_key = uri_to_key.get(prop_range) or class_keys.get(range_frag)
+                if range_class_key and range_class_key != key:
+                    with contextlib.suppress(Exception):
+                        related_col.insert({
+                            "_from": f"ontology_classes/{key}",
+                            "_to": f"ontology_classes/{range_class_key}",
+                            "label": prop_label,
+                            "property_key": prop_key,
+                            "ontology_id": ontology_id,
+                            "created": now,
+                            "expired": NEVER_EXPIRES,
+                        })
+
         with contextlib.suppress(Exception):
             extracted_col.insert({
                 "_from": f"ontology_classes/{key}",
