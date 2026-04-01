@@ -1,8 +1,8 @@
 # AOE — Remaining Work Plan
 
-**Document Version:** 1.0
-**Date:** March 30, 2026
-**Baseline:** v0.1.0 tag + subsequent Sprint A–K, B, G, F, J commits
+**Document Version:** 2.0
+**Date:** March 31, 2026
+**Baseline:** v0.1.0 tag + Sprints A–K, B, G, F, J + audit fixes + temporal integrity fixes
 **PRD Reference:** `PRD.md` — Arango-OntoExtract Product Requirements Document
 
 ---
@@ -11,8 +11,21 @@
 
 The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline, ontology editor, pipeline monitor, quality metrics, and multi-document support. This document details the remaining work required to achieve full PRD compliance and production readiness.
 
-**Completed:** ~70% of PRD requirements (§6.1–6.6, §6.10–6.12, most of §6.8, §6.13)
-**Remaining:** ~30% across 7 work streams, estimated 8–9 weeks total
+**Completed:** ~75% of PRD requirements (§6.1–6.6, §6.10–6.13, most of §6.8, §7.2.1)
+**Remaining:** ~25% across 7 work streams, estimated 7–8 weeks total
+
+**Recent completions (since v1.0 of this document):**
+- Multi-signal confidence scoring with 7 signals incl. LLM-as-Judge faithfulness + semantic validator
+- Ontology health score (0–100) with traffic-light display
+- Temporal soft-delete with full referential integrity for ontology deprecation
+- Curation reject cascade fix (edges now properly expired)
+- 10 audit fixes (3 critical: NEVER_EXPIRES, extracted_from expired, entity counts)
+- Pipeline DAG scrollable canvas, Quality Judge step visible, skipped step marking
+- VCR timeline fix (array response, Unix timestamps, event type inference)
+- Extraction reliability (5 retries, backoff, async ainvoke, concurrent support)
+- Edge routing fix (rdfs:subClassOf arrows, OWL label conventions)
+- Detailed deletion/referential integrity documentation (`docs/DELETION_AND_REFERENTIAL_INTEGRITY.md`)
+- PRD corrections (FAISS IVF vector index, Sigma.js target architecture, deletion contexts)
 
 ---
 
@@ -30,9 +43,10 @@ The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline
 | ArangoDB Visualizer (§6.6) | **Complete** | Themes, canvas actions, saved queries (temporal-aware), viewpoints, auto-install |
 | MCP Server (§6.10) | **Complete** | Runtime MCP tools for ontology operations |
 | Pipeline Monitor (§6.12) | **Complete** | Real-time step DAG with polling, metrics (tokens, cost, entities, confidence, completeness, agreement), error log |
-| Quality Metrics (§6.13) | **Mostly Complete** | Multi-signal confidence (7 signals incl. faithfulness judge + semantic validator), ontology health score, quality panel in library |
-| Import/Export (§6.8 partial) | **Partial** | Export (Turtle, JSON-LD, CSV), OWL import via ArangoRDF, library search (ArangoSearch), tagging, CRUD |
-| Admin (§7.2.1) | **Complete** | Soft/full reset, extraction run deletion |
+| Quality Metrics (§6.13) | **Mostly Complete** | Multi-signal confidence (7 signals incl. faithfulness judge + semantic validator), ontology health score, quality panel in library. Missing: `/quality` dashboard page, history tracking, gold-standard recall. |
+| Import/Export (§6.8 partial) | **Partial** | Export (Turtle, JSON-LD, CSV), OWL import via ArangoRDF, library search (ArangoSearch), tagging, full CRUD with cascade. Missing: imports graph, standard ontology catalog. |
+| Admin (§7.2.1) | **Complete** | Soft/full reset (with named graph cleanup), extraction run deletion |
+| Deletion & Integrity | **Complete** | Temporal soft-delete for ontology deprecation, cross-ontology edge cascade, curation reject cascade, document delete with provenance expiry. See `docs/DELETION_AND_REFERENTIAL_INTEGRITY.md`. |
 
 ### What's Not Done
 
@@ -46,6 +60,21 @@ The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline
 | Testing & CI (§8) | **Partial** | ~500 unit tests exist but no CI pipeline, no coverage enforcement |
 | Production Ops (§8.5) | **Not Started** | No OpenTelemetry, no alerting, no performance benchmarks |
 | Visualizer Migration | **Not Started** | React Flow → Sigma.js/graphology (PRD target architecture) |
+
+### Recently Fixed (since v1.0 of this plan)
+
+| Fix | PRD Ref | Impact |
+|-----|---------|--------|
+| Ontology deletion now uses temporal soft-delete (was hard delete) | FR-8.13 | History preserved, VCR works post-deprecation |
+| Curation reject now cascades to edges | FR-4.2, §5.3 | No dangling edge references |
+| `extracted_from` edges now include `expired` field | §5.3 | Temporal queries work correctly |
+| `get_ontology_detail` counts filter by `expired == NEVER_EXPIRES` | §7.3 | Accurate class/property counts after edits |
+| `NEVER_EXPIRES` uses `sys.maxsize` consistently (was hardcoded in documents.py) | §5.3 | Platform-safe sentinel value |
+| Document deletion uses `time.time()` consistently (was `DATE_NOW()/1000`) | §5.3 | No clock skew between app and DB |
+| `retry_run` preserves `target_ontology_id`, `domain_ontology_ids`, `doc_ids` | §6.11 | Retries use original config |
+| Staging endpoint standardized to `edge_type` (was `type`) | §7.8 | Consistent API contract |
+| System reset cleans up per-ontology named graphs and additional collections | §7.2.1 | Clean fresh start |
+| PRD corrected: ArangoDB uses FAISS IVF (not standalone HNSW) for vector indexes | §6.7 | Accurate technical spec |
 
 ---
 
