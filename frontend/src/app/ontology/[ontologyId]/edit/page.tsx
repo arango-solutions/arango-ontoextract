@@ -57,8 +57,9 @@ export default function OntologyEditorPage() {
   const [activePanel, setActivePanel] = useState<SidePanel>("detail");
   const [colorMode, setColorMode] = useState<"confidence" | "status">("confidence");
   const [timelineOpen, setTimelineOpen] = useState(false);
-  const [snapshotTimestamp, setSnapshotTimestamp] = useState<string | null>(null);
+  const [snapshotTimestamp, setSnapshotTimestamp] = useState<number | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
+  const [vcrVisibleKeys, setVcrVisibleKeys] = useState<Set<string> | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [addClassOpen, setAddClassOpen] = useState(false);
   const [addPropertyOpen, setAddPropertyOpen] = useState(false);
@@ -164,11 +165,11 @@ export default function OntologyEditorPage() {
   const hasData = graph != null && graph.classes.length > 0;
 
   const handleTimestampChange = useCallback(
-    async (timestamp: string) => {
+    async (timestamp: number) => {
       setSnapshotLoading(true);
       try {
         const snapshot = await api.get<TemporalSnapshot>(
-          `/api/v1/ontology/${ontologyId}/snapshot?at=${encodeURIComponent(timestamp)}`,
+          `/api/v1/ontology/${ontologyId}/snapshot?at=${timestamp}`,
         );
         setGraph((prev) => {
           if (!prev) return prev;
@@ -195,6 +196,7 @@ export default function OntologyEditorPage() {
 
   const returnToCurrent = useCallback(() => {
     setSnapshotTimestamp(null);
+    setVcrVisibleKeys(null);
     fetchGraph();
   }, [fetchGraph]);
 
@@ -335,7 +337,7 @@ export default function OntologyEditorPage() {
               <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
               Viewing historical snapshot at{" "}
               <span className="font-mono font-medium">
-                {new Date(snapshotTimestamp).toLocaleString()}
+                {new Date(snapshotTimestamp * 1000).toLocaleString()}
               </span>
               {snapshotLoading && (
                 <span className="text-amber-500 animate-pulse ml-2">Loading...</span>
@@ -412,9 +414,13 @@ export default function OntologyEditorPage() {
             {!loading && !error && hasData && (
               <div className="flex-1 bg-white m-4 rounded-xl border border-gray-200 shadow-sm overflow-hidden relative">
                 <GraphCanvas
-                  classes={graph.classes}
+                  classes={vcrVisibleKeys ? graph.classes.filter((c) => vcrVisibleKeys.has(c._key)) : graph.classes}
                   properties={graph.properties}
-                  edges={graph.edges}
+                  edges={vcrVisibleKeys ? graph.edges.filter((e) => {
+                    const fromKey = e._from.split("/").pop() ?? "";
+                    const toKey = e._to.split("/").pop() ?? "";
+                    return vcrVisibleKeys.has(fromKey) && vcrVisibleKeys.has(toKey);
+                  }) : graph.edges}
                   selectedNodes={
                     selectedNodeKey ? [selectedNodeKey] : multiSelected
                   }
@@ -433,6 +439,7 @@ export default function OntologyEditorPage() {
                   <VCRTimeline
                     ontologyId={ontologyId}
                     onTimestampChange={handleTimestampChange}
+                    onVisibleEntitiesChange={setVcrVisibleKeys}
                   />
                 </div>
               </div>

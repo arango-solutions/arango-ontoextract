@@ -6,7 +6,8 @@ import type { TimelineEvent } from "@/types/timeline";
 
 interface VCRTimelineProps {
   ontologyId: string;
-  onTimestampChange?: (timestamp: string) => void;
+  onTimestampChange?: (timestamp: number) => void;
+  onVisibleEntitiesChange?: (entityKeys: Set<string>) => void;
 }
 
 const PLAYBACK_SPEEDS = [0.5, 1, 2, 4];
@@ -28,6 +29,7 @@ function formatTimestamp(ts: string | number): string {
 export default function VCRTimeline({
   ontologyId,
   onTimestampChange,
+  onVisibleEntitiesChange,
 }: VCRTimelineProps) {
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,8 +79,17 @@ export default function VCRTimeline({
   useEffect(() => {
     if (events.length > 0 && events[currentIndex]) {
       onTimestampChange?.(events[currentIndex].timestamp);
+      if (onVisibleEntitiesChange) {
+        const visible = new Set<string>();
+        for (let i = 0; i <= currentIndex; i++) {
+          if (events[i]?.entity_key) {
+            visible.add(events[i].entity_key);
+          }
+        }
+        onVisibleEntitiesChange(visible);
+      }
     }
-  }, [currentIndex, events, onTimestampChange]);
+  }, [currentIndex, events, onTimestampChange, onVisibleEntitiesChange]);
 
   // Playback logic
   useEffect(() => {

@@ -10,12 +10,13 @@ export type TimelineEventType =
   | "reverted";
 
 export interface TimelineEvent {
-  timestamp: string;
+  timestamp: number;
   event_type: TimelineEventType;
   entity_key: string;
   entity_label: string;
   collection: string;
   curator_id?: string;
+  extraction_run_id?: string;
   details?: Record<string, unknown>;
 }
 

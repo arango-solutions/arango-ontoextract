@@ -60,7 +60,7 @@ export default function CurationPage() {
   const [activePanel, setActivePanel] = useState<SidePanel>("detail");
   const [colorMode, setColorMode] = useState<"confidence" | "status">("confidence");
   const [timelineOpen, setTimelineOpen] = useState(false);
-  const [snapshotTimestamp, setSnapshotTimestamp] = useState<string | null>(null);
+  const [snapshotTimestamp, setSnapshotTimestamp] = useState<number | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [diffData, setDiffData] = useState<TemporalDiff | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
@@ -219,12 +219,12 @@ export default function CurationPage() {
   const hasData = graph != null && graph.classes.length > 0;
 
   const handleTimestampChange = useCallback(
-    async (timestamp: string) => {
+    async (timestamp: number) => {
       if (!ontologyId) return;
       setSnapshotLoading(true);
       try {
         const snapshot = await api.get<TemporalSnapshot>(
-          `/api/v1/ontology/${ontologyId}/snapshot?at=${encodeURIComponent(timestamp)}`,
+          `/api/v1/ontology/${ontologyId}/snapshot?at=${timestamp}`,
         );
         setGraph((prev) => {
           if (!prev) return prev;
@@ -373,7 +373,7 @@ export default function CurationPage() {
               <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
               Viewing historical snapshot at{" "}
               <span className="font-mono font-medium">
-                {new Date(snapshotTimestamp).toLocaleString()}
+                {new Date(snapshotTimestamp * 1000).toLocaleString()}
               </span>
               {snapshotLoading && (
                 <span className="text-amber-500 animate-pulse ml-2">Loading...</span>
