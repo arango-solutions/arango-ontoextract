@@ -22,6 +22,8 @@ from pathlib import Path
 
 from arango.database import StandardDatabase
 
+from app.db.utils import doc_get
+
 log = logging.getLogger(__name__)
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent
@@ -38,7 +40,7 @@ def _ensure_meta_collection(db: StandardDatabase) -> None:
 def _load_schema_state(db: StandardDatabase) -> dict:
     col = db.collection(META_COLLECTION)
     try:
-        return col.get(META_KEY) or {}
+        return doc_get(col, META_KEY) or {}
     except Exception:
         return {}
 

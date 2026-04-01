@@ -15,6 +15,7 @@ from typing import Any
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.utils import run_aql
 from app.services.temporal import NEVER_EXPIRES, create_version
 
 log = logging.getLogger(__name__)
@@ -141,7 +142,7 @@ FOR doc IN @@col
   RETURN doc"""
 
     return list(
-        db.aql.execute(
+        run_aql(db,
             query,
             bind_vars={
                 "@col": collection,
@@ -167,7 +168,7 @@ FOR doc IN @@col
   RETURN doc"""
 
     return list(
-        db.aql.execute(
+        run_aql(db,
             query,
             bind_vars={
                 "@col": collection,
@@ -228,7 +229,7 @@ FOR e IN @@col
   RETURN e"""
 
         edges = list(
-            db.aql.execute(
+            run_aql(db,
                 query,
                 bind_vars={"@col": edge_col, "never": NEVER_EXPIRES},
             )

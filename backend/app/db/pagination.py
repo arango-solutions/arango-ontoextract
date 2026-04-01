@@ -13,6 +13,7 @@ from typing import Any, TypeVar
 
 from arango.database import StandardDatabase
 
+from app.db.utils import run_aql
 from app.models.common import PaginatedResponse
 
 log = logging.getLogger(__name__)
@@ -115,9 +116,9 @@ FOR doc IN @@col
   COLLECT WITH COUNT INTO c
   RETURN c"""
 
-    rows = list(db.aql.execute(query, bind_vars=bv))
+    rows = list(run_aql(db, query, bind_vars=bv))
     count_bv = {k: v for k, v in bv.items() if k not in ("lim",)}
-    total_count = next(iter(db.aql.execute(count_query, bind_vars=count_bv)))
+    total_count = next(iter(run_aql(db, count_query, bind_vars=count_bv)))
 
     has_more = len(rows) > limit
     if has_more:

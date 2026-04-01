@@ -17,6 +17,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from app.db.client import get_db
+from app.db.utils import doc_get, run_aql
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +43,8 @@ def register_ontology_tools(mcp: FastMCP) -> None:
             recent_changes: list[dict[str, Any]] = []
 
             if db.has_collection("ontology_classes"):
-                class_count_result = list(db.aql.execute(
+                class_count_result = list(run_aql(
+                    db,
                     """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
@@ -53,7 +55,8 @@ FOR cls IN ontology_classes
                 ))
                 class_count = class_count_result[0] if class_count_result else 0
 
-                recent_changes = list(db.aql.execute(
+                recent_changes = list(run_aql(
+                    db,
                     """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
@@ -70,7 +73,8 @@ FOR cls IN ontology_classes
                 ))
 
             if db.has_collection("ontology_properties"):
-                prop_count_result = list(db.aql.execute(
+                prop_count_result = list(run_aql(
+                    db,
                     """\
 FOR prop IN ontology_properties
   FILTER prop.ontology_id == @oid
@@ -85,7 +89,7 @@ FOR prop IN ontology_properties
 
             registry_info = None
             if db.has_collection("ontology_registry"):
-                doc = db.collection("ontology_registry").get(ontology_id)
+                doc = doc_get(db.collection("ontology_registry"), ontology_id)
                 if doc:
                     registry_info = {
                         "name": doc.get("name", ontology_id),
@@ -126,7 +130,8 @@ FOR prop IN ontology_properties
             if not db.has_collection("ontology_classes"):
                 return {"error": "ontology_classes collection not found"}
 
-            classes = list(db.aql.execute(
+            classes = list(run_aql(
+                db,
                 """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
@@ -139,7 +144,8 @@ FOR cls IN ontology_classes
             edges: list[dict[str, Any]] = []
             if db.has_collection("subclass_of"):
                 class_ids = {c["id"] for c in classes}
-                all_edges = list(db.aql.execute(
+                all_edges = list(run_aql(
+                    db,
                     """\
 FOR e IN subclass_of
   FILTER e.expired == @never
@@ -201,7 +207,8 @@ FOR e IN subclass_of
             if not db.has_collection("ontology_classes"):
                 return {"error": "ontology_classes collection not found"}
 
-            cls_results = list(db.aql.execute(
+            cls_results = list(run_aql(
+                db,
                 """\
 FOR cls IN ontology_classes
   FILTER cls._key == @key
@@ -217,7 +224,8 @@ FOR cls IN ontology_classes
 
             properties: list[dict[str, Any]] = []
             if db.has_collection("has_property") and db.has_collection("ontology_properties"):
-                properties = list(db.aql.execute(
+                properties = list(run_aql(
+                    db,
                     """\
 FOR e IN has_property
   FILTER e._from == @cls_id
@@ -287,7 +295,8 @@ def _compute_hierarchy_depth(db: Any, ontology_id: str) -> int:
         return 0
 
     try:
-        result = list(db.aql.execute(
+        result = list(run_aql(
+            db,
             """\
 LET roots = (
   FOR cls IN ontology_classes
@@ -343,7 +352,8 @@ def _bm25_search(
     if ontology_id:
         bind_vars["oid"] = ontology_id
 
-    return list(db.aql.execute(
+    return list(run_aql(
+        db,
         f"""\
 FOR doc IN ontology_classes_search
   SEARCH ANALYZER(
@@ -383,7 +393,8 @@ def _fallback_search(
     if ontology_id:
         bind_vars["oid"] = ontology_id
 
-    return list(db.aql.execute(
+    return list(run_aql(
+        db,
         f"""\
 FOR cls IN ontology_classes
   FILTER cls.expired == @never

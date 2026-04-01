@@ -7,12 +7,13 @@ org_id filtering is mandatory on all tenant-scoped queries.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
 from app.db.pagination import paginate
+from app.db.utils import doc_get, run_aql
 from app.db.utils import now_iso as _now_iso
 from app.models.common import PaginatedResponse
 
@@ -42,7 +43,7 @@ def create_organization(
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
     }
-    result = col.insert(doc, return_new=True)
+    result = cast("dict[str, Any]", col.insert(doc, return_new=True))
     return result["new"]
 
 
@@ -51,7 +52,7 @@ def get_organization(org_id: str, *, db: StandardDatabase | None = None) -> dict
     db = db or get_db()
     col = db.collection(ORGANIZATIONS_COLLECTION)
     try:
-        return col.get(org_id)
+        return doc_get(col, org_id)
     except Exception:
         return None
 
@@ -86,7 +87,7 @@ def update_organization(
     db = db or get_db()
     col = db.collection(ORGANIZATIONS_COLLECTION)
     updates["updated_at"] = _now_iso()
-    result = col.update({"_key": org_id, **updates}, return_new=True)
+    result = cast("dict[str, Any]", col.update({"_key": org_id, **updates}, return_new=True))
     return result["new"]
 
 
@@ -114,7 +115,7 @@ def add_user_to_org(
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
     }
-    result = col.insert(doc, return_new=True)
+    result = cast("dict[str, Any]", col.insert(doc, return_new=True))
     return result["new"]
 
 
@@ -150,7 +151,8 @@ FOR u IN @@col
   LIMIT 1
   RETURN u"""
     rows = list(
-        db.aql.execute(
+        run_aql(
+            db,
             query,
             bind_vars={"@col": USERS_COLLECTION, "org_id": org_id, "user_id": user_id},
         )
@@ -171,10 +173,10 @@ def update_user_role(
     if user is None:
         return None
     col = db.collection(USERS_COLLECTION)
-    result = col.update(
+    result = cast("dict[str, Any]", col.update(
         {"_key": user["_key"], "role": role, "updated_at": _now_iso()},
         return_new=True,
-    )
+    ))
     return result["new"]
 
 
@@ -206,7 +208,8 @@ FOR u IN @@col
   LIMIT 1
   RETURN u"""
     rows = list(
-        db.aql.execute(
+        run_aql(
+            db,
             query,
             bind_vars={"@col": USERS_COLLECTION, "org_id": org_id, "email": email},
         )

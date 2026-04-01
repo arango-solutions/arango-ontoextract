@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, cast
 
 from app.db import documents_repo
 from app.db.client import get_db
@@ -107,7 +107,7 @@ def _ensure_vector_index() -> None:
         return
 
     col = db.collection("chunks")
-    for idx in col.indexes():
+    for idx in cast("list[dict[str, Any]]", col.indexes()):
         if idx.get("name") == _VECTOR_INDEX_NAME:
             return  # already exists
 
@@ -115,7 +115,7 @@ def _ensure_vector_index() -> None:
 
     from arango.request import Request
 
-    chunk_count = col.count()
+    chunk_count = cast(int, col.count())
     n_lists = max(1, int(math.sqrt(chunk_count) * 15))
     # nLists cannot exceed the number of training points
     n_lists = min(n_lists, chunk_count)

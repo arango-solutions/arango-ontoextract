@@ -11,6 +11,7 @@ import time
 from typing import Any
 
 from app.config import settings
+from app.db.utils import run_aql
 from app.extraction.state import ExtractionPipelineState, StepLog
 
 log = logging.getLogger(__name__)
@@ -114,7 +115,8 @@ def _run_er_matching(
             return {"status": "skipped", "reason": "no_ontology_classes_collection"}
 
         existing_classes = list(
-            db.aql.execute(
+            run_aql(
+                db,
                 """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid

@@ -9,11 +9,12 @@ Three tools:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from mcp.server.fastmcp import FastMCP
 
 from app.db.client import get_db
+from app.db.utils import run_aql as _run_aql
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ def register_introspection_tools(mcp: FastMCP) -> None:
         try:
             db = get_db()
             results: list[dict[str, Any]] = []
-            for col in db.collections():
+            for col in cast("list[dict[str, Any]]", db.collections()):
                 if col["system"]:
                     continue
                 info = db.collection(col["name"])
@@ -63,7 +64,8 @@ def register_introspection_tools(mcp: FastMCP) -> None:
         """
         try:
             db = get_db()
-            cursor = db.aql.execute(
+            cursor = _run_aql(
+                db,
                 query,
                 bind_vars=bind_vars or {},
                 count=True,
@@ -94,7 +96,8 @@ def register_introspection_tools(mcp: FastMCP) -> None:
             db = get_db()
             if not db.has_collection(collection_name):
                 return [{"error": f"Collection '{collection_name}' does not exist"}]
-            cursor = db.aql.execute(
+            cursor = _run_aql(
+                db,
                 "FOR doc IN @@col LIMIT @lim RETURN doc",
                 bind_vars={"@col": collection_name, "lim": limit},
             )

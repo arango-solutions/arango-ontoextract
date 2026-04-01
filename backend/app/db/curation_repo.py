@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
 from app.db.pagination import paginate
+from app.db.utils import doc_get, run_aql
 from app.models.common import PaginatedResponse
 
 log = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ def create_decision(
     _ensure_collection(db)
 
     data.setdefault("created_at", time.time())
-    result = db.collection(_COLLECTION).insert(data, return_new=True)
+    result = cast("dict[str, Any]", db.collection(_COLLECTION).insert(data, return_new=True))
     log.info(
         "curation decision created",
         extra={"key": result["_key"], "action": data.get("action")},
@@ -57,7 +58,7 @@ def get_decision(
     _ensure_collection(db)
 
     try:
-        return db.collection(_COLLECTION).get(key)
+        return doc_get(db.collection(_COLLECTION), key)
     except Exception:
         return None
 
@@ -117,5 +118,5 @@ FOR doc IN @@col
   COLLECT WITH COUNT INTO cnt
   RETURN cnt"""
 
-    result = list(db.aql.execute(query, bind_vars=bind_vars))
+    result = list(run_aql(db, query, bind_vars=bind_vars))
     return result[0] if result else 0

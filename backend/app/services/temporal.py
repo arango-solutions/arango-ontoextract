@@ -9,11 +9,12 @@ import hashlib
 import logging
 import sys
 import time
-from typing import Any
+from typing import Any, cast
 
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.utils import run_aql
 
 log = logging.getLogger(__name__)
 
@@ -100,7 +101,7 @@ def create_version(
         "ttlExpireAt": None,
     }
 
-    result = db.collection(collection).insert(doc, return_new=True)
+    result = cast("dict[str, Any]", db.collection(collection).insert(doc, return_new=True))
     log.info(
         "temporal version created",
         extra={"collection": collection, "key": result["_key"]},
@@ -131,10 +132,10 @@ def expire_entity(
         update_data["ttlExpireAt"] = now + ttl_seconds
 
     try:
-        result = db.collection(collection).update(
+        result = cast("dict[str, Any]", db.collection(collection).update(
             {"_key": key, **update_data},
             return_new=True,
-        )
+        ))
         log.info(
             "temporal entity expired",
             extra={"collection": collection, "key": key},
@@ -233,7 +234,7 @@ FOR e IN @@col
   FILTER e._from == @old_id AND e.expired == @never
   RETURN e"""
     outbound_edges = list(
-        db.aql.execute(
+        run_aql(db,
             outbound_query,
             bind_vars={"@col": edge_collection, "old_id": old_id, "never": NEVER_EXPIRES},
         )
@@ -260,7 +261,7 @@ FOR e IN @@col
   FILTER e._to == @old_id AND e.expired == @never
   RETURN e"""
     inbound_edges = list(
-        db.aql.execute(
+        run_aql(db,
             inbound_query,
             bind_vars={"@col": edge_collection, "old_id": old_id, "never": NEVER_EXPIRES},
         )
@@ -337,7 +338,7 @@ FOR doc IN @@col
   {filter_block}
   RETURN doc"""
 
-    return list(db.aql.execute(query, bind_vars=bind_vars))
+    return list(run_aql(db,query, bind_vars=bind_vars))
 
 
 def get_current(
@@ -358,7 +359,7 @@ FOR doc IN @@col
   RETURN doc"""
 
     results = list(
-        db.aql.execute(
+        run_aql(db,
             query,
             bind_vars={"@col": collection, "key": key, "never": NEVER_EXPIRES},
         )
@@ -418,7 +419,7 @@ FOR doc IN @@col
 
     if db.has_collection("ontology_classes"):
         classes = list(
-            db.aql.execute(
+            run_aql(db,
                 vertex_query,
                 bind_vars={"@col": "ontology_classes", "oid": ontology_id, "ts": timestamp},
             )
@@ -426,7 +427,7 @@ FOR doc IN @@col
 
     if db.has_collection("ontology_properties"):
         properties = list(
-            db.aql.execute(
+            run_aql(db,
                 vertex_query,
                 bind_vars={
                     "@col": "ontology_properties",
@@ -448,7 +449,7 @@ FOR e IN @@col
         if not db.has_collection(edge_col):
             continue
         col_edges = list(
-            db.aql.execute(edge_query, bind_vars={"@col": edge_col, "ts": timestamp})
+            run_aql(db,edge_query, bind_vars={"@col": edge_col, "ts": timestamp})
         )
         for e in col_edges:
             if e.get("_from") in active_ids or e.get("_to") in active_ids:
@@ -490,7 +491,7 @@ FOR doc IN @@col
   RETURN doc.uri"""
 
     uri_results = list(
-        db.aql.execute(uri_query, bind_vars={"@col": collection, "key": key})
+        run_aql(db,uri_query, bind_vars={"@col": collection, "key": key})
     )
     if not uri_results or uri_results[0] is None:
         return []
@@ -504,7 +505,7 @@ FOR doc IN @@col
   RETURN doc"""
 
     return list(
-        db.aql.execute(history_query, bind_vars={"@col": collection, "uri": uri})
+        run_aql(db,history_query, bind_vars={"@col": collection, "uri": uri})
     )
 
 
@@ -540,13 +541,13 @@ FOR doc IN @@col
             continue
 
         at_t1 = list(
-            db.aql.execute(
+            run_aql(db,
                 snapshot_query,
                 bind_vars={"@col": col_name, "oid": ontology_id, "ts": t1},
             )
         )
         at_t2 = list(
-            db.aql.execute(
+            run_aql(db,
                 snapshot_query,
                 bind_vars={"@col": col_name, "oid": ontology_id, "ts": t2},
             )
@@ -624,7 +625,7 @@ FOR doc IN @@col
         if not db.has_collection(col_name):
             continue
         col_events = list(
-            db.aql.execute(
+            run_aql(db,
                 event_query,
                 bind_vars={
                     "@col": col_name,
@@ -665,7 +666,7 @@ FOR doc IN @@col
   RETURN doc"""
 
     results = list(
-        db.aql.execute(
+        run_aql(db,
             historical_query,
             bind_vars={"@col": collection, "key": key, "ts": version_created_ts},
         )
@@ -718,7 +719,7 @@ FOR doc IN @@col
   RETURN doc._key"""
 
     results = list(
-        db.aql.execute(
+        run_aql(db,
             query,
             bind_vars={"@col": collection, "uri": uri, "never": NEVER_EXPIRES},
         )

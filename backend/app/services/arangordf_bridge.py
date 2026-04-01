@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import logging
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
 from app.db.registry_repo import create_registry_entry
+from app.db.utils import run_aql
 
 log = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ FOR doc IN @@col
   UPDATE doc WITH {{ ontology_id: @oid }} IN @@col
   RETURN 1"""
 
-        result = list(db.aql.execute(query, bind_vars=bind_vars))
+        result = list(run_aql(db, query, bind_vars=bind_vars))
         tagged += len(result)
 
     log.info(
@@ -177,7 +178,8 @@ def _ensure_named_graph(db: StandardDatabase, *, graph_name: str) -> None:
         },
     ]
 
-    existing_cols = {c["name"] for c in db.collections() if not c["system"]}
+    cols = cast("list[dict[str, Any]]", db.collections())
+    existing_cols = {c["name"] for c in cols if not c["system"]}
     edge_defs_to_use = [
         ed for ed in edge_definitions if ed["edge_collection"] in existing_cols
     ]

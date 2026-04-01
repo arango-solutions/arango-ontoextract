@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Any, cast
 
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.utils import doc_get
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +66,7 @@ def _resolve_ontology_name(
     if db.has_collection("ontology_registry"):
         col = db.collection("ontology_registry")
         if col.has(ontology_id):
-            doc = col.get(ontology_id)
+            doc = doc_get(col, ontology_id)
             if doc and doc.get("name"):
                 return doc["name"]
     return ontology_id
@@ -108,7 +110,7 @@ def list_ontology_graphs(
     """List all per-ontology named graphs."""
     db = db or get_db()
     graphs = []
-    for g in db.graphs():
+    for g in cast("list[dict[str, Any]]", db.graphs()):
         name = g["name"]
         if name.startswith("ontology_"):
             ontology_id = name[len("ontology_"):]

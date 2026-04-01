@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any
+from typing import Any, cast
 
 from arango.database import StandardDatabase
+
+from app.db.utils import run_aql
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +22,7 @@ NEVER_EXPIRES: int = sys.maxsize
 def _has(db: StandardDatabase, name: str) -> bool:
     """Check whether a collection exists, swallowing errors."""
     try:
-        return db.has_collection(name)
+        return cast(bool, db.has_collection(name))
     except Exception:
         return False
 
@@ -42,7 +44,7 @@ def compute_ontology_quality(
     avg_confidence: float | None = None
 
     if _has(db, "ontology_classes"):
-        rows = list(db.aql.execute(
+        rows = list(run_aql(db,
             "FOR c IN ontology_classes "
             "FILTER c.ontology_id == @oid AND c.expired == @never "
             "COLLECT AGGREGATE cnt = COUNT_UNIQUE(c._key), "
@@ -55,7 +57,7 @@ def compute_ontology_quality(
             avg_confidence = rows[0].get("avg_conf")
 
     if _has(db, "ontology_properties"):
-        rows = list(db.aql.execute(
+        rows = list(run_aql(db,
             "FOR p IN ontology_properties "
             "FILTER p.ontology_id == @oid AND p.expired == @never "
             "COLLECT WITH COUNT INTO cnt RETURN cnt",
@@ -65,7 +67,7 @@ def compute_ontology_quality(
 
     classes_with_props = 0
     if class_count > 0 and _has(db, "has_property"):
-        rows = list(db.aql.execute(
+        rows = list(run_aql(db,
             "FOR e IN has_property "
             "FILTER e.ontology_id == @oid AND e.expired == @never "
             "COLLECT from_id = e._from "
@@ -85,7 +87,7 @@ def compute_ontology_quality(
 
     chunk_count = 0
     if _has(db, "has_chunk"):
-        rows = list(db.aql.execute(
+        rows = list(run_aql(db,
             "FOR e IN has_chunk "
             "FILTER e.ontology_id == @oid "
             "COLLECT WITH COUNT INTO cnt RETURN cnt",
@@ -127,7 +129,7 @@ def _count_orphans(db: StandardDatabase, ontology_id: str) -> int:
     if not _has(db, "ontology_classes"):
         return 0
     if not _has(db, "subclass_of"):
-        rows = list(db.aql.execute(
+        rows = list(run_aql(db,
             "FOR c IN ontology_classes "
             "FILTER c.ontology_id == @oid AND c.expired == @never "
             "COLLECT WITH COUNT INTO cnt RETURN cnt",
@@ -136,7 +138,7 @@ def _count_orphans(db: StandardDatabase, ontology_id: str) -> int:
         count = rows[0] if rows else 0
         return count if count > 1 else 0
 
-    rows = list(db.aql.execute(
+    rows = list(run_aql(db,
         "LET all_classes = ("
         "  FOR c IN ontology_classes "
         "  FILTER c.ontology_id == @oid AND c.expired == @never "
@@ -167,7 +169,7 @@ def _detect_cycles(db: StandardDatabase, ontology_id: str) -> bool:
     if not _has(db, "subclass_of") or not _has(db, "ontology_classes"):
         return False
 
-    rows = list(db.aql.execute(
+    rows = list(run_aql(db,
         "FOR c IN ontology_classes "
         "FILTER c.ontology_id == @oid AND c.expired == @never "
         "LIMIT 1 "
@@ -186,7 +188,7 @@ def _detect_cycles(db: StandardDatabase, ontology_id: str) -> bool:
     if rows:
         return True
 
-    rows = list(db.aql.execute(
+    rows = list(run_aql(db,
         "FOR c IN ontology_classes "
         "FILTER c.ontology_id == @oid AND c.expired == @never "
         "LET cycle_check = ("
@@ -258,7 +260,7 @@ def compute_extraction_quality(
     """
     acceptance_rate: float | None = None
     if _has(db, "curation_decisions"):
-        rows = list(db.aql.execute(
+        rows = list(run_aql(db,
             "FOR d IN curation_decisions "
             "FILTER d.ontology_id == @oid "
             "  OR (HAS(d, 'run_id') AND d.run_id IN ("
@@ -281,7 +283,7 @@ def compute_extraction_quality(
 
     time_to_ontology_ms: int | None = None
     if _has(db, "ontology_registry") and _has(db, "extraction_runs"):
-        rows = list(db.aql.execute(
+        rows = list(run_aql(db,
             "FOR o IN ontology_registry "
             "FILTER o._key == @oid "
             "LIMIT 1 "
@@ -312,7 +314,7 @@ def compute_quality_summary(db: StandardDatabase) -> dict[str, Any]:
     """Aggregate quality metrics across all registered ontologies."""
     ontology_ids: list[str] = []
     if _has(db, "ontology_registry"):
-        ontology_ids = list(db.aql.execute(
+        ontology_ids = list(run_aql(db,
             "FOR o IN ontology_registry RETURN o._key"
         ))
 

@@ -33,7 +33,7 @@ WINDOW_SECONDS = 60
 def _get_redis():
     """Lazy import and connect to Redis. Returns None if unavailable."""
     try:
-        import redis
+        import redis  # type: ignore[import-untyped]
 
         return redis.Redis.from_url(
             settings.redis_url, decode_responses=True, socket_connect_timeout=2,

@@ -14,6 +14,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.config import settings
+from app.db.utils import run_aql
 from app.extraction.prompts import get_template
 from app.extraction.state import ExtractionPipelineState, StepLog, TokenUsage
 from app.models.ontology import ExtractionResult
@@ -119,7 +120,8 @@ FOR chunk IN chunks
   LIMIT 10
   RETURN chunk"""
         result = list(
-            db.aql.execute(
+            run_aql(
+                db,
                 query,
                 bind_vars={"doc_id": document_id, "embedding": sample_embedding},
             )

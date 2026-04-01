@@ -15,7 +15,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, Field
 
@@ -130,7 +130,7 @@ def _stub_extract_schema(config: SchemaExtractionConfig) -> str:
     g.add((ont_uri, RDF.type, OWL.Ontology))
     g.add((ont_uri, RDFS.label, Literal(f"Schema of {config.target_db}")))
 
-    collections = target_db.collections()
+    collections = cast("list[dict[str, Any]]", target_db.collections())
     for col_info in collections:
         if col_info["system"]:
             continue

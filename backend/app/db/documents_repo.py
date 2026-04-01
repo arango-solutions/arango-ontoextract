@@ -6,12 +6,13 @@ All AQL is encapsulated here — no raw queries in routes or services.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
 from app.db.pagination import paginate
+from app.db.utils import doc_get, run_aql
 from app.db.utils import now_iso as _now_iso
 from app.models.common import PaginatedResponse
 from app.models.documents import DocumentStatus
@@ -44,7 +45,7 @@ def create_document(
         "chunk_count": 0,
         "metadata": metadata or {},
     }
-    result = col.insert(doc, return_new=True)
+    result = cast("dict[str, Any]", col.insert(doc, return_new=True))
     return result["new"]
 
 
@@ -53,7 +54,7 @@ def get_document(doc_id: str, *, db: StandardDatabase | None = None) -> dict | N
     db = db or get_db()
     col = db.collection(DOCUMENTS_COLLECTION)
     try:
-        return col.get(doc_id)
+        return doc_get(col, doc_id)
     except Exception:
         return None
 
@@ -101,7 +102,7 @@ def update_document_status(
     update: dict[str, Any] = {"status": status}
     if error_message is not None:
         update["error_message"] = error_message
-    result = col.update({"_key": doc_id, **update}, return_new=True)
+    result = cast("dict[str, Any]", col.update({"_key": doc_id, **update}, return_new=True))
     return result["new"]
 
 
@@ -139,8 +140,8 @@ def update_document_metadata(
     if chunk_count is not None:
         updates["chunk_count"] = chunk_count
     if not updates:
-        return col.get(doc_id)
-    result = col.update({"_key": doc_id, **updates}, return_new=True)
+        return doc_get(col, doc_id)
+    result = cast("dict[str, Any]", col.update({"_key": doc_id, **updates}, return_new=True))
     return result["new"]
 
 
@@ -152,7 +153,8 @@ def delete_chunks_for_document(
     if not db.has_collection(CHUNKS_COLLECTION):
         return 0
     result = list(
-        db.aql.execute(
+        run_aql(
+            db,
             "FOR c IN @@col FILTER c.doc_id == @doc_id "
             "REMOVE c IN @@col RETURN OLD._key",
             bind_vars={"@col": CHUNKS_COLLECTION, "doc_id": doc_id},
@@ -189,7 +191,7 @@ FOR doc IN @@col
   LIMIT 1
   RETURN doc"""
     rows = list(
-        db.aql.execute(query, bind_vars={"@col": DOCUMENTS_COLLECTION, "hash": file_hash})
+        run_aql(db, query, bind_vars={"@col": DOCUMENTS_COLLECTION, "hash": file_hash})
     )
     return rows[0] if rows else None
 
@@ -256,6 +258,6 @@ def get_chunk_by_id(chunk_id: str, *, db: StandardDatabase | None = None) -> dic
     db = db or get_db()
     col = db.collection(CHUNKS_COLLECTION)
     try:
-        return col.get(chunk_id)
+        return doc_get(col, chunk_id)
     except Exception:
         return None

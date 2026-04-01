@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.db.client import get_db
+from app.db.utils import run_aql
 
 log = logging.getLogger(__name__)
 
@@ -83,7 +84,8 @@ def validate_api_key(api_key: str) -> dict[str, Any]:
 
         key_hash = _hash_api_key(api_key)
 
-        results = list(db.aql.execute(
+        results = list(run_aql(
+            db,
             """\
 FOR k IN api_keys
   FILTER k.key_hash == @hash

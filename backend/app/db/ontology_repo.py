@@ -6,11 +6,12 @@ All write operations go through temporal versioning.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.utils import run_aql
 from app.services.temporal import NEVER_EXPIRES, create_version, expire_entity, update_entity
 
 log = logging.getLogger(__name__)
@@ -68,7 +69,8 @@ FOR cls IN ontology_classes
   RETURN cls"""
 
     results = list(
-        db.aql.execute(
+        run_aql(
+            db,
             query,
             bind_vars={"key": key, "never": NEVER_EXPIRES},
         )
@@ -104,7 +106,7 @@ FOR cls IN ontology_classes
     if not include_expired:
         bind_vars["never"] = NEVER_EXPIRES
 
-    return list(db.aql.execute(query, bind_vars=bind_vars))
+    return list(run_aql(db, query, bind_vars=bind_vars))
 
 
 def update_class(
@@ -175,7 +177,8 @@ FOR prop IN ontology_properties
   RETURN prop"""
 
     results = list(
-        db.aql.execute(
+        run_aql(
+            db,
             query,
             bind_vars={"key": key, "never": NEVER_EXPIRES},
         )
@@ -200,7 +203,8 @@ FOR prop IN ontology_properties
   RETURN prop"""
 
     return list(
-        db.aql.execute(
+        run_aql(
+            db,
             query,
             bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
         )
@@ -256,7 +260,8 @@ def expire_class_cascade(
         if not db.has_collection(edge_col):
             continue
         edge_keys = list(
-            db.aql.execute(
+            run_aql(
+                db,
                 "FOR e IN @@col "
                 "FILTER (e._from == @id OR e._to == @id) "
                 "AND e.expired == @never "
@@ -295,7 +300,10 @@ def create_edge(
         "ttlExpireAt": None,
     }
 
-    result = db.collection(edge_collection).insert(edge_doc, return_new=True)
+    result = cast(
+        "dict[str, Any]",
+        db.collection(edge_collection).insert(edge_doc, return_new=True),
+    )
     log.info(
         "ontology edge created",
         extra={

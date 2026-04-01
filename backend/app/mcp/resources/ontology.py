@@ -12,11 +12,12 @@ from __future__ import annotations
 import logging
 import sys
 import time
-from typing import Any
+from typing import Any, cast
 
 from mcp.server.fastmcp import FastMCP
 
 from app.db.client import get_db
+from app.db.utils import doc_get, run_aql
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +35,8 @@ def register_ontology_resources(mcp: FastMCP) -> None:
             entries: list[dict[str, Any]] = []
 
             if db.has_collection("ontology_registry"):
-                entries = list(db.aql.execute(
+                entries = list(run_aql(
+                    db,
                     """\
 FOR entry IN ontology_registry
   FILTER entry.status != "deprecated"
@@ -53,7 +55,8 @@ FOR entry IN ontology_registry
                 oid = entry["ontology_id"]
                 class_count = 0
                 if db.has_collection("ontology_classes"):
-                    cnt = list(db.aql.execute(
+                    cnt = list(run_aql(
+                        db,
                         """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
@@ -88,7 +91,8 @@ FOR cls IN ontology_classes
             runs: list[dict[str, Any]] = []
 
             if db.has_collection("extraction_runs"):
-                runs = list(db.aql.execute(
+                runs = list(run_aql(
+                    db,
                     """\
 FOR run IN extraction_runs
   FILTER HAS(run, "status")
@@ -126,7 +130,7 @@ FOR run IN extraction_runs
             db_connected = True
 
             try:
-                for col in db.collections():
+                for col in cast("list[dict[str, Any]]", db.collections()):
                     if col["system"]:
                         continue
                     info = db.collection(col["name"])
@@ -162,7 +166,8 @@ FOR run IN extraction_runs
             prop_count = 0
 
             if db.has_collection("ontology_classes"):
-                cnt = list(db.aql.execute(
+                cnt = list(run_aql(
+                    db,
                     """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
@@ -174,7 +179,8 @@ FOR cls IN ontology_classes
                 class_count = cnt[0] if cnt else 0
 
             if db.has_collection("ontology_properties"):
-                cnt = list(db.aql.execute(
+                cnt = list(run_aql(
+                    db,
                     """\
 FOR prop IN ontology_properties
   FILTER prop.ontology_id == @oid
@@ -192,7 +198,8 @@ FOR prop IN ontology_properties
             ]
             class_ids: set[str] = set()
             if class_count > 0 and db.has_collection("ontology_classes"):
-                class_ids = set(db.aql.execute(
+                class_ids = set(run_aql(
+                    db,
                     """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
@@ -205,7 +212,8 @@ FOR cls IN ontology_classes
                 if not db.has_collection(edge_col):
                     edge_counts[edge_col] = 0
                     continue
-                edges = list(db.aql.execute(
+                edges = list(run_aql(
+                    db,
                     """\
 FOR e IN @@col
   FILTER e.expired == @never
@@ -220,7 +228,8 @@ FOR e IN @@col
 
             total_versions = 0
             if db.has_collection("ontology_classes"):
-                cnt = list(db.aql.execute(
+                cnt = list(run_aql(
+                    db,
                     """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
@@ -232,7 +241,7 @@ FOR cls IN ontology_classes
 
             registry_info = None
             if db.has_collection("ontology_registry"):
-                doc = db.collection("ontology_registry").get(ontology_id)
+                doc = doc_get(db.collection("ontology_registry"), ontology_id)
                 if doc:
                     registry_info = {
                         "name": doc.get("name", ontology_id),

@@ -11,11 +11,12 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.utils import run_aql
 from app.services.er_topology import compute_topological_similarity
 from app.services.temporal import NEVER_EXPIRES
 
@@ -259,7 +260,7 @@ def get_candidates(
         return []
 
     return list(
-        db.aql.execute(
+        run_aql(db,
             """\
 FOR e IN similarTo
   FILTER e.ontology_id == @oid
@@ -303,7 +304,7 @@ def get_clusters(
         return []
 
     return list(
-        db.aql.execute(
+        run_aql(db,
             """\
 FOR cluster IN entity_clusters
   FILTER cluster.ontology_id == @oid
@@ -431,7 +432,7 @@ def get_cross_tier_candidates(
         return []
 
     local_classes = list(
-        db.aql.execute(
+        run_aql(db,
             """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @local_oid
@@ -442,7 +443,7 @@ FOR cls IN ontology_classes
     )
 
     domain_classes = list(
-        db.aql.execute(
+        run_aql(db,
             """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @domain_oid
@@ -492,7 +493,7 @@ def _execute_blocking(
         return []
 
     classes = list(
-        db.aql.execute(
+        run_aql(db,
             """\
 FOR cls IN @@col
   FILTER cls.ontology_id == @oid
@@ -632,7 +633,10 @@ def _execute_clustering(
         }
 
         if db.has_collection("entity_clusters"):
-            result = db.collection("entity_clusters").insert(cluster_doc, return_new=True)
+            result = cast(
+                "dict[str, Any]",
+                db.collection("entity_clusters").insert(cluster_doc, return_new=True),
+            )
             cluster_doc = result["new"]
 
         clusters.append(cluster_doc)
@@ -645,7 +649,7 @@ def _get_class_doc(db: StandardDatabase, key: str) -> dict[str, Any] | None:
         return None
 
     results = list(
-        db.aql.execute(
+        run_aql(db,
             "FOR cls IN ontology_classes"
             " FILTER cls._key == @k FILTER cls.expired == @never"
             " LIMIT 1 RETURN cls",

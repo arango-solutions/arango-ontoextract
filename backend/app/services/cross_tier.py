@@ -16,6 +16,7 @@ from arango.database import StandardDatabase
 
 from app.db.client import get_db
 from app.db.ontology_repo import create_edge
+from app.db.utils import run_aql
 from app.services.temporal import NEVER_EXPIRES
 
 log = logging.getLogger(__name__)
@@ -147,7 +148,7 @@ def _get_classes_by_classification(
         return []
 
     return list(
-        db.aql.execute(
+        run_aql(db,
             """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
@@ -172,7 +173,7 @@ def _find_domain_class_by_uri(
         return None
 
     results = list(
-        db.aql.execute(
+        run_aql(db,
             """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
@@ -197,7 +198,7 @@ def _detect_same_uri_conflicts(
         return
 
     results = list(
-        db.aql.execute(
+        run_aql(db,
             """\
 FOR local IN ontology_classes
   FILTER local.ontology_id == @staging_oid
@@ -245,7 +246,7 @@ def _detect_range_conflicts(
         return
 
     results = list(
-        db.aql.execute(
+        run_aql(db,
             """\
 FOR local_prop IN ontology_properties
   FILTER local_prop.ontology_id == @staging_oid
@@ -296,7 +297,7 @@ def _detect_hierarchy_conflicts(
         return
 
     domain_edges = list(
-        db.aql.execute(
+        run_aql(db,
             """\
 FOR e IN subclass_of
   FILTER e.expired == @never
@@ -316,7 +317,7 @@ FOR e IN subclass_of
     }
 
     staging_classes = list(
-        db.aql.execute(
+        run_aql(db,
             """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @staging_oid

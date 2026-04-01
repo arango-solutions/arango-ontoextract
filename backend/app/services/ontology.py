@@ -8,6 +8,7 @@ from typing import Any
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.utils import run_aql
 from app.models.ontology import ExtractionResult
 from app.services.arangordf_bridge import import_owl_to_graph
 from app.services.owl_serializer import extraction_to_owl
@@ -73,7 +74,7 @@ def get_staging_graph(
 
     if db.has_collection("ontology_classes"):
         classes = list(
-            db.aql.execute(
+            run_aql(db,
                 "FOR c IN ontology_classes FILTER c.ontology_id == @oid RETURN c",
                 bind_vars={"oid": ontology_id},
             )
@@ -81,7 +82,7 @@ def get_staging_graph(
 
     if db.has_collection("ontology_properties"):
         properties = list(
-            db.aql.execute(
+            run_aql(db,
                 "FOR p IN ontology_properties FILTER p.ontology_id == @oid RETURN p",
                 bind_vars={"oid": ontology_id},
             )
@@ -91,7 +92,7 @@ def get_staging_graph(
     for edge_col in edge_collections:
         if db.has_collection(edge_col):
             col_edges = list(
-                db.aql.execute(
+                run_aql(db,
                     f"FOR e IN {edge_col} RETURN e",
                 )
             )

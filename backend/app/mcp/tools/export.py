@@ -14,6 +14,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from app.db.client import get_db
+from app.db.utils import doc_get, run_aql
 
 log = logging.getLogger(__name__)
 
@@ -101,7 +102,8 @@ def register_export_tools(mcp: FastMCP) -> None:
 
             classes: list[dict[str, Any]] = []
             if db.has_collection("ontology_classes"):
-                classes = list(db.aql.execute(
+                classes = list(run_aql(
+                    db,
                     """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
@@ -112,7 +114,8 @@ FOR cls IN ontology_classes
 
             properties: list[dict[str, Any]] = []
             if db.has_collection("ontology_properties"):
-                properties = list(db.aql.execute(
+                properties = list(run_aql(
+                    db,
                     """\
 FOR prop IN ontology_properties
   FILTER prop.ontology_id == @oid
@@ -137,7 +140,8 @@ FOR prop IN ontology_properties
 
             subclass_edges: list[dict[str, Any]] = []
             if db.has_collection("subclass_of"):
-                subclass_edges = list(db.aql.execute(
+                subclass_edges = list(run_aql(
+                    db,
                     """\
 FOR e IN subclass_of
   FILTER e.expired == @never
@@ -194,7 +198,8 @@ def _find_entity(db: Any, key: str) -> dict[str, Any] | None:
     for collection in ("ontology_classes", "ontology_properties"):
         if not db.has_collection(collection):
             continue
-        results = list(db.aql.execute(
+        results = list(run_aql(
+            db,
             """\
 FOR doc IN @@col
   FILTER doc._key == @key
@@ -212,7 +217,7 @@ def _get_extraction_run(db: Any, run_id: str) -> dict[str, Any] | None:
     """Get extraction run summary."""
     if not db.has_collection("extraction_runs"):
         return None
-    doc = db.collection("extraction_runs").get(run_id)
+    doc = doc_get(db.collection("extraction_runs"), run_id)
     if not doc:
         return None
     return {
@@ -229,7 +234,7 @@ def _get_document_info(db: Any, doc_id: str) -> dict[str, Any] | None:
     """Get source document metadata."""
     if not db.has_collection("documents"):
         return None
-    doc = db.collection("documents").get(doc_id)
+    doc = doc_get(db.collection("documents"), doc_id)
     if not doc:
         return None
     return {
@@ -247,7 +252,8 @@ def _get_related_chunks(
     if not db.has_collection("chunks") or not entity_label:
         return []
     try:
-        return list(db.aql.execute(
+        return list(run_aql(
+            db,
             """\
 FOR chunk IN chunks
   FILTER chunk.doc_id == @doc_id
@@ -268,7 +274,8 @@ def _get_curation_decisions(db: Any, entity_key: str) -> list[dict[str, Any]]:
     if not db.has_collection("curation_decisions"):
         return []
     try:
-        return list(db.aql.execute(
+        return list(run_aql(
+            db,
             """\
 FOR d IN curation_decisions
   FILTER d.entity_key == @key

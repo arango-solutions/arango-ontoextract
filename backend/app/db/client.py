@@ -1,4 +1,5 @@
 import logging
+from typing import Any, cast
 
 from arango import ArangoClient
 from arango.database import StandardDatabase
@@ -15,7 +16,7 @@ def get_arango_client() -> ArangoClient:
     global _client
     if _client is None:
         host = settings.effective_arango_host
-        kwargs: dict = {"hosts": host}
+        kwargs: dict[str, Any] = {"hosts": host}
 
         if settings.is_cluster and not settings.arango_verify_ssl:
             kwargs["verify_override"] = False
@@ -51,7 +52,7 @@ def _ensure_database_exists(client: ArangoClient) -> None:
         username=settings.arango_user,
         password=settings.arango_password,
     )
-    if settings.arango_db not in sys_db.databases():
+    if settings.arango_db not in cast(list[str], sys_db.databases()):
         log.info("creating database", extra={"db": settings.arango_db})
         sys_db.create_database(settings.arango_db)
 

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Query
 
 from app.api.errors import NotFoundError, ValidationError
 from app.db.client import get_db
+from app.db.utils import doc_get, run_aql
 from app.models.curation import (
     BatchDecisionRequest,
     BatchDecisionResponse,
@@ -141,7 +142,7 @@ async def get_curation_diff(
     if db.has_collection("extraction_runs"):
         results_key = f"results_{run_id}"
         col = db.collection("extraction_runs")
-        results_doc = col.get(results_key) if col.has(results_key) else None
+        results_doc = doc_get(col, results_key) if col.has(results_key) else None
         if results_doc and "extraction_result" in results_doc:
             raw = results_doc["extraction_result"]
             classes = raw.get("classes", []) if isinstance(raw, dict) else []
@@ -153,7 +154,7 @@ async def get_curation_diff(
 
     current_classes: list[dict] = []
     if ontology_id and db.has_collection("ontology_classes"):
-        current_classes = list(db.aql.execute(
+        current_classes = list(run_aql(db,
             "FOR c IN ontology_classes "
             "FILTER c.ontology_id == @oid AND c.expired == @never "
             "RETURN c",

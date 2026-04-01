@@ -10,6 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.db.client import get_db
+from app.db.utils import doc_get, run_aql
 from app.services import extraction as extraction_service
 
 log = logging.getLogger(__name__)
@@ -120,7 +121,7 @@ def _resolve_doc_ids(body: StartRunRequest) -> list[str]:
     if db.has_collection("documents"):
         docs_col = db.collection("documents")
         for did in ids:
-            doc = docs_col.get(did)
+            doc = doc_get(docs_col, did)
             if doc is None:
                 raise HTTPException(
                     status_code=422,
@@ -162,7 +163,7 @@ async def list_runs(
             total_chunks = 0
             for did in run_doc_ids:
                 try:
-                    doc = db.collection("documents").get(did)
+                    doc = doc_get(db.collection("documents"), did)
                     if doc:
                         names.append(doc.get("filename", did))
                         total_chunks += doc.get("chunk_count", 0)
@@ -188,21 +189,21 @@ async def list_runs(
 
         if db.has_collection("ontology_classes") and run.get("_key"):
             try:
-                oid_result = list(db.aql.execute(
+                oid_result = list(run_aql(db,
                     "FOR o IN ontology_registry "
                     "FILTER o.extraction_run_id == @rid LIMIT 1 RETURN o._key",
                     bind_vars={"rid": run["_key"]},
                 ))
                 oid = oid_result[0] if oid_result else None
                 if oid:
-                    cls_count = list(db.aql.execute(
+                    cls_count = list(run_aql(db,
                         "FOR c IN ontology_classes "
                         "FILTER c.ontology_id == @oid AND c.expired == @never "
                         "COLLECT WITH COUNT INTO cnt RETURN cnt",
                         bind_vars={"oid": oid, "never": NEVER_EXPIRES},
                     ))
                     run["classes_extracted"] = cls_count[0] if cls_count else 0
-                    prop_count = list(db.aql.execute(
+                    prop_count = list(run_aql(db,
                         "FOR p IN ontology_properties "
                         "FILTER p.ontology_id == @oid AND p.expired == @never "
                         "COLLECT WITH COUNT INTO cnt RETURN cnt",

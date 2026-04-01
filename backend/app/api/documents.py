@@ -18,6 +18,7 @@ from app.api.dependencies import get_or_404
 from app.api.errors import ConflictError, ValidationError
 from app.db import documents_repo
 from app.db.client import get_db
+from app.db.utils import run_aql
 from app.models.common import PaginatedResponse
 from app.services.ingestion import compute_file_hash
 from app.tasks import process_document
@@ -191,7 +192,7 @@ async def get_document_ontologies(doc_id: str) -> dict:
     db = get_db()
     ontologies: list[dict] = []
     if db.has_collection("extracted_from") and db.has_collection("ontology_registry"):
-        ontologies = list(db.aql.execute(
+        ontologies = list(run_aql(db,
             "FOR e IN extracted_from "
             "FILTER e._to == @doc_id "
             "LET oid = e.ontology_id "
@@ -228,7 +229,7 @@ async def delete_document(
 
     if db.has_collection("extracted_from"):
         edges = list(
-            db.aql.execute(
+            run_aql(db,
                 "FOR e IN extracted_from "
                 "FILTER e._to == @doc_id AND e.expired == @never "
                 "RETURN e",
@@ -239,7 +240,7 @@ async def delete_document(
         ontology_ids = {e.get("ontology_id") for e in edges if e.get("ontology_id")}
         if ontology_ids and db.has_collection("ontology_registry"):
             affected_ontologies = list(
-                db.aql.execute(
+                run_aql(db,
                     "FOR o IN ontology_registry FILTER o._key IN @ids "
                     "RETURN {_key: o._key, name: o.name, status: o.status}",
                     bind_vars={"ids": list(ontology_ids)},
@@ -255,7 +256,7 @@ async def delete_document(
         }
 
     if db.has_collection("extracted_from"):
-        db.aql.execute(
+        run_aql(db,
             "FOR e IN extracted_from "
             "FILTER e._to == @doc_id AND e.expired == @never "
             "UPDATE e WITH {expired: @now} IN extracted_from",

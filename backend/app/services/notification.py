@@ -10,13 +10,14 @@ import json
 import logging
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 from arango.database import StandardDatabase
 
 from app.config import settings
 from app.db.client import get_db
 from app.db.pagination import paginate
+from app.db.utils import doc_get, run_aql
 from app.models.common import PaginatedResponse
 
 log = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ def _now_iso() -> str:
 def _get_redis():
     """Lazy Redis connection for pub/sub. Returns None if unavailable."""
     try:
-        import redis as redis_lib
+        import redis as redis_lib  # type: ignore[import-untyped]
 
         return redis_lib.Redis.from_url(settings.redis_url, decode_responses=True)
     except Exception:
@@ -73,7 +74,7 @@ def create_notification(
         "created_at": _now_iso(),
     }
 
-    result = col.insert(doc, return_new=True)
+    result = cast("dict[str, Any]", col.insert(doc, return_new=True))
     notification = result["new"]
 
     _publish_to_redis(notification)
@@ -135,17 +136,17 @@ def mark_as_read(
     db = db or get_db()
     col = db.collection(NOTIFICATIONS_COLLECTION)
     try:
-        doc = col.get(notification_id)
+        doc = doc_get(col, notification_id)
     except Exception:
         return None
 
     if doc is None or doc.get("user_id") != user_id:
         return None
 
-    result = col.update(
+    result = cast("dict[str, Any]", col.update(
         {"_key": notification_id, "read": True, "read_at": _now_iso()},
         return_new=True,
-    )
+    ))
     return result["new"]
 
 
@@ -163,9 +164,9 @@ FOR n IN @@col
   COLLECT WITH COUNT INTO c
   RETURN c"""
     rows = list(
-        db.aql.execute(
+        run_aql(db,
             query,
             bind_vars={"@col": NOTIFICATIONS_COLLECTION, "user_id": user_id},
         )
     )
-    return rows[0] if rows else 0
+    return int(rows[0]) if rows else 0

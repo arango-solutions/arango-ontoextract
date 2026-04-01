@@ -8,11 +8,12 @@ EXISTING, EXTENSION, or NEW relative to the domain.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.utils import run_aql
 from app.services.temporal import NEVER_EXPIRES
 
 log = logging.getLogger(__name__)
@@ -111,7 +112,7 @@ FOR org IN organizations
   LIMIT 1
   RETURN org.selected_ontologies"""
 
-    results = list(db.aql.execute(query, bind_vars={"org_id": org_id}))
+    results = list(run_aql(db,query, bind_vars={"org_id": org_id}))
     if not results or results[0] is None:
         return []
     return list(results[0])
@@ -134,7 +135,7 @@ def set_domain_ontology_for_org(
     if db.has_collection("ontology_registry"):
         for oid in ontology_ids:
             exists = list(
-                db.aql.execute(
+                run_aql(db,
                     "FOR r IN ontology_registry FILTER r._key == @k LIMIT 1 RETURN 1",
                     bind_vars={"k": oid},
                 )
@@ -146,22 +147,22 @@ def set_domain_ontology_for_org(
         db.create_collection("organizations")
 
     existing = list(
-        db.aql.execute(
+        run_aql(db,
             "FOR org IN organizations FILTER org._key == @k LIMIT 1 RETURN org",
             bind_vars={"k": org_id},
         )
     )
     if existing:
-        result = db.collection("organizations").update(
+        result = cast("dict[str, Any]", db.collection("organizations").update(
             {"_key": org_id, "selected_ontologies": ontology_ids},
             return_new=True,
-        )
+        ))
         return result["new"]
 
-    result = db.collection("organizations").insert(
+    result = cast("dict[str, Any]", db.collection("organizations").insert(
         {"_key": org_id, "selected_ontologies": ontology_ids},
         return_new=True,
-    )
+    ))
     return result["new"]
 
 
@@ -195,7 +196,7 @@ def _get_ontology_name(db: StandardDatabase, ontology_id: str) -> str:
         return ontology_id
 
     results = list(
-        db.aql.execute(
+        run_aql(db,
             "FOR r IN ontology_registry FILTER r._key == @k LIMIT 1 RETURN r.name",
             bind_vars={"k": ontology_id},
         )
@@ -210,7 +211,7 @@ def _get_current_classes(
         return []
 
     return list(
-        db.aql.execute(
+        run_aql(db,
             """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
@@ -228,7 +229,7 @@ def _get_subclass_edges(
         return []
 
     return list(
-        db.aql.execute(
+        run_aql(db,
             """\
 FOR e IN subclass_of
   FILTER e.expired == @never
@@ -245,7 +246,7 @@ def _get_class_properties(
         return []
 
     return list(
-        db.aql.execute(
+        run_aql(db,
             """\
 FOR prop IN ontology_properties
   FILTER prop.ontology_id == @oid

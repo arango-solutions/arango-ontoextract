@@ -16,6 +16,7 @@ from arango.database import StandardDatabase
 from app.db import curation_repo
 from app.db.client import get_db
 from app.db.ontology_repo import _ONTOLOGY_EDGE_COLLECTIONS
+from app.db.utils import run_aql
 from app.services.temporal import (
     NEVER_EXPIRES,
     expire_entity,
@@ -346,7 +347,7 @@ FOR doc IN @@col
   RETURN doc"""
 
     results = list(
-        db.aql.execute(
+        run_aql(db,
             query,
             bind_vars={"@col": collection, "key": key, "never": NEVER_EXPIRES},
         )

@@ -12,6 +12,7 @@ import logging
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.utils import run_aql
 from app.services.temporal import NEVER_EXPIRES
 
 log = logging.getLogger(__name__)
@@ -116,7 +117,7 @@ def _get_class_neighborhood(
 
     if db.has_collection("has_property"):
         props = list(
-            db.aql.execute(
+            run_aql(db,
                 """\
 FOR v, e IN 1..1 OUTBOUND @cls_id has_property
   FILTER e.expired == @never
@@ -128,7 +129,7 @@ FOR v, e IN 1..1 OUTBOUND @cls_id has_property
 
     if db.has_collection("subclass_of"):
         parents = list(
-            db.aql.execute(
+            run_aql(db,
                 """\
 FOR v, e IN 1..1 OUTBOUND @cls_id subclass_of
   FILTER e.expired == @never
@@ -139,7 +140,7 @@ FOR v, e IN 1..1 OUTBOUND @cls_id subclass_of
         result["parents"] = {p for p in parents if p}
 
         children = list(
-            db.aql.execute(
+            run_aql(db,
                 """\
 FOR v, e IN 1..1 INBOUND @cls_id subclass_of
   FILTER e.expired == @never

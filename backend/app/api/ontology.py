@@ -3,6 +3,7 @@ import logging
 import re
 import sys
 import time
+from typing import Any, cast
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse, Response
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 from app.api.errors import ConflictError, NotFoundError, ValidationError
 from app.db import documents_repo, ontology_repo, registry_repo
 from app.db.client import get_db
+from app.db.utils import doc_get, run_aql
 from app.models.curation import (
     TemporalDiff,
     TemporalSnapshot,
@@ -73,7 +75,7 @@ async def list_ontology_library(
                 edge_count = 0
                 for edge_col in ("subclass_of", "has_property", "related_to"):
                     if db.has_collection(edge_col):
-                        result = list(db.aql.execute(
+                        result = list(run_aql(db,
                             f"FOR e IN {edge_col} FILTER e.ontology_id == @oid "
                             "AND e.expired == @never "
                             "COLLECT WITH COUNT INTO cnt RETURN cnt",
@@ -196,7 +198,7 @@ async def delete_ontology(
     dependents: list[dict] = []
     if db.has_collection("imports"):
         dep_edges = list(
-            db.aql.execute(
+            run_aql(db,
                 "FOR e IN imports "
                 "FILTER e._to == @target AND e.expired == @never "
                 "RETURN DISTINCT e._from",
@@ -210,7 +212,7 @@ async def delete_ontology(
             dep_keys = [d.split("/")[-1] for d in dep_edges if "/" in d]
             if dep_keys:
                 dependents = list(
-                    db.aql.execute(
+                    run_aql(db,
                         "FOR o IN ontology_registry FILTER o._key IN @keys "
                         "RETURN {_key: o._key, name: o.name, status: o.status}",
                         bind_vars={"keys": dep_keys},
@@ -230,7 +232,7 @@ async def delete_ontology(
     for col_name in ("ontology_classes", "ontology_properties", "ontology_constraints"):
         if db.has_collection(col_name):
             result = list(
-                db.aql.execute(
+                run_aql(db,
                     f"FOR doc IN {col_name} "
                     "FILTER doc.ontology_id == @oid AND doc.expired == @never "
                     f"UPDATE doc WITH {{ expired: @now }} IN {col_name} "
@@ -247,7 +249,7 @@ async def delete_ontology(
     ):
         if db.has_collection(edge_col):
             result = list(
-                db.aql.execute(
+                run_aql(db,
                     f"FOR e IN {edge_col} "
                     "FILTER e.ontology_id == @oid AND e.expired == @never "
                     f"UPDATE e WITH {{ expired: @now }} IN {edge_col} "
@@ -260,7 +262,7 @@ async def delete_ontology(
     if db.has_collection("imports"):
         target_id = f"ontology_registry/{ontology_id}"
         cross_expired = list(
-            db.aql.execute(
+            run_aql(db,
                 "FOR e IN imports "
                 "FILTER (e._from == @target OR e._to == @target) AND e.expired == @never "
                 "UPDATE e WITH { expired: @now } IN imports "
@@ -274,7 +276,7 @@ async def delete_ontology(
         class_ids = []
         if db.has_collection("ontology_classes"):
             class_ids = list(
-                db.aql.execute(
+                run_aql(db,
                     "FOR c IN ontology_classes FILTER c.ontology_id == @oid "
                     "RETURN c._id",
                     bind_vars={"oid": ontology_id},
@@ -282,7 +284,7 @@ async def delete_ontology(
             )
         if class_ids:
             cross_extends = list(
-                db.aql.execute(
+                run_aql(db,
                     "FOR e IN extends_domain "
                     "FILTER e._to IN @targets AND e.expired == @never "
                     "UPDATE e WITH { expired: @now } IN extends_domain "
@@ -324,7 +326,7 @@ async def get_ontology_detail(ontology_id: str) -> dict:
         db = get_db()
         if db.has_collection("ontology_classes"):
             result = list(
-                db.aql.execute(
+                run_aql(db,
                     "FOR c IN ontology_classes FILTER c.ontology_id == @oid "
                     "AND c.expired == @never "
                     "COLLECT WITH COUNT INTO cnt RETURN cnt",
@@ -334,7 +336,7 @@ async def get_ontology_detail(ontology_id: str) -> dict:
             class_count = result[0] if result else 0
         if db.has_collection("ontology_properties"):
             result = list(
-                db.aql.execute(
+                run_aql(db,
                     "FOR p IN ontology_properties FILTER p.ontology_id == @oid "
                     "AND p.expired == @never "
                     "COLLECT WITH COUNT INTO cnt RETURN cnt",
@@ -448,7 +450,7 @@ async def list_ontology_documents(ontology_id: str) -> dict:
     db = get_db()
     documents: list[dict] = []
     if db.has_collection("extracted_from") and db.has_collection("documents"):
-        documents = list(db.aql.execute(
+        documents = list(run_aql(db,
             "FOR e IN extracted_from "
             "FILTER e.ontology_id == @oid AND e.expired == @never "
             "LET doc_key = PARSE_IDENTIFIER(e._to).key "
@@ -480,7 +482,7 @@ async def search_ontology_library(
     """
     db = get_db()
 
-    existing_views = {v["name"] for v in db.views()}
+    existing_views = {v["name"] for v in cast("list[dict[str, Any]]", db.views())}
     if "ontology_search_view" not in existing_views:
         return {
             "query": q,
@@ -491,7 +493,7 @@ async def search_ontology_library(
     registry_results: list[dict] = []
     if db.has_collection("ontology_registry"):
         registry_results = list(
-            db.aql.execute(
+            run_aql(db,
                 "FOR doc IN ontology_search_view "
                 "SEARCH ANALYZER("
                 "  BOOST(PHRASE(doc.name, @q), 3) OR "
@@ -515,7 +517,7 @@ async def search_ontology_library(
     class_results: list[dict] = []
     if db.has_collection("ontology_classes"):
         class_results = list(
-            db.aql.execute(
+            run_aql(db,
                 "FOR doc IN ontology_search_view "
                 "SEARCH ANALYZER("
                 "  BOOST(PHRASE(doc.label, @q), 3) OR "
@@ -543,7 +545,7 @@ async def search_ontology_library(
     property_results: list[dict] = []
     if db.has_collection("ontology_properties"):
         property_results = list(
-            db.aql.execute(
+            run_aql(db,
                 "FOR doc IN ontology_search_view "
                 "SEARCH ANALYZER("
                 "  BOOST(PHRASE(doc.label, @q), 3) OR "
@@ -663,14 +665,14 @@ async def get_domain_ontology(
     classes: list[dict] = []
     total_classes = 0
     if db.has_collection("ontology_classes"):
-        count_result = list(db.aql.execute(
+        count_result = list(run_aql(db,
             "FOR c IN ontology_classes FILTER c.expired == @never "
             "COLLECT WITH COUNT INTO cnt RETURN cnt",
             bind_vars={"never": NEVER_EXPIRES},
         ))
         total_classes = count_result[0] if count_result else 0
 
-        classes = list(db.aql.execute(
+        classes = list(run_aql(db,
             "FOR c IN ontology_classes "
             "FILTER c.expired == @never "
             "SORT c.label ASC "
@@ -685,7 +687,7 @@ async def get_domain_ontology(
     for edge_col in ("subclass_of", "has_property"):
         if not db.has_collection(edge_col):
             continue
-        result = list(db.aql.execute(
+        result = list(run_aql(db,
             f"FOR e IN {edge_col} "
             "FILTER e.expired == @never "
             "AND (e._from IN @ids OR e._to IN @ids) "
@@ -747,14 +749,14 @@ async def list_domain_classes(
 
     filter_clause = " AND ".join(filters)
 
-    count_result = list(db.aql.execute(
+    count_result = list(run_aql(db,
         f"FOR c IN ontology_classes FILTER {filter_clause} "
         "COLLECT WITH COUNT INTO cnt RETURN cnt",
         bind_vars={k: v for k, v in bind_vars.items() if k not in ("offset", "limit")},
     ))
     total = count_result[0] if count_result else 0
 
-    classes = list(db.aql.execute(
+    classes = list(run_aql(db,
         f"FOR c IN ontology_classes "
         f"FILTER {filter_clause} "
         "SORT c.label ASC "
@@ -766,7 +768,7 @@ async def list_domain_classes(
     ontology_ids_in_page = {c.get("ontology_id") for c in classes if c.get("ontology_id")}
     ontology_names: dict[str, str] = {}
     if ontology_ids_in_page and db.has_collection("ontology_registry"):
-        name_results = list(db.aql.execute(
+        name_results = list(run_aql(db,
             "FOR o IN ontology_registry "
             "FILTER o._key IN @ids "
             "RETURN {id: o._key, name: o.name}",
@@ -802,7 +804,7 @@ async def get_local_ontology(
 
     org_ontology_ids: list[str] = []
     if db.has_collection("ontology_registry"):
-        org_ontology_ids = list(db.aql.execute(
+        org_ontology_ids = list(run_aql(db,
             "FOR o IN ontology_registry "
             "FILTER o.org_id == @org_id "
             "RETURN o._key",
@@ -825,7 +827,7 @@ async def get_local_ontology(
     classes: list[dict] = []
     total_classes = 0
     if db.has_collection("ontology_classes"):
-        count_result = list(db.aql.execute(
+        count_result = list(run_aql(db,
             "FOR c IN ontology_classes "
             "FILTER c.ontology_id IN @oids AND c.expired == @never "
             "COLLECT WITH COUNT INTO cnt RETURN cnt",
@@ -833,7 +835,7 @@ async def get_local_ontology(
         ))
         total_classes = count_result[0] if count_result else 0
 
-        classes = list(db.aql.execute(
+        classes = list(run_aql(db,
             "FOR c IN ontology_classes "
             "FILTER c.ontology_id IN @oids AND c.expired == @never "
             "SORT c.label ASC "
@@ -853,7 +855,7 @@ async def get_local_ontology(
     for edge_col in ("subclass_of", "has_property", "related_to", "extends_domain"):
         if not db.has_collection(edge_col):
             continue
-        result = list(db.aql.execute(
+        result = list(run_aql(db,
             f"FOR e IN {edge_col} "
             "FILTER e.expired == @never "
             "AND (e._from IN @ids OR e._to IN @ids) "
@@ -889,11 +891,11 @@ async def get_staging(run_id: str) -> dict:
 
     ontology_id: str | None = None
     if db.has_collection("extraction_runs") and db.collection("extraction_runs").has(run_id):
-        run_doc = db.collection("extraction_runs").get(run_id)
+        run_doc = doc_get(db.collection("extraction_runs"), run_id)
         ontology_id = (run_doc or {}).get("ontology_id")
 
     if not ontology_id and db.has_collection("ontology_registry"):
-        matches = list(db.aql.execute(
+        matches = list(run_aql(db,
             "FOR o IN ontology_registry "
             "FILTER o.extraction_run_id == @rid "
             "LIMIT 1 RETURN o._key",
@@ -907,7 +909,7 @@ async def get_staging(run_id: str) -> dict:
 
     classes: list[dict] = []
     if db.has_collection("ontology_classes"):
-        classes = list(db.aql.execute(
+        classes = list(run_aql(db,
             "FOR c IN ontology_classes "
             "FILTER c.ontology_id == @oid AND c.expired == @never "
             "SORT c.label ASC RETURN c",
@@ -916,7 +918,7 @@ async def get_staging(run_id: str) -> dict:
 
     properties: list[dict] = []
     if db.has_collection("ontology_properties"):
-        properties = list(db.aql.execute(
+        properties = list(run_aql(db,
             "FOR p IN ontology_properties "
             "FILTER p.ontology_id == @oid AND p.expired == @never "
             "SORT p.label ASC RETURN p",
@@ -929,7 +931,7 @@ async def get_staging(run_id: str) -> dict:
         "equivalent_class", "extracted_from",
     ):
         if db.has_collection(edge_col):
-            result = list(db.aql.execute(
+            result = list(run_aql(db,
                 f"FOR e IN {edge_col} FILTER e.ontology_id == @oid "
                 "AND e.expired == @never "
                 "RETURN MERGE(e, {edge_type: @et})",
@@ -983,7 +985,7 @@ async def list_ontology_classes(ontology_id: str) -> dict:
     db = get_db()
     if not db.has_collection("ontology_classes"):
         return {"data": []}
-    classes = list(db.aql.execute(
+    classes = list(run_aql(db,
         "FOR c IN ontology_classes FILTER c.ontology_id == @oid "
         "AND c.expired == @never "
         "SORT c.label ASC RETURN c",
@@ -1003,7 +1005,7 @@ async def list_ontology_properties(
         return {"data": []}
     if keys:
         key_list = [k.strip() for k in keys.split(",") if k.strip()]
-        props = list(db.aql.execute(
+        props = list(run_aql(db,
             "FOR p IN ontology_properties "
             "FILTER p.ontology_id == @oid AND p._key IN @keys "
             "AND p.expired == @never "
@@ -1014,7 +1016,7 @@ async def list_ontology_properties(
             },
         ))
     else:
-        props = list(db.aql.execute(
+        props = list(run_aql(db,
             "FOR p IN ontology_properties "
             "FILTER p.ontology_id == @oid "
             "AND p.expired == @never "
@@ -1036,7 +1038,7 @@ async def list_ontology_edges(ontology_id: str) -> dict:
                 "AND e.expired == @never "
                 "RETURN MERGE(e, {edge_type: @et})"
             )
-            result = list(db.aql.execute(
+            result = list(run_aql(db,
                 query,
                 bind_vars={
                     "oid": ontology_id, "et": edge_col,
@@ -1079,7 +1081,7 @@ async def create_class(ontology_id: str, body: CreateClassRequest) -> dict:
     key = _key_from_uri(uri)
 
     existing = list(
-        db.aql.execute(
+        run_aql(db,
             "FOR c IN ontology_classes "
             "FILTER c.ontology_id == @oid AND c.uri == @uri AND c.expired == @never "
             "LIMIT 1 RETURN c._key",
@@ -1212,7 +1214,7 @@ async def create_or_update_edge(ontology_id: str, body: CreateEdgeRequest) -> di
     _ensure_collection(db, body.edge_type, edge=True)
 
     existing_edges = list(
-        db.aql.execute(
+        run_aql(db,
             "FOR e IN @@col "
             "FILTER e._from == @from_id AND e._to == @to_id "
             "AND e.expired == @never RETURN e",
@@ -1462,7 +1464,7 @@ async def get_class_provenance(class_key: str) -> dict:
     db = get_db()
     chunks: list[dict] = []
     if db.has_collection("extracted_from") and db.has_collection("chunks"):
-        rows = list(db.aql.execute(
+        rows = list(run_aql(db,
             "FOR e IN extracted_from "
             "  FILTER e._from == CONCAT('ontology_classes/', @key) "
             "  LET doc_id = PARSE_IDENTIFIER(e._to).key "
