@@ -647,7 +647,7 @@ def _materialize_to_graph(
     has_prop_col = db.collection("has_property")
     extracted_col = db.collection("extracted_from")
     subclass_col = db.collection("subclass_of")
-    db.collection("related_to")
+    related_col = db.collection("related_to")
 
     class_keys: dict[str, str] = {}
     uri_to_key: dict[str, str] = {}

@@ -168,7 +168,7 @@ export default function AgentDAG({ steps }: AgentDAGProps) {
   }, []);
 
   return (
-    <div className="w-full" style={{ minHeight: 580 }} data-testid="agent-dag">
+    <div className="w-full h-[580px]" data-testid="agent-dag">
       <ReactFlow
         nodes={nodes}
         edges={edges}
