@@ -1862,14 +1862,16 @@ An orphan class with only datatype properties scores 0.15. A well-connected clas
 
 | Dimension | Weight | Scoring | Example |
 |-----------|--------|---------|---------|
-| **Completeness** | 0.25 | `classes_with_properties / total_classes` | 4/6 classes have props → 0.67 |
-| **Coherence** | 0.20 | `1.0` if no cycles detected, `0.0` if cycles exist | Clean hierarchy → 1.0 |
-| **Orphan ratio** | 0.15 | `1 - (orphan_count / total_classes)` | 2 orphans / 6 classes → 0.67 |
-| **Avg confidence** | 0.15 | Mean of multi-signal per-class confidence scores | Mean 0.72 → 0.72 |
-| **Coverage** | 0.10 | `min(total_classes / (chunk_count * 2), 1.0)` — classes-per-chunk ratio | 6 classes from 8 chunks → 0.375 |
+| **Completeness** | 0.20 | `classes_with_properties / total_classes` | 4/6 classes have props → 0.67 |
+| **Connectivity** | 0.20 | `classes_with_object_property_relationships / total_classes` — classes connected to other classes via `related_to` edges | 0/6 classes connected → 0.0 (flat taxonomy penalty) |
+| **Coherence** | 0.15 | `1.0` if no cycles detected, `0.0` if cycles exist | Clean hierarchy → 1.0 |
+| **Avg confidence** | 0.20 | Mean of multi-signal per-class confidence scores | Mean 0.72 → 0.72 |
 | **Property richness** | 0.15 | `min(avg_properties_per_class / 3, 1.0)` — richer classes = better ontology | Avg 3.3 props → 1.0 |
+| **Coverage** | 0.10 | `min(chunk_count / 5, 1.0)` — source chunk support | 8 chunks → 1.0 |
 
-**Formula:** `health_score = round((0.25 * completeness + 0.20 * coherence + 0.15 * (1 - orphan_ratio) + 0.15 * avg_confidence + 0.10 * coverage + 0.15 * property_richness) * 100)`
+**Why Connectivity matters:** An ontology with only `rdfs:subClassOf` hierarchy and datatype properties (e.g., `Customer` has `name: xsd:string`) but no inter-class relationships (e.g., `Customer holds Account`) is essentially a flat taxonomy — not a true ontology. The connectivity dimension ensures that ontologies without object property relationships between classes score significantly lower.
+
+**Formula:** `health_score = round((0.20 * completeness + 0.20 * connectivity + 0.15 * coherence + 0.20 * avg_confidence + 0.15 * property_richness + 0.10 * coverage) * 100)`
 
 **Traffic-light display:**
 - Green (≥ 70): Healthy ontology — well-structured, confident, complete

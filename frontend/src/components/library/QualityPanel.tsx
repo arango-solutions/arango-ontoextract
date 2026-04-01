@@ -8,6 +8,8 @@ interface QualityData {
   class_count: number;
   property_count: number;
   completeness: number;
+  connectivity: number;
+  relationship_count: number;
   orphan_count: number;
   has_cycles: boolean;
   classes_without_properties: number;
@@ -81,7 +83,7 @@ export default function QualityPanel({ ontologyId }: QualityPanelProps) {
 
   if (error || !data) return null;
 
-  const hasIssues = data.orphan_count > 0 || data.has_cycles;
+  const hasIssues = data.orphan_count > 0 || data.has_cycles || data.connectivity === 0;
 
   return (
     <div
@@ -111,6 +113,20 @@ export default function QualityPanel({ ontologyId }: QualityPanelProps) {
             {data.completeness.toFixed(1)}%
           </span>
         </div>
+
+        {/* Connectivity */}
+        <div className="flex items-center justify-between">
+          <span className="text-gray-600">Connectivity</span>
+          <span className={`font-medium ${data.connectivity > 50 ? "text-green-700" : data.connectivity > 0 ? "text-yellow-700" : "text-red-600"}`}>
+            {data.connectivity.toFixed(1)}%
+            <span className="text-xs text-gray-400 ml-1">({data.relationship_count} relationships)</span>
+          </span>
+        </div>
+        {data.connectivity === 0 && (
+          <div className="text-xs text-red-500 bg-red-50 px-2 py-1 rounded">
+            No inter-class relationships detected. The ontology is a flat taxonomy without object property connections between classes.
+          </div>
+        )}
 
         {/* Orphans */}
         {data.orphan_count > 0 && (

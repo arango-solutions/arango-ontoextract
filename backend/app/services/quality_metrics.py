@@ -85,6 +85,30 @@ def compute_ontology_quality(
     orphan_count = _count_orphans(db, ontology_id)
     has_cycles = _detect_cycles(db, ontology_id)
 
+    relationship_count = 0
+    classes_with_relationships = 0
+    if class_count > 0 and _has(db, "related_to"):
+        rows = list(run_aql(db,
+            "FOR e IN related_to "
+            "FILTER e.ontology_id == @oid AND e.expired == @never "
+            "COLLECT WITH COUNT INTO cnt RETURN cnt",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        ))
+        relationship_count = rows[0] if rows else 0
+        if relationship_count > 0:
+            rows2 = list(run_aql(db,
+                "FOR e IN related_to "
+                "FILTER e.ontology_id == @oid AND e.expired == @never "
+                "COLLECT from_id = e._from "
+                "COLLECT WITH COUNT INTO cnt RETURN cnt",
+                bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+            ))
+            classes_with_relationships = rows2[0] if rows2 else 0
+
+    connectivity = (
+        (classes_with_relationships / class_count * 100) if class_count > 0 else 0.0
+    )
+
     chunk_count = 0
     if _has(db, "has_chunk"):
         rows = list(run_aql(db,
@@ -105,6 +129,7 @@ def compute_ontology_quality(
             avg_confidence=avg_confidence if avg_confidence is not None else 0.5,
             total_properties=property_count,
             chunk_count=chunk_count,
+            connectivity=connectivity / 100.0,
         )
 
     return {
@@ -113,6 +138,8 @@ def compute_ontology_quality(
         "class_count": class_count,
         "property_count": property_count,
         "completeness": round(completeness, 2),
+        "connectivity": round(connectivity, 2),
+        "relationship_count": relationship_count,
         "orphan_count": orphan_count,
         "has_cycles": has_cycles,
         "classes_without_properties": classes_without_properties,
@@ -215,15 +242,21 @@ def compute_health_score(
     avg_confidence: float,
     total_properties: int,
     chunk_count: int,
+    connectivity: float = 0.0,
 ) -> int:
     """Compute a 0-100 composite ontology health score.
 
     Dimensions (weights):
-      - Completeness (25%): ratio of classes with properties
-      - Structural integrity (20%): penalizes cycles and orphans
-      - Average confidence (25%): mean multi-signal confidence
+      - Completeness (20%): ratio of classes with properties
+      - Connectivity (20%): ratio of classes with inter-class relationships (object properties)
+      - Structural integrity (15%): penalizes cycles and orphans
+      - Average confidence (20%): mean multi-signal confidence
       - Property richness (15%): properties-per-class ratio
-      - Source coverage (15%): chunk support ratio
+      - Source coverage (10%): chunk support ratio
+
+    An ontology with only datatype properties but no inter-class
+    relationships will score low on connectivity, preventing a
+    flat taxonomy from getting a high health score.
 
     Returns an integer 0-100.
     """
@@ -238,12 +271,15 @@ def compute_health_score(
 
     source_coverage = min(chunk_count / 5.0, 1.0)
 
+    connectivity_score = min(connectivity / 100.0, 1.0) if connectivity > 1.0 else connectivity
+
     raw = (
-        0.25 * completeness_pct
-        + 0.20 * structural
-        + 0.25 * avg_confidence
+        0.20 * completeness_pct
+        + 0.20 * connectivity_score
+        + 0.15 * structural
+        + 0.20 * avg_confidence
         + 0.15 * property_richness
-        + 0.15 * source_coverage
+        + 0.10 * source_coverage
     )
     return max(0, min(100, round(raw * 100)))
 
