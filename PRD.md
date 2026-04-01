@@ -1894,15 +1894,49 @@ An orphan class with only datatype properties scores 0.15. A well-connected clas
 | FR-13.8 | Quality history over time | Quality metrics stored with timestamps so trends can be tracked. Leverages temporal snapshot infrastructure for historical quality snapshots. |
 | FR-13.9 | Low-confidence visual highlighting in curation graph | Nodes in the curation graph canvas are color-coded by multi-signal confidence: red border < 0.5, yellow 0.5–0.7, green > 0.7. Enables curators to focus on uncertain entities first. |
 | FR-13.10 | Quality-oriented ArangoDB Visualizer queries | Saved queries for: "Low Confidence Classes" (below threshold), "Orphan Classes" (no hierarchy edges), "Classes Without Properties" (incomplete definitions). |
-| FR-13.11 | Multi-signal per-class confidence | Each class's `confidence` field is computed as a weighted blend of cross-pass agreement, LLM self-reported confidence, structural quality, description quality, and provenance strength (see §6.13.1). Replaces single-signal agreement ratio. |
-| FR-13.12 | Composite ontology health score | Each ontology receives a 0–100 health score blending completeness, coherence, orphan ratio, avg confidence, coverage, and property richness (see §6.13.2). Displayed on ontology cards with traffic-light color coding. |
+| FR-13.11 | Multi-signal per-class confidence | Each class's `confidence` field is computed as a weighted blend of 7 signals: cross-pass agreement, LLM-as-Judge faithfulness, semantic validity, structural quality (relationship richness), description quality, provenance strength, and property agreement (see §6.13.1). |
+| FR-13.12 | Composite ontology health score | Each ontology receives a 0–100 health score blending completeness, connectivity, coherence, avg confidence, property richness, and coverage (see §6.13.2). Displayed on ontology cards with traffic-light color coding. |
 | FR-13.13 | Provenance strength in confidence | Per-class confidence includes a provenance strength signal based on the number of distinct source chunks supporting the class via `extracted_from` edges. |
+| FR-13.14 | Connectivity metric (relationship richness) | Percentage of classes with at least one `related_to` edge connecting them to another class (inter-class object property relationship). An ontology with 0% connectivity is flagged as a flat taxonomy. Connectivity is a 20% weight in the health score. |
+| FR-13.15 | Inter-class relationship extraction | Object properties extracted by the LLM with `property_type: "object"` and a class URI as `range` automatically generate `related_to` edges between domain and range classes during materialization. The extraction prompt explicitly instructs the LLM to extract inter-class relationships. |
+| FR-13.16 | OntoQA/OQuaRE-aligned schema metrics | The quality system computes established ontology evaluation metrics from the OntoQA and OQuaRE frameworks, adapted for LLM-extracted ontologies. See §6.13.3. |
+
+#### 6.13.3 OntoQA/OQuaRE-Aligned Schema Metrics
+
+**Background:** The OntoQA framework (Tartir et al.) and OQuaRE framework (Duque-Ramos et al., based on ISO/IEC 25000 SQuaRE) define established metrics for ontology quality evaluation. AOE adapts the most relevant schema metrics for LLM-extracted ontologies, providing industry-standard quality assessment alongside AOE-specific metrics.
+
+**Schema Metrics (per ontology):**
+
+| Metric | OntoQA Name | Formula | What it reveals | Range |
+|--------|-------------|---------|-----------------|-------|
+| **Relationship Richness** | Schema: Relationship Richness | `non_subclass_edges / total_edges` | Ratio of relationship types beyond pure inheritance. An ontology relying solely on `subclass_of` scores 0.0; diverse relationships (holds, contains, produces) push toward 1.0. | 0.0–1.0 |
+| **Attribute Richness** | Schema: Attribute Richness | `total_properties / total_classes` | Average properties per class. Higher = more knowledge per concept. | 0.0–∞ (typical 2–10) |
+| **Inheritance Richness** | Schema: Inheritance Richness | `total_subclass_edges / classes_with_children` | Average subclasses per parent class. Indicates hierarchy breadth. High values suggest wide, shallow hierarchies; low values suggest deep, narrow ones. | 0.0–∞ |
+| **Max Depth** | Structural: Depth | `max(traversal_depth(root, subclass_of))` | Deepest path from any root class to a leaf. Ontologies with depth 0–1 are flat; depth 3+ indicates meaningful specialization. | 0–∞ |
+| **Annotation Completeness** | — (AOE-specific) | `classes_with_nonempty_description / total_classes` | Percentage of classes with a meaningful description (>20 chars). Incomplete annotations make ontologies harder to curate and use. | 0.0–1.0 |
+| **Relationship Diversity** | — (AOE-specific) | `distinct_edge_labels / total_related_to_edges` | Number of unique relationship types (e.g., "holds", "contains", "produces"). Higher diversity = more expressive ontology. | 0–∞ |
+| **Average Connectivity Degree** | — (graph theory) | `(total_subclass_edges + total_related_to_edges) / total_classes` | Average edges per class across all relationship types. Higher degree = richer graph structure. | 0.0–∞ |
+| **URI Consistency** | — (AOE-specific) | `classes_in_primary_namespace / total_classes` | Percentage of classes using a consistent URI namespace. Mixed namespaces suggest poorly organized extraction or cross-contamination from multiple imports. | 0.0–1.0 |
+
+**How these feed the health score:** The metrics above are informational (displayed in the quality panel and quality dashboard). The health score (§6.13.2) uses the derived dimensions (completeness, connectivity, coherence, confidence, property richness, coverage) which are computed from these underlying metrics.
+
+**Comparison to established frameworks:**
+
+| AOE Dimension | OntoQA Equivalent | OQuaRE Equivalent |
+|---------------|-------------------|-------------------|
+| Completeness | Attribute Richness | Functional Adequacy |
+| Connectivity | Relationship Richness | Structural |
+| Coherence | — (cycle detection) | Consistency |
+| Confidence | — (LLM-specific) | Reliability |
+| Property Richness | Attribute Richness | Functional Adequacy |
+| Annotation Completeness | — | Understandability |
+| Inheritance Richness | Inheritance Richness | Structural |
 
 **API Endpoints:**
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/quality/{ontology_id}` | Returns all computed quality scores including health score for an ontology |
+| `GET` | `/api/v1/quality/{ontology_id}` | Returns all computed quality scores including health score, connectivity, and OntoQA-aligned schema metrics for an ontology |
 | `GET` | `/api/v1/quality/{ontology_id}/history` | Quality metrics over time (leverages temporal snapshots) |
 | `GET` | `/api/v1/quality/summary` | Aggregate quality scores across all ontologies |
 | `POST` | `/api/v1/quality/recall` | Upload a reference OWL/TTL file to compute recall against extracted ontology |

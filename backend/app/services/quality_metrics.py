@@ -119,6 +119,11 @@ def compute_ontology_quality(
         ))
         chunk_count = rows[0] if rows else 0
 
+    schema_metrics = _compute_schema_metrics(
+        db, ontology_id, class_count, property_count,
+        relationship_count, subclass_edge_count=_count_edges(db, "subclass_of", ontology_id),
+    )
+
     health_score: int | None = None
     if class_count > 0:
         health_score = compute_health_score(
@@ -144,6 +149,132 @@ def compute_ontology_quality(
         "has_cycles": has_cycles,
         "classes_without_properties": classes_without_properties,
         "health_score": health_score,
+        "schema_metrics": schema_metrics,
+    }
+
+
+def _count_edges(db: StandardDatabase, collection: str, ontology_id: str) -> int:
+    """Count active edges in a collection for an ontology."""
+    if not _has(db, collection):
+        return 0
+    rows = list(run_aql(db,
+        f"FOR e IN {collection} "
+        "FILTER e.ontology_id == @oid AND e.expired == @never "
+        "COLLECT WITH COUNT INTO cnt RETURN cnt",
+        bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+    ))
+    return rows[0] if rows else 0
+
+
+def _compute_schema_metrics(
+    db: StandardDatabase,
+    ontology_id: str,
+    class_count: int,
+    property_count: int,
+    relationship_count: int,
+    subclass_edge_count: int,
+) -> dict[str, Any]:
+    """Compute OntoQA/OQuaRE-aligned schema metrics."""
+    total_edges = subclass_edge_count + relationship_count
+    relationship_richness = (
+        (relationship_count / total_edges) if total_edges > 0 else 0.0
+    )
+
+    attribute_richness = (
+        (property_count / class_count) if class_count > 0 else 0.0
+    )
+
+    classes_with_children = 0
+    if subclass_edge_count > 0 and _has(db, "subclass_of"):
+        rows = list(run_aql(db,
+            "FOR e IN subclass_of "
+            "FILTER e.ontology_id == @oid AND e.expired == @never "
+            "COLLECT parent = e._to "
+            "COLLECT WITH COUNT INTO cnt RETURN cnt",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        ))
+        classes_with_children = rows[0] if rows else 0
+    inheritance_richness = (
+        (subclass_edge_count / classes_with_children)
+        if classes_with_children > 0 else 0.0
+    )
+
+    max_depth = 0
+    if _has(db, "ontology_classes") and _has(db, "subclass_of") and subclass_edge_count > 0:
+        rows = list(run_aql(db,
+            "LET roots = ("
+            "  FOR c IN ontology_classes "
+            "  FILTER c.ontology_id == @oid AND c.expired == @never "
+            "  LET is_child = LENGTH("
+            "    FOR e IN subclass_of "
+            "    FILTER e._from == c._id AND e.expired == @never "
+            "    LIMIT 1 RETURN 1"
+            "  ) "
+            "  FILTER is_child == 0 "
+            "  RETURN c "
+            ") "
+            "FOR root IN roots "
+            "  FOR v, e, p IN 0..20 INBOUND root subclass_of "
+            "    OPTIONS {uniqueVertices: 'path'} "
+            "    FILTER e == null OR e.expired == @never "
+            "    COLLECT AGGREGATE md = MAX(LENGTH(p.edges)) "
+            "RETURN md",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        ))
+        max_depth = rows[0] if rows and rows[0] else 0
+
+    annotation_completeness = 0.0
+    if class_count > 0 and _has(db, "ontology_classes"):
+        rows = list(run_aql(db,
+            "FOR c IN ontology_classes "
+            "FILTER c.ontology_id == @oid AND c.expired == @never "
+            "  AND c.description != null AND LENGTH(c.description) > 20 "
+            "COLLECT WITH COUNT INTO cnt RETURN cnt",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        ))
+        described = rows[0] if rows else 0
+        annotation_completeness = described / class_count
+
+    relationship_diversity = 0
+    if relationship_count > 0 and _has(db, "related_to"):
+        rows = list(run_aql(db,
+            "FOR e IN related_to "
+            "FILTER e.ontology_id == @oid AND e.expired == @never "
+            "COLLECT label = e.label "
+            "COLLECT WITH COUNT INTO cnt RETURN cnt",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        ))
+        relationship_diversity = rows[0] if rows else 0
+
+    avg_connectivity_degree = (
+        (total_edges / class_count) if class_count > 0 else 0.0
+    )
+
+    uri_consistency = 1.0
+    if class_count > 1 and _has(db, "ontology_classes"):
+        rows = list(run_aql(db,
+            "FOR c IN ontology_classes "
+            "FILTER c.ontology_id == @oid AND c.expired == @never AND c.uri != null "
+            "LET ns = REGEX_REPLACE(c.uri, '#[^#]*$', '#') "
+            "COLLECT namespace = ns WITH COUNT INTO cnt "
+            "SORT cnt DESC "
+            "LIMIT 1 "
+            "RETURN {namespace, cnt}",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        ))
+        if rows and rows[0]:
+            primary_ns_count = rows[0].get("cnt", 0)
+            uri_consistency = primary_ns_count / class_count if class_count > 0 else 1.0
+
+    return {
+        "relationship_richness": round(relationship_richness, 4),
+        "attribute_richness": round(attribute_richness, 2),
+        "inheritance_richness": round(inheritance_richness, 2),
+        "max_depth": max_depth,
+        "annotation_completeness": round(annotation_completeness, 4),
+        "relationship_diversity": relationship_diversity,
+        "avg_connectivity_degree": round(avg_connectivity_degree, 2),
+        "uri_consistency": round(uri_consistency, 4),
     }
 
 

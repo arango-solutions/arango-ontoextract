@@ -3,6 +3,17 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api-client";
 
+interface SchemaMetrics {
+  relationship_richness: number;
+  attribute_richness: number;
+  inheritance_richness: number;
+  max_depth: number;
+  annotation_completeness: number;
+  relationship_diversity: number;
+  avg_connectivity_degree: number;
+  uri_consistency: number;
+}
+
 interface QualityData {
   avg_confidence: number | null;
   class_count: number;
@@ -15,6 +26,7 @@ interface QualityData {
   classes_without_properties: number;
   acceptance_rate: number | null;
   time_to_ontology_ms: number | null;
+  schema_metrics?: SchemaMetrics;
 }
 
 function confidenceColorClass(value: number): string {
@@ -160,10 +172,53 @@ export default function QualityPanel({ ontologyId }: QualityPanelProps) {
           </div>
         )}
 
-        {!hasIssues && data.completeness >= 100 && (
+        {!hasIssues && data.completeness >= 100 && data.connectivity > 0 && (
           <div className="text-green-600 text-[11px] mt-1">
             No structural issues detected.
           </div>
+        )}
+
+        {/* Schema Metrics (OntoQA-aligned) */}
+        {data.schema_metrics && (
+          <details className="mt-2">
+            <summary className="text-[11px] text-gray-400 cursor-pointer hover:text-gray-600">
+              Schema Metrics (OntoQA)
+            </summary>
+            <div className="mt-1.5 space-y-1 text-[11px]">
+              <div className="flex justify-between">
+                <span className="text-gray-500">Relationship Richness</span>
+                <span className="text-gray-700">{(data.schema_metrics.relationship_richness * 100).toFixed(0)}%</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Attribute Richness</span>
+                <span className="text-gray-700">{data.schema_metrics.attribute_richness.toFixed(1)} props/class</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Inheritance Richness</span>
+                <span className="text-gray-700">{data.schema_metrics.inheritance_richness.toFixed(1)} subclasses/parent</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Max Depth</span>
+                <span className="text-gray-700">{data.schema_metrics.max_depth} levels</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Annotation Completeness</span>
+                <span className="text-gray-700">{(data.schema_metrics.annotation_completeness * 100).toFixed(0)}%</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Relationship Types</span>
+                <span className="text-gray-700">{data.schema_metrics.relationship_diversity} distinct</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Avg Degree</span>
+                <span className="text-gray-700">{data.schema_metrics.avg_connectivity_degree.toFixed(1)} edges/class</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">URI Consistency</span>
+                <span className="text-gray-700">{(data.schema_metrics.uri_consistency * 100).toFixed(0)}%</span>
+              </div>
+            </div>
+          </details>
         )}
       </div>
     </div>
