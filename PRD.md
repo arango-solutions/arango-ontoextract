@@ -101,6 +101,351 @@ The critical differentiator is that Localized Ontologies are **structurally link
 
 ---
 
+## 2a. Use Cases & Workflows
+
+This section defines the end-to-end workflows performed by each role. These workflows serve as the basis for integration testing, E2E test scenarios, and role-based access control (RBAC) policy definitions.
+
+### Roles & RBAC Matrix
+
+| Role | Code | Description | RBAC Level |
+|------|------|-------------|------------|
+| **Domain Expert** | `domain_expert` | Reviews extraction results, curates ontologies, approves/rejects classes | Read + Curate |
+| **Ontology Engineer** | `ontology_engineer` | Full ontology management: import, edit, delete, configure extraction | Read + Write + Delete |
+| **Organization Admin** | `admin` | User management, system configuration, reset, all permissions | Full |
+| **Viewer** | `viewer` | Read-only access to library, pipeline status, quality metrics | Read only |
+| **AI Agent (MCP)** | `agent` | Programmatic access via MCP tools | Scoped by MCP tool permissions |
+
+### RBAC Permission Matrix
+
+| Endpoint / Action | viewer | domain_expert | ontology_engineer | admin |
+|-------------------|--------|---------------|-------------------|-------|
+| View library, class hierarchies | ✅ | ✅ | ✅ | ✅ |
+| View pipeline monitor, metrics | ✅ | ✅ | ✅ | ✅ |
+| View quality dashboard | ✅ | ✅ | ✅ | ✅ |
+| Export ontology (OWL, JSON-LD, CSV) | ✅ | ✅ | ✅ | ✅ |
+| Upload documents | ❌ | ✅ | ✅ | ✅ |
+| Trigger extraction | ❌ | ✅ | ✅ | ✅ |
+| Curation: approve/reject classes | ❌ | ✅ | ✅ | ✅ |
+| Curation: edit class properties | ❌ | ✅ | ✅ | ✅ |
+| Curation: batch operations | ❌ | ✅ | ✅ | ✅ |
+| Promote staging to production | ❌ | ❌ | ✅ | ✅ |
+| Import standard ontology (OWL/TTL) | ❌ | ❌ | ✅ | ✅ |
+| Create/edit classes in ontology editor | ❌ | ❌ | ✅ | ✅ |
+| Delete class (temporal soft-delete) | ❌ | ❌ | ✅ | ✅ |
+| Deprecate ontology | ❌ | ❌ | ✅ | ✅ |
+| Delete document (hard delete) | ❌ | ❌ | ✅ | ✅ |
+| Update ontology metadata (name, tags) | ❌ | ❌ | ✅ | ✅ |
+| Execute ER merge | ❌ | ❌ | ✅ | ✅ |
+| Manage users and organizations | ❌ | ❌ | ❌ | ✅ |
+| System reset (soft/full) | ❌ | ❌ | ❌ | ✅ |
+| View/modify system configuration | ❌ | ❌ | ❌ | ✅ |
+
+### Use Case Catalog
+
+#### UC-1: Extract Ontology from Document (Domain Expert)
+
+**Actor:** Domain Expert
+**Precondition:** User is authenticated with `domain_expert` role
+**Trigger:** User has a new document describing a business domain
+
+**Main Flow:**
+1. User navigates to `/upload`
+2. User optionally selects a target ontology ("Create New" or existing) and base ontologies for context
+3. User drops a PDF/DOCX/Markdown file onto the upload zone
+4. System parses the document, creates chunks, generates embeddings
+5. System auto-triggers the extraction pipeline (6-agent LangGraph)
+6. User is redirected to `/pipeline` to monitor progress
+7. Pipeline completes: Strategy → Extraction → Consistency → Quality Judge → ER → Filter
+8. User clicks "Curate" to review results in `/curation/[runId]`
+9. User reviews each class: approves, rejects, or edits
+10. User clicks "Promote" to move approved classes to the ontology library
+
+**Alternative Flows:**
+- 3a. File type not supported → error message, no upload
+- 5a. LLM returns empty responses → retries (up to 5) with backoff; if all fail, run marked as failed with errors
+- 7a. 0 classes extracted → "No ontology data for this run" message with guidance
+- 9a. User disagrees with class hierarchy → edits parent class, system creates new temporal version
+
+**Post-conditions:** New ontology appears in library with curated classes. VCR timeline shows extraction and curation history. Quality metrics computed.
+
+**PRD References:** §6.1 FR-1.1–1.6, §6.2 FR-2.1–2.11, §6.4 FR-4.1–4.8, §6.11, §6.12
+
+---
+
+#### UC-2: Extend Ontology with Additional Document (Domain Expert)
+
+**Actor:** Domain Expert
+**Precondition:** An ontology already exists in the library
+**Trigger:** User has a new document that should enrich an existing ontology
+
+**Main Flow:**
+1. User navigates to `/library` and selects the target ontology
+2. User clicks "+ Add Document" in the sidebar
+3. User selects a file; system uploads, parses, and chunks it
+4. System triggers incremental extraction with `target_ontology_id` set
+5. Extraction pipeline runs with existing ontology classes injected as context (Tier 2)
+6. Consistency Checker classifies new extractions: EXISTING / EXTENSION / NEW
+7. User reviews in curation: only genuinely new concepts need approval
+8. Approved classes merge into the existing ontology
+
+**Alternative Flows:**
+- 4a. User uploads from `/upload` page and selects the target ontology from dropdown → same result
+
+**Post-conditions:** Ontology enriched with new classes. `extracted_from` edges link to both source documents. Timeline shows additive growth.
+
+**PRD References:** §6.1 FR-1.7–1.8, §6.2 FR-2.12–2.13, §6.3 FR-3.1–3.5
+
+---
+
+#### UC-3: Curate Extraction Results (Domain Expert)
+
+**Actor:** Domain Expert
+**Precondition:** An extraction run has completed
+**Trigger:** Pipeline shows "Completed" status
+
+**Main Flow:**
+1. User navigates to `/pipeline` and selects a completed run
+2. User clicks "Curate" → opens `/curation/[runId]`
+3. Graph canvas shows extracted classes with confidence-coded colors (red <0.5, yellow 0.5–0.7, green >0.7)
+4. User clicks a class node → side panel shows: label, URI, description, properties, provenance (source chunks), confidence breakdown
+5. User approves high-confidence classes (batch select → approve)
+6. User rejects irrelevant classes (system expires them + connected edges)
+7. User edits a misnamed class → system creates new temporal version, re-creates edges
+8. User opens VCR Timeline → scrubs to see how the ontology looked before this extraction
+9. User opens Diff View → sees what's new vs. existing ontology
+10. User clicks "Promote" → approved entities confirmed in production ontology
+
+**Alternative Flows:**
+- 3a. No data → "No ontology data for this run" message
+- 6a. Reject cascade: connected edges are expired alongside the rejected class
+- 7a. Edit creates new version: old version visible in VCR timeline
+
+**Post-conditions:** Curation decisions recorded. Quality metrics updated (acceptance rate, throughput). Ontology reflects curator's expert judgment.
+
+**PRD References:** §6.4 FR-4.1–4.9, §6.5, §6.13 FR-13.1–13.2
+
+---
+
+#### UC-4: Directly Edit Ontology (Ontology Engineer)
+
+**Actor:** Ontology Engineer
+**Precondition:** An ontology exists in the library
+**Trigger:** Engineer needs to manually add/modify classes outside of extraction
+
+**Main Flow:**
+1. User navigates to `/library` and selects an ontology
+2. User clicks "Edit Graph" → opens `/ontology/[ontologyId]/edit`
+3. Graph editor shows all current classes and relationships
+4. User clicks "+ Add Class" → dialog: label, URI, description, parent class
+5. System creates class with `source_type: "manual"`, `confidence: 1.0`
+6. User selects the new class → clicks "+ Add Property" → dialog: label, range type
+7. System creates property + `has_property` edge
+8. User double-clicks a class label → inline edit → saves (temporal version update)
+9. User changes a class's parent via "Change Parent" dropdown → old `subclass_of` edge expired, new one created
+10. User opens VCR Timeline to review all changes
+
+**Alternative Flows:**
+- 4a. Class with same URI already exists → error "Active class with this URI already exists"
+- 8a. Edit creates new temporal version visible in history panel
+
+**Post-conditions:** Manually created/edited classes in the ontology. Full temporal history preserved. Quality metrics reflect manual additions (`source_type: "manual"`).
+
+**PRD References:** §6.4 FR-4.10–4.13
+
+---
+
+#### UC-5: Import Standard Ontology (Ontology Engineer)
+
+**Actor:** Ontology Engineer
+**Precondition:** User has `ontology_engineer` role
+**Trigger:** Organization needs a standard ontology (e.g., FIBO, Schema.org) as a base
+
+**Main Flow:**
+1. User navigates to `/library` or `/upload`
+2. User clicks "Import Standard Ontology" → catalog browser opens
+3. User selects FIBO Financial Instruments module → clicks "Import"
+4. System downloads OWL file, imports via ArangoRDF PGT transformation
+5. New ontology appears in library with `source_type: "import"`, `status: "active"`
+6. Per-ontology named graph created with visualizer assets (themes, queries, actions)
+7. `owl:imports` edges created linking to any dependencies already in the library
+
+**Alternative Flows:**
+- 2a. User uploads their own OWL/TTL file instead of using catalog
+- 7a. Imported ontology references ontologies not in library → warning shown
+
+**Post-conditions:** Standard ontology available in library. Can be selected as base for future Tier 2 extractions. Dependencies tracked via `imports` edges.
+
+**PRD References:** §6.8 FR-8.1–8.2, FR-8.11, §6.15 FR-15.1–15.6
+
+---
+
+#### UC-6: Review Entity Resolution Candidates (Ontology Engineer)
+
+**Actor:** Ontology Engineer
+**Precondition:** ER pipeline has been run, merge candidates exist
+**Trigger:** Pipeline or library shows ER candidates requiring review
+
+**Main Flow:**
+1. User navigates to `/entity-resolution`
+2. User selects an ER run → sees candidate pairs with similarity scores
+3. For each pair, user sees: field-by-field comparison, `explain_match` evidence, topological similarity
+4. User accepts a merge → system creates golden record, expires losing entity, transfers edges
+5. User rejects a candidate → marked as rejected, excluded from future suggestions
+6. User skips uncertain candidates for later review
+
+**Alternative Flows:**
+- 3a. Cross-ontology candidate (local class ~ domain class) → system suggests `owl:equivalentClass` or `rdfs:subClassOf` link instead of merge
+
+**Post-conditions:** Duplicates resolved. Merge decisions recorded. Deduplication accuracy metric updated. Ontology cleaner and more consistent.
+
+**PRD References:** §6.7 FR-7.1–7.11
+
+---
+
+#### UC-7: Monitor Extraction Pipeline (Any Role)
+
+**Actor:** Any authenticated user (viewer and above)
+**Precondition:** At least one extraction run exists
+**Trigger:** User wants to check pipeline status
+
+**Main Flow:**
+1. User navigates to `/pipeline`
+2. Left panel shows extraction runs: document name, status (Running/Completed/Failed), chunk count, class count, duration, model
+3. User selects a run → right panel shows Agent Pipeline DAG
+4. DAG shows 6 steps with status: Strategy Selector → Extraction Agent → Consistency Checker → Quality Judge → Entity Resolution Agent → Pre-Curation Filter
+5. Running step highlighted with animation; completed steps are green
+6. Below DAG: Metrics tab (duration, tokens, cost, entities, agreement, confidence, completeness), Errors tab (with run-level errors from stats.errors), Timeline tab
+7. User clicks "Curate" to review results (if `domain_expert` or above)
+
+**Alternative Flows:**
+- 4a. Pipeline still running → steps poll every 5 seconds via REST fallback
+- 6a. Extraction failed → Errors tab shows details; "Retry" button available
+
+**Post-conditions:** User informed of pipeline status. Can take action based on results.
+
+**PRD References:** §6.12 FR-12.1–12.10
+
+---
+
+#### UC-8: Deprecate an Ontology (Ontology Engineer)
+
+**Actor:** Ontology Engineer
+**Precondition:** Ontology exists in library with `status: "active"`
+**Trigger:** Ontology is obsolete or being replaced
+
+**Main Flow:**
+1. User navigates to `/library` and selects the ontology
+2. User initiates deletion (e.g., settings menu or admin action)
+3. System performs cascade analysis: queries `imports` graph for dependent ontologies
+4. System shows confirmation: "Ontology X is imported by Y, Z. Deprecating X will affect these ontologies."
+5. User confirms → system executes temporal soft-delete:
+   - All classes, properties, constraints: `expired = now`
+   - All scoped edges: `expired = now`
+   - Cross-ontology `imports` edges to/from this ontology: `expired = now`
+   - Cross-ontology `extends_domain` edges targeting this ontology's classes: `expired = now`
+   - Registry entry: `status = "deprecated"` (NOT hard-deleted)
+   - Per-ontology named graph: removed
+6. Ontology no longer appears in active library but remains in history
+
+**Alternative Flows:**
+- 3a. No dependents → confirmation still required but no warning
+- 5a. User cancels → no changes made
+
+**Post-conditions:** Ontology deprecated. VCR timeline shows full pre-deprecation history. Dependent ontologies warned. No dangling edge references.
+
+**PRD References:** §6.8 FR-8.13, §6.15 FR-15.4, `docs/DELETION_AND_REFERENTIAL_INTEGRITY.md`
+
+---
+
+#### UC-9: System Reset (Admin)
+
+**Actor:** Organization Admin
+**Precondition:** `ALLOW_SYSTEM_RESET=true` environment variable set (dev/demo only)
+**Trigger:** Admin needs to start fresh for demo or testing
+
+**Main Flow:**
+1. User navigates to `/pipeline`
+2. User clicks "Reset ▾" dropdown → selects "Reset Ontology Data" (soft) or "Full Reset" (hard)
+3. Confirmation dialog explains what will be deleted
+4. User confirms → system truncates collections, removes named graphs
+5. Soft reset: documents and chunks preserved (can re-extract); Full reset: everything wiped
+6. Run list refreshes showing empty state
+
+**Alternative Flows:**
+- 2a. `ALLOW_SYSTEM_RESET` not set → 403 error "System reset disabled"
+
+**Post-conditions:** Clean slate. No temporal history (hard delete). Visualizer configuration assets preserved.
+
+**PRD References:** §7.2.1, `docs/DELETION_AND_REFERENTIAL_INTEGRITY.md` §3.10
+
+---
+
+#### UC-10: Query Ontology via MCP (AI Agent)
+
+**Actor:** External AI Agent (MCP Client)
+**Precondition:** MCP server running and agent has API key
+**Trigger:** Agent needs ontology knowledge for a task
+
+**Main Flow:**
+1. Agent connects to AOE MCP server
+2. Agent calls `search_similar_classes(text="financial transaction", threshold=0.8)` → gets matching classes with similarity scores
+3. Agent calls `get_class_hierarchy(ontology_id="...", root_class="Transaction")` → gets subclass tree
+4. Agent calls `export_ontology(ontology_id="...", format="jsonld")` → gets structured ontology data
+5. Agent uses ontology knowledge to inform its own reasoning
+
+**Alternative Flows:**
+- 2a. Agent triggers extraction: `trigger_extraction(document_id="...")` → returns run_id for status polling
+- 3a. Agent queries temporal snapshot: `get_snapshot(ontology_id="...", at=1774883200)` → ontology state at specific time
+
+**Post-conditions:** Agent has ontology knowledge. No side effects on read-only queries.
+
+**PRD References:** §6.10 FR-10.1–10.5
+
+---
+
+#### UC-11: Review Quality Metrics (Any Role)
+
+**Actor:** Any authenticated user (viewer and above)
+**Precondition:** At least one ontology exists with extraction history
+**Trigger:** User wants to assess ontology quality
+
+**Main Flow:**
+1. User navigates to `/quality` (quality dashboard)
+2. Dashboard shows aggregate metrics: avg extraction precision, curation throughput, deduplication accuracy
+3. Traffic-light indicators show status vs. PRD targets (green ≥ target, yellow within 10%, red below)
+4. User clicks an ontology → sees per-ontology quality: avg confidence, completeness, orphan count, cycle detection
+5. User views trend sparklines showing quality over time
+6. User navigates to library → QualityPanel shows inline quality summary for selected ontology
+
+**Alternative Flows:**
+- 1a. `/quality` page not yet implemented → user accesses quality via library QualityPanel
+
+**Post-conditions:** User informed of quality status. Can prioritize curation effort on low-quality ontologies.
+
+**PRD References:** §6.13 FR-13.1–13.10
+
+---
+
+### Workflow Testing Matrix
+
+This matrix maps each use case to testable steps for E2E test scenarios:
+
+| UC | Flow | Key Assertions | API Endpoints Tested |
+|----|------|----------------|---------------------|
+| UC-1 | Upload → Extract → Curate → Promote | Classes in library after promote; metrics populated; timeline has events | POST /documents/upload, POST /extraction/run, GET /extraction/runs/{id}, POST /curation/decide, POST /curation/promote/{runId} |
+| UC-2 | Add doc to existing ontology | New classes merged into existing ontology; `extracted_from` edges link to both docs | POST /library/{id}/add-document, GET /library/{id}/documents |
+| UC-3 | Approve, reject, edit classes | Approved: status=approved; Rejected: expired + edges expired; Edited: new version + edges re-created | POST /curation/decide, GET /ontology/{id}/classes |
+| UC-4 | Add class, add property, rename, reparent | New entities with source_type=manual; temporal versions; edge updates | POST /ontology/{id}/classes, POST /ontology/{id}/properties, PUT /ontology/{id}/classes/{key} |
+| UC-5 | Import OWL file | Ontology in registry; per-ontology graph created; imports edges | POST /ontology/import, GET /library/{id}/imports |
+| UC-6 | Accept/reject merge candidates | Merge: losing entity expired, edges transferred; Reject: candidate excluded | POST /er/run, GET /er/runs/{id}/candidates, POST /curation/decide (merge) |
+| UC-7 | View pipeline, metrics, errors | Steps populated; metrics non-zero for completed runs; errors for failed runs | GET /extraction/runs, GET /extraction/runs/{id}/cost, GET /extraction/runs/{id} |
+| UC-8 | Deprecate ontology | All entities expired (not deleted); registry status=deprecated; dependent ontologies warned | DELETE /library/{id}?confirm=true, GET /library/{id} |
+| UC-9 | System reset | Collections empty; named graphs removed; documents preserved (soft) or removed (full) | POST /admin/reset, POST /admin/reset/full |
+| UC-10 | MCP tool calls | Correct data returned; no side effects on reads | MCP tools: search_similar_classes, get_class_hierarchy, export_ontology |
+| UC-11 | Quality metrics | Health score computed; confidence values differentiated; completeness accurate | GET /quality/{id}, GET /quality/summary |
+
+---
+
 ## 3. Objectives & Success Metrics
 
 ### 3.1 Objectives
