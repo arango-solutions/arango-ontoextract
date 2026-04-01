@@ -136,6 +136,11 @@ This section defines the end-to-end workflows performed by each role. These work
 | Delete document (hard delete) | ❌ | ❌ | ✅ | ✅ |
 | Update ontology metadata (name, tags) | ❌ | ❌ | ✅ | ✅ |
 | Execute ER merge | ❌ | ❌ | ✅ | ✅ |
+| Create release candidate | ❌ | ❌ | ✅ | ✅ |
+| Publish release | ❌ | ❌ | ✅ | ✅ |
+| Revert ontology to previous release | ❌ | ❌ | ✅ | ✅ |
+| Undo deprecation | ❌ | ❌ | ✅ | ✅ |
+| View release history | ✅ | ✅ | ✅ | ✅ |
 | Manage users and organizations | ❌ | ❌ | ❌ | ✅ |
 | System reset (soft/full) | ❌ | ❌ | ❌ | ✅ |
 | View/modify system configuration | ❌ | ❌ | ❌ | ✅ |
@@ -426,6 +431,62 @@ This section defines the end-to-end workflows performed by each role. These work
 
 ---
 
+#### UC-12: Create and Publish Ontology Release (Ontology Engineer)
+
+**Actor:** Ontology Engineer
+**Precondition:** Ontology exists with `status: "active"` and has been curated
+**Trigger:** Ontology is ready for consumers to reference as a stable version
+
+**Main Flow:**
+1. User navigates to `/library` and selects the ontology
+2. User clicks "Create Release" → release dialog opens
+3. System runs breaking change detection against the previous release
+4. System suggests version number (e.g., v1.2.0 for additive changes, v2.0.0 for breaking)
+5. System shows change report: new classes added, classes removed, properties changed
+6. User writes release notes (markdown) explaining the changes
+7. User confirms → release candidate created, ontology enters read-only mode
+8. Reviewer examines the RC: views frozen snapshot, reads change report
+9. Reviewer approves → release published with `owl:versionIRI`
+10. Ontology returns to editable (working) state
+11. Export endpoint now serves the release: `GET /ontology/{id}/export?version=1.2.0`
+
+**Alternative Flows:**
+- 5a. Breaking changes detected but user selects MINOR version → system warns "Breaking changes detected, recommend MAJOR version"
+- 9a. Reviewer rejects RC → RC discarded, ontology returns to editable, no version published
+- 11a. Consumer references the release via `owl:imports` → stable, immutable reference
+
+**Post-conditions:** Immutable release snapshot stored. Previous release marked as superseded. OWL version metadata included in exports.
+
+**PRD References:** §6.8a FR-8a.1–8a.7
+
+---
+
+#### UC-13: Revert Ontology to Previous Release (Ontology Engineer)
+
+**Actor:** Ontology Engineer
+**Precondition:** Ontology has at least 2 published releases; current state has issues
+**Trigger:** Recent changes or a new release introduced problems
+
+**Main Flow:**
+1. User navigates to `/library` and selects the ontology
+2. User clicks "Release History" → sees list of all releases with versions, dates, change summaries
+3. User identifies the last known-good release (e.g., v1.1.0)
+4. User clicks "Revert to v1.1.0" → confirmation dialog shows what will change
+5. System creates new current versions of all classes/properties/edges matching the v1.1.0 snapshot
+6. Current (problematic) versions are expired (but preserved in history)
+7. Ontology now looks like v1.1.0 but with a new temporal timestamp
+8. VCR timeline shows: original → changes → revert event
+
+**Alternative Flows:**
+- 5a. Revert of a single class: user right-clicks a class → "Revert to version N" → system creates new version with historical data
+- 6a. Revert is a forward operation — no history is destroyed; the revert itself is a new timeline event
+
+**Post-conditions:** Ontology state matches the target release. All changes since that release are effectively undone but preserved in temporal history. A new release can be created from the reverted state.
+
+**PRD References:** §6.8a FR-8a.8–8a.10, §6.5, `docs/DELETION_AND_REFERENTIAL_INTEGRITY.md`
+
+---
+
 ### Workflow Testing Matrix
 
 This matrix maps each use case to testable steps for E2E test scenarios:
@@ -443,6 +504,8 @@ This matrix maps each use case to testable steps for E2E test scenarios:
 | UC-9 | System reset | Collections empty; named graphs removed; documents preserved (soft) or removed (full) | POST /admin/reset, POST /admin/reset/full |
 | UC-10 | MCP tool calls | Correct data returned; no side effects on reads | MCP tools: search_similar_classes, get_class_hierarchy, export_ontology |
 | UC-11 | Quality metrics | Health score computed; confidence values differentiated; completeness accurate | GET /quality/{id}, GET /quality/summary |
+| UC-12 | Create + publish release | RC created with snapshot; breaking changes detected; release published; export serves version; previous release superseded | POST /ontology/{id}/releases, POST .../publish, GET /ontology/{id}/export?version=1.2.0 |
+| UC-13 | Revert to previous release | Current state matches target release; changes preserved in history; revert appears as timeline event | POST /ontology/{id}/revert, GET /ontology/{id}/timeline |
 
 ---
 
@@ -1280,6 +1343,143 @@ The library's MCP server (`arango-er-mcp`) runs as a separate process alongside 
 | FR-8.14 | Document deletion does not cascade to ontology | Deleting a document soft-deletes the document and its chunks. It does **not** delete ontology classes that were extracted from it — those classes may have been curated, approved, or enriched from other documents. The `extracted_from` provenance edges are expired. A warning lists which ontologies were sourced from the deleted document. |
 | FR-8.15 | Ontology Library search | The library supports full-text search across ontology names, descriptions, class labels, and property labels via ArangoSearch. Results are ranked by relevance. Search works across all ontologies in the library regardless of tier or organization. |
 | FR-8.16 | Ontology Library taxonomy organization | Ontologies in the library are organized hierarchically using the `imports` dependency graph as the primary structure. Domain ontologies appear as top-level entries; local extensions appear nested under their parent domain ontologies. Users can also filter by tier (domain/local), status (active/deprecated), source type (import/extraction/schema), and tags. |
+
+### 6.8a Ontology Release Management & Revert
+
+**Description:** Ontologies are living artifacts that evolve continuously through extraction, curation, manual editing, and entity resolution. Release management provides formal version control at the ontology level — enabling consumers to reference stable, reproducible snapshots of an ontology, and enabling engineers to revert to a prior release when problems are discovered.
+
+**Why?** Without release management, downstream systems consuming an ontology (via export, MCP, or `owl:imports`) see a constantly moving target. A data pipeline built against "Financial Services Domain" might break when a class is renamed or deprecated. Releases provide stable reference points. Revert provides safety nets.
+
+**Ontology Release Lifecycle:**
+
+```
+  Working Copy ──→ Release Candidate ──→ Released ──→ (Superseded)
+       ↑                                     │
+       └─────────── Revert ◄─────────────────┘
+```
+
+| State | Description | Editable? | Visible to consumers? |
+|-------|-------------|-----------|----------------------|
+| **Working** | Active ontology being edited, extracted into, curated | Yes | Only to editors/curators |
+| **Release Candidate (RC)** | Frozen snapshot proposed for release; under review | No (read-only) | To reviewers only |
+| **Released** | Immutable, named, versioned snapshot | No | Yes — this is what consumers reference |
+| **Superseded** | A released version that has been replaced by a newer release | No | Yes (for backward compatibility) |
+
+**Semantic Versioning for Ontologies:**
+
+Ontology releases follow semantic versioning (`MAJOR.MINOR.PATCH`):
+
+| Change Type | Version Bump | Examples |
+|-------------|-------------|---------|
+| **MAJOR** (breaking) | v1.0.0 → v2.0.0 | Class removed, class URI changed, property domain/range narrowed, required property removed |
+| **MINOR** (additive) | v1.0.0 → v1.1.0 | New classes added, new properties added, new subclass relationships, description changes |
+| **PATCH** (editorial) | v1.0.0 → v1.0.1 | Typo fixes in labels/descriptions, confidence recalculation, metadata updates |
+
+**OWL Version Metadata:**
+
+Each release carries standard OWL 2 versioning annotations:
+
+| OWL Property | Purpose | Example |
+|-------------|---------|---------|
+| `owl:versionIRI` | Unique IRI for this specific version | `http://example.org/ontology/financial-services/1.2.0` |
+| `owl:versionInfo` | Human-readable version string | `"1.2.0"` |
+| `owl:priorVersion` | Link to previous release | `http://example.org/ontology/financial-services/1.1.0` |
+| `owl:backwardCompatibleWith` | Previous version that this release is backward-compatible with | Set for MINOR/PATCH bumps |
+| `owl:incompatibleWith` | Previous version that this release breaks compatibility with | Set for MAJOR bumps |
+
+**Data Model:**
+
+| Collection | Purpose | Key Fields |
+|-----------|---------|-----------|
+| `ontology_releases` | Immutable release records | `_key` (auto), `ontology_id` (FK to registry), `version` (semver string), `version_major`/`minor`/`patch` (integers for sorting), `release_status` (candidate/released/superseded), `snapshot_timestamp` (the temporal `created` cutoff), `release_notes` (markdown), `released_by` (user), `released_at` (timestamp), `class_count`, `property_count`, `edge_count`, `owl_version_iri`, `breaking_changes` (list), `created_at` |
+
+A release is an immutable pointer to a **temporal snapshot** — it records the `snapshot_timestamp` at which the ontology state should be frozen. Querying a release means querying with `created <= snapshot_timestamp AND expired > snapshot_timestamp`, which the existing temporal infrastructure already supports.
+
+**Breaking Change Detection:**
+
+When creating a release, the system compares the current state against the previous release and automatically detects:
+
+| Change Type | Detection Method | Severity |
+|-------------|-----------------|----------|
+| Class removed (expired) | Class in previous release not in current | MAJOR |
+| Class URI changed | Same label but different URI vs. previous | MAJOR |
+| Property removed from class | `has_property` edge expired, no replacement | MAJOR |
+| Property range narrowed | Range type changed to a more restrictive type | MAJOR |
+| New class added | Class in current not in previous | MINOR |
+| New property added | New `has_property` edge | MINOR |
+| New subclass relationship | New `subclass_of` edge | MINOR |
+| Label or description changed | Field value differs | PATCH |
+| Confidence score changed | Confidence value differs | PATCH |
+
+The system suggests a version bump level based on detected changes and warns if the user tries to create a MINOR release with breaking changes.
+
+**Release Workflow:**
+
+1. **Create Release Candidate** — Ontology engineer initiates a release from the library. System:
+   - Captures current `snapshot_timestamp = time.time()`
+   - Runs breaking change detection against previous release
+   - Suggests version number (auto-increment based on change severity)
+   - Creates `ontology_releases` record with `release_status: "candidate"`
+   - Ontology enters read-only mode (edits blocked until RC is released or discarded)
+
+2. **Review Release Candidate** — Reviewers can:
+   - View the frozen snapshot (same VCR timeline at the snapshot timestamp)
+   - Read release notes and breaking change report
+   - Approve or reject the RC
+
+3. **Publish Release** — On approval:
+   - `release_status` set to `"released"`, `released_at` set
+   - Previous release (if any) set to `"superseded"`
+   - OWL version metadata (`owl:versionIRI`, `owl:priorVersion`) attached
+   - Ontology returns to editable (working) state
+   - Export endpoint can serve a specific release version: `GET /ontology/{id}/export?version=1.2.0`
+
+4. **Discard Release Candidate** — If RC is rejected:
+   - RC record deleted or marked discarded
+   - Ontology returns to editable state
+   - No version published
+
+**Revert:**
+
+Revert creates a new release that restores the ontology to a previous state. It does NOT destructively undo changes — it uses the temporal infrastructure to create new versions that match a historical snapshot.
+
+| Revert Scope | How It Works | Use Case |
+|-------------|-------------|----------|
+| **Revert ontology to release** | For each current class/property/edge: expire it. For each class/property/edge that was active at the release's `snapshot_timestamp`: create a new current version with the same data. | "Release v2.0 broke things, go back to v1.3" |
+| **Revert single entity** | Expire current version. Create new version matching the entity's state at a given timestamp. Re-create connected edges. | "This class edit was wrong, undo it" |
+| **Undo deprecation** | Change registry status from `deprecated` back to `active`. For each expired entity: create a new current version with the pre-deprecation data. | "We deprecated this ontology by mistake" |
+
+**Important:** Revert is always a **forward operation** — it creates NEW temporal versions that happen to contain old data. It never modifies or deletes historical records. The VCR timeline shows: original state → changes → revert (as a new event).
+
+**Requirements:**
+
+| ID | Requirement | Acceptance Criteria |
+|----|-------------|-------------------|
+| FR-8a.1 | Create release candidate from current ontology state | System captures snapshot timestamp, detects breaking changes, suggests version number, creates RC record. Ontology becomes read-only during RC review. |
+| FR-8a.2 | Semantic versioning with auto-suggestion | Version auto-incremented based on detected change severity (MAJOR/MINOR/PATCH). User can override. Previous releases listed for comparison. |
+| FR-8a.3 | Breaking change detection | System compares current state vs. previous release: removed classes, changed URIs, removed properties, narrowed ranges flagged as breaking. Report included in RC. |
+| FR-8a.4 | Release approval workflow | RC can be approved or rejected. On approval: published with OWL version metadata. On rejection: discarded, ontology returns to editable. |
+| FR-8a.5 | OWL version metadata on releases | Each release includes `owl:versionIRI`, `owl:versionInfo`, `owl:priorVersion`, and compatibility annotations. Exported OWL files include these annotations. |
+| FR-8a.6 | Export specific release version | `GET /ontology/{id}/export?version=1.2.0` serves the ontology as it was at the release's snapshot timestamp. Default (no version param) serves the latest release or current working state. |
+| FR-8a.7 | Release history and changelog | `GET /ontology/{id}/releases` returns all releases with version, date, release notes, and change summary. UI shows release timeline in library detail. |
+| FR-8a.8 | Revert ontology to a previous release | `POST /ontology/{id}/revert?to_version=1.2.0` creates new current versions matching the release snapshot. All changes since that release are effectively undone (but preserved in history). Requires `ontology_engineer` role. |
+| FR-8a.9 | Revert single entity to a previous version | `POST /ontology/class/{key}/revert?to_version={n}` creates a new current version matching the historical version. Connected edges re-created. |
+| FR-8a.10 | Undo ontology deprecation | `POST /ontology/{id}/undeprecate` restores a deprecated ontology by creating new current versions from the pre-deprecation state. Registry status returns to `active`. Per-ontology named graph re-created. |
+| FR-8a.11 | Release distribution with stable URIs | Each release is accessible via a stable URI pattern: `/ontology/{id}/releases/{version}`. Can be referenced by `owl:imports` in other ontologies. |
+| FR-8a.12 | Release notes (markdown) | Engineer can write release notes (markdown) describing what changed and why. Stored on the release record. Displayed in library UI and included in exported OWL as `rdfs:comment`. |
+
+**API Endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/ontology/{id}/releases` | Create a release candidate (captures snapshot, detects breaking changes) |
+| `GET` | `/api/v1/ontology/{id}/releases` | List all releases with version, status, date, change summary |
+| `GET` | `/api/v1/ontology/{id}/releases/{version}` | Get specific release details including breaking change report |
+| `POST` | `/api/v1/ontology/{id}/releases/{version}/publish` | Approve and publish a release candidate |
+| `DELETE` | `/api/v1/ontology/{id}/releases/{version}` | Discard a release candidate (only allowed for `candidate` status) |
+| `POST` | `/api/v1/ontology/{id}/revert` | Revert ontology to a previous release version |
+| `POST` | `/api/v1/ontology/{id}/undeprecate` | Restore a deprecated ontology |
+| `GET` | `/api/v1/ontology/{id}/export?version={semver}` | Export a specific release version |
 
 ### 6.9 Schema Extraction from ArangoDB Databases
 
