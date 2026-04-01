@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+import operator
+from typing import Annotated, Any, TypedDict
 
 from app.models.ontology import ExtractionResult
 
@@ -48,9 +49,9 @@ class ExtractionPipelineState(TypedDict, total=False):
     consistency_result: ExtractionResult | None
     staging_graph_id: str | None
     current_step: str
-    errors: list[str]
+    errors: Annotated[list[str], operator.add]
     token_usage: TokenUsage
-    step_logs: list[StepLog]
+    step_logs: Annotated[list[StepLog], operator.add]
     metadata: dict[str, Any]
 
     faithfulness_scores: dict[str, float]

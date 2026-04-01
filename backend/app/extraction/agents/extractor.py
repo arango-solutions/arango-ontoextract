@@ -359,9 +359,6 @@ async def extractor_node(state: ExtractionPipelineState) -> dict:
         },
     )
 
-    existing_logs = list(state.get("step_logs", []))
-    existing_logs.append(step_log)
-
     log.info(
         "extractor completed: %d passes, %d total classes, %.1fs",
         len(pass_results),
@@ -374,5 +371,5 @@ async def extractor_node(state: ExtractionPipelineState) -> dict:
         "current_step": "extractor",
         "errors": errors,
         "token_usage": total_tokens,
-        "step_logs": existing_logs,
+        "step_logs": [step_log],
     }

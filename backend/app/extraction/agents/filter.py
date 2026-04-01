@@ -45,12 +45,10 @@ def filter_agent_node(state: ExtractionPipelineState) -> dict:
     if consistency_result is None or not consistency_result.classes:
         log.info("filter_agent skipped: no results to filter", extra={"run_id": run_id})
         step_log = _build_step_log(start, "completed", 0, 0, 0)
-        existing_logs = list(state.get("step_logs", []))
-        existing_logs.append(step_log)
         return {
             "filter_results": {"status": "skipped", "reason": "no_input"},
             "current_step": "filter",
-            "step_logs": existing_logs,
+            "step_logs": [step_log],
         }
 
     input_classes = consistency_result.classes
@@ -84,9 +82,6 @@ def filter_agent_node(state: ExtractionPipelineState) -> dict:
     duration = time.time() - start
     step_log = _build_step_log(start, "completed", input_count, len(annotated), removed_count)
 
-    existing_logs = list(state.get("step_logs", []))
-    existing_logs.append(step_log)
-
     log.info(
         "filter_agent completed",
         extra={
@@ -103,7 +98,7 @@ def filter_agent_node(state: ExtractionPipelineState) -> dict:
         "consistency_result": filtered_result,
         "filter_results": filter_results,
         "current_step": "filter",
-        "step_logs": existing_logs,
+        "step_logs": [step_log],
     }
 
 

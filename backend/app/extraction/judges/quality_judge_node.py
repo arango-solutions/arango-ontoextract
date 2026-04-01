@@ -48,13 +48,10 @@ async def quality_judge_node(state: ExtractionPipelineState) -> dict[str, Any]:
             duration_seconds=round(time.time() - start, 3),
             error="No consistency result available",
         )
-        existing_logs = list(state.get("step_logs", []))
-        existing_logs.append(step_log)
         return {
             "faithfulness_scores": {},
             "validity_scores": {},
-            "current_step": "quality_judge",
-            "step_logs": existing_logs,
+            "step_logs": [step_log],
         }
 
     classes: list[ExtractedClass] = consistency_result.classes
@@ -107,9 +104,6 @@ async def quality_judge_node(state: ExtractionPipelineState) -> dict[str, Any]:
         },
     )
 
-    existing_logs = list(state.get("step_logs", []))
-    existing_logs.append(step_log)
-
     log.info(
         "quality_judge completed",
         extra={
@@ -124,6 +118,5 @@ async def quality_judge_node(state: ExtractionPipelineState) -> dict[str, Any]:
         "consistency_result": updated_result,
         "faithfulness_scores": faithfulness_scores,
         "validity_scores": validity_scores,
-        "current_step": "quality_judge",
-        "step_logs": existing_logs,
+        "step_logs": [step_log],
     }
