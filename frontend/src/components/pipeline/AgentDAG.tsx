@@ -163,18 +163,19 @@ export default function AgentDAG({ steps }: AgentDAGProps) {
     return { nodes: flowNodes, edges: flowEdges };
   }, [steps]);
 
-  const onInit = useCallback((instance: { fitView: () => void }) => {
-    instance.fitView();
+  const onInit = useCallback((instance: { fitView: (opts?: Record<string, unknown>) => void }) => {
+    setTimeout(() => instance.fitView({ padding: 0.15 }), 50);
   }, []);
 
   return (
-    <div className="w-full" style={{ height: 600 }} data-testid="agent-dag">
+    <div className="w-full" style={{ minHeight: 580 }} data-testid="agent-dag">
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
         onInit={onInit}
         fitView
+        fitViewOptions={{ padding: 0.15 }}
         panOnDrag
         zoomOnScroll
         zoomOnPinch
