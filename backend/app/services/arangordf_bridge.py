@@ -393,16 +393,19 @@ def import_from_file(
         ontology_uri_prefix=ontology_uri_prefix,
     )
 
-    registry_entry = create_registry_entry({
-        "_key": ontology_id,
-        "label": ontology_label or ontology_id,
-        "source": "file_import",
-        "source_filename": filename,
-        "format": fmt,
-        "triple_count": triple_count,
-        "graph_name": f"ontology_{graph_name}",
-        "uri": ontology_uri_prefix or f"http://example.org/ontology/{ontology_id}",
-    })
+    registry_entry = create_registry_entry(
+        {
+            "_key": ontology_id,
+            "label": ontology_label or ontology_id,
+            "source": "file_import",
+            "source_filename": filename,
+            "format": fmt,
+            "triple_count": triple_count,
+            "graph_name": f"ontology_{graph_name}",
+            "uri": ontology_uri_prefix or f"http://example.org/ontology/{ontology_id}",
+        },
+        db=db,
+    )
 
     log.info(
         "file import completed",

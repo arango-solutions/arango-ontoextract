@@ -337,6 +337,7 @@ class TestImportFromFile:
         assert result["registry_key"] == "my_onto"
         mock_import.assert_called_once()
         mock_registry.assert_called_once()
+        assert mock_registry.call_args.kwargs["db"] is db
 
     @patch("app.services.arangordf_bridge.create_registry_entry")
     @patch("app.services.arangordf_bridge.import_owl_to_graph")

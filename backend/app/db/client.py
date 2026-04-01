@@ -4,16 +4,40 @@ from typing import Any, cast
 from arango import ArangoClient
 from arango.database import StandardDatabase
 
-from app.config import settings
+import app.config as app_config
 
 log = logging.getLogger(__name__)
 
 _client: ArangoClient | None = None
 _db: StandardDatabase | None = None
+_config_signature: tuple[Any, ...] | None = None
+
+
+def _settings_signature() -> tuple[Any, ...]:
+    settings = app_config.settings
+    return (
+        settings.effective_arango_host,
+        settings.arango_db,
+        settings.arango_user,
+        settings.arango_password,
+        settings.arango_verify_ssl,
+        settings.test_deployment_mode,
+    )
+
+
+def _get_settings():
+    global _config_signature
+    settings = app_config.settings
+    signature = _settings_signature()
+    if _config_signature != signature:
+        close_db()
+        _config_signature = signature
+    return settings
 
 
 def get_arango_client() -> ArangoClient:
     global _client
+    settings = _get_settings()
     if _client is None:
         host = settings.effective_arango_host
         kwargs: dict[str, Any] = {"hosts": host}
@@ -39,6 +63,7 @@ def _ensure_database_exists(client: ArangoClient) -> None:
 
     Skipped on managed platforms where _system access may be restricted.
     """
+    settings = _get_settings()
     if not settings.can_create_databases:
         log.info(
             "skipping auto-create database on managed platform — "
@@ -59,6 +84,7 @@ def _ensure_database_exists(client: ArangoClient) -> None:
 
 def get_db() -> StandardDatabase:
     global _db
+    settings = _get_settings()
     if _db is None:
         client = get_arango_client()
         _ensure_database_exists(client)
@@ -71,8 +97,9 @@ def get_db() -> StandardDatabase:
 
 
 def close_db() -> None:
-    global _client, _db
+    global _client, _db, _config_signature
     if _client is not None:
         _client.close()
-        _client = None
-        _db = None
+    _client = None
+    _db = None
+    _config_signature = None

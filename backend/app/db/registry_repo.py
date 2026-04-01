@@ -9,6 +9,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from arango.database import StandardDatabase
+
 from app.db.client import get_db
 from app.db.pagination import paginate
 from app.db.utils import doc_get
@@ -19,22 +21,26 @@ log = logging.getLogger(__name__)
 _COLLECTION = "ontology_registry"
 
 
-def _ensure_collection() -> None:
+def _ensure_collection(db: StandardDatabase | None = None) -> StandardDatabase:
     """Create the ontology_registry collection if it doesn't exist."""
-    db = get_db()
+    db = db or get_db()
     if not db.has_collection(_COLLECTION):
         db.create_collection(_COLLECTION)
         log.info("created collection %s", _COLLECTION)
+    return db
 
 
-def create_registry_entry(entry: dict[str, Any]) -> dict[str, Any]:
+def create_registry_entry(
+    entry: dict[str, Any],
+    *,
+    db: StandardDatabase | None = None,
+) -> dict[str, Any]:
     """Insert a new ontology into the registry.
 
     Automatically sets ``created_at`` and ``status`` if not provided.
     Returns the created document (including ``_key``, ``_id``, ``_rev``).
     """
-    _ensure_collection()
-    db = get_db()
+    db = _ensure_collection(db)
     now = datetime.now(UTC).isoformat()
     entry.setdefault("status", "active")
     entry.setdefault("created_at", now)
@@ -43,13 +49,16 @@ def create_registry_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return result["new"]
 
 
-def get_registry_entry(ontology_id: str) -> dict[str, Any] | None:
+def get_registry_entry(
+    ontology_id: str,
+    *,
+    db: StandardDatabase | None = None,
+) -> dict[str, Any] | None:
     """Retrieve a single ontology registry entry by ``_key``.
 
     Returns ``None`` if the entry does not exist.
     """
-    _ensure_collection()
-    db = get_db()
+    db = _ensure_collection(db)
     col = db.collection(_COLLECTION)
     try:
         doc = doc_get(col, ontology_id)
@@ -61,13 +70,14 @@ def get_registry_entry(ontology_id: str) -> dict[str, Any] | None:
 def list_registry_entries(
     cursor: str | None = None,
     limit: int = 25,
+    *,
+    db: StandardDatabase | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """List ontology registry entries with cursor-based pagination.
 
     Returns a tuple of (entries, next_cursor).
     """
-    _ensure_collection()
-    db = get_db()
+    db = _ensure_collection(db)
     result: PaginatedResponse[dict[str, Any]] = paginate(
         db,
         collection=_COLLECTION,
@@ -80,15 +90,17 @@ def list_registry_entries(
 
 
 def update_registry_entry(
-    ontology_id: str, updates: dict[str, Any]
+    ontology_id: str,
+    updates: dict[str, Any],
+    *,
+    db: StandardDatabase | None = None,
 ) -> dict[str, Any]:
     """Merge-update an ontology registry entry.
 
     Returns the updated document.
     Raises ``ValueError`` if the entry does not exist.
     """
-    _ensure_collection()
-    db = get_db()
+    db = _ensure_collection(db)
     col = db.collection(_COLLECTION)
     existing = doc_get(col, ontology_id)
     if existing is None:
@@ -98,21 +110,28 @@ def update_registry_entry(
     return result["new"]
 
 
-def deprecate_registry_entry(ontology_id: str) -> dict[str, Any]:
+def deprecate_registry_entry(
+    ontology_id: str,
+    *,
+    db: StandardDatabase | None = None,
+) -> dict[str, Any]:
     """Set an ontology registry entry's status to ``deprecated``.
 
     Returns the updated document.
     """
-    return update_registry_entry(ontology_id, {"status": "deprecated"})
+    return update_registry_entry(ontology_id, {"status": "deprecated"}, db=db)
 
 
-def delete_registry_entry(ontology_id: str) -> bool:
+def delete_registry_entry(
+    ontology_id: str,
+    *,
+    db: StandardDatabase | None = None,
+) -> bool:
     """Hard-delete an ontology registry entry.
 
     Returns True if the entry was deleted, False if it didn't exist.
     """
-    _ensure_collection()
-    db = get_db()
+    db = _ensure_collection(db)
     col = db.collection(_COLLECTION)
     existing = doc_get(col, ontology_id)
     if existing is None:

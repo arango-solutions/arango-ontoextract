@@ -8,12 +8,6 @@ from __future__ import annotations
 import io
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from fastapi.testclient import TestClient
-
-from app.main import app
-
-client = TestClient(app)
-
 
 def _make_mock_doc(
     key: str = "doc1",
@@ -42,13 +36,18 @@ def _make_mock_doc(
 class TestUploadDocument:
     @patch("app.api.documents.process_document", new_callable=AsyncMock)
     @patch("app.api.documents.documents_repo")
-    def test_upload_success(self, mock_repo: MagicMock, mock_process: AsyncMock):
+    def test_upload_success(
+        self,
+        mock_repo: MagicMock,
+        mock_process: AsyncMock,
+        test_client,
+    ):
         mock_repo.find_document_by_hash.return_value = None
         mock_repo.create_document.return_value = _make_mock_doc(status="uploading")
 
         pdf_content = b"%PDF-1.4 fake content"
         files = {"file": ("test.pdf", io.BytesIO(pdf_content), "application/pdf")}
-        response = client.post("/api/v1/documents/upload", files=files)
+        response = test_client.post("/api/v1/documents/upload", files=files)
 
         assert response.status_code == 200
         data = response.json()
@@ -57,19 +56,19 @@ class TestUploadDocument:
         mock_repo.create_document.assert_called_once()
 
     @patch("app.api.documents.documents_repo")
-    def test_upload_duplicate_returns_409(self, mock_repo: MagicMock):
+    def test_upload_duplicate_returns_409(self, mock_repo: MagicMock, test_client):
         mock_repo.find_document_by_hash.return_value = _make_mock_doc()
 
         pdf_content = b"%PDF-1.4 fake content"
         files = {"file": ("test.pdf", io.BytesIO(pdf_content), "application/pdf")}
-        response = client.post("/api/v1/documents/upload", files=files)
+        response = test_client.post("/api/v1/documents/upload", files=files)
 
         assert response.status_code == 409
         assert response.json()["error"]["code"] == "CONFLICT"
 
-    def test_upload_unsupported_type_returns_error(self):
+    def test_upload_unsupported_type_returns_error(self, test_client):
         files = {"file": ("test.exe", io.BytesIO(b"binary"), "application/octet-stream")}
-        response = client.post("/api/v1/documents/upload", files=files)
+        response = test_client.post("/api/v1/documents/upload", files=files)
 
         assert response.status_code in (400, 422)
 
@@ -81,7 +80,7 @@ class TestUploadDocument:
 
 class TestListDocuments:
     @patch("app.api.documents.documents_repo")
-    def test_list_returns_paginated(self, mock_repo: MagicMock):
+    def test_list_returns_paginated(self, mock_repo: MagicMock, test_client):
         from app.models.common import PaginatedResponse
 
         mock_repo.list_documents.return_value = PaginatedResponse(
@@ -91,7 +90,7 @@ class TestListDocuments:
             total_count=1,
         )
 
-        response = client.get("/api/v1/documents")
+        response = test_client.get("/api/v1/documents")
         assert response.status_code == 200
         data = response.json()
         assert "data" in data
@@ -106,19 +105,19 @@ class TestListDocuments:
 
 class TestGetDocument:
     @patch("app.api.documents.documents_repo")
-    def test_get_existing(self, mock_repo: MagicMock):
+    def test_get_existing(self, mock_repo: MagicMock, test_client):
         mock_repo.get_document.return_value = _make_mock_doc()
 
-        response = client.get("/api/v1/documents/doc1")
+        response = test_client.get("/api/v1/documents/doc1")
         assert response.status_code == 200
         data = response.json()
         assert data["_key"] == "doc1"
 
     @patch("app.api.documents.documents_repo")
-    def test_get_not_found(self, mock_repo: MagicMock):
+    def test_get_not_found(self, mock_repo: MagicMock, test_client):
         mock_repo.get_document.return_value = None
 
-        response = client.get("/api/v1/documents/nonexistent")
+        response = test_client.get("/api/v1/documents/nonexistent")
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "ENTITY_NOT_FOUND"
 
@@ -130,7 +129,7 @@ class TestGetDocument:
 
 class TestGetChunks:
     @patch("app.api.documents.documents_repo")
-    def test_get_chunks_for_doc(self, mock_repo: MagicMock):
+    def test_get_chunks_for_doc(self, mock_repo: MagicMock, test_client):
         from app.models.common import PaginatedResponse
 
         mock_repo.get_document.return_value = _make_mock_doc()
@@ -144,16 +143,16 @@ class TestGetChunks:
             total_count=1,
         )
 
-        response = client.get("/api/v1/documents/doc1/chunks")
+        response = test_client.get("/api/v1/documents/doc1/chunks")
         assert response.status_code == 200
         data = response.json()
         assert len(data["data"]) == 1
 
     @patch("app.api.documents.documents_repo")
-    def test_chunks_404_for_missing_doc(self, mock_repo: MagicMock):
+    def test_chunks_404_for_missing_doc(self, mock_repo: MagicMock, test_client):
         mock_repo.get_document.return_value = None
 
-        response = client.get("/api/v1/documents/missing/chunks")
+        response = test_client.get("/api/v1/documents/missing/chunks")
         assert response.status_code == 404
 
 
@@ -164,18 +163,18 @@ class TestGetChunks:
 
 class TestDeleteDocument:
     @patch("app.api.documents.documents_repo")
-    def test_soft_delete(self, mock_repo: MagicMock):
+    def test_soft_delete(self, mock_repo: MagicMock, test_client):
         mock_repo.get_document.return_value = _make_mock_doc()
         mock_repo.delete_document.return_value = _make_mock_doc(status="deleted")
 
-        response = client.delete("/api/v1/documents/doc1")
+        response = test_client.delete("/api/v1/documents/doc1")
         assert response.status_code == 200
         assert response.json()["status"] == "deleted"
         mock_repo.delete_document.assert_called_once_with("doc1")
 
     @patch("app.api.documents.documents_repo")
-    def test_delete_not_found(self, mock_repo: MagicMock):
+    def test_delete_not_found(self, mock_repo: MagicMock, test_client):
         mock_repo.get_document.return_value = None
 
-        response = client.delete("/api/v1/documents/missing")
+        response = test_client.delete("/api/v1/documents/missing")
         assert response.status_code == 404
