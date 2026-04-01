@@ -45,6 +45,15 @@
     "bindVariables": { "nodes": [] }
   },
   {
+    "_key": "show_cross_tier_links",
+    "name": "Show Cross-Tier Links",
+    "title": "Show Cross-Tier Links",
+    "description": "Traverse extends_domain links between local and domain ontology entities.",
+    "graphId": "domain_ontology",
+    "queryText": "WITH ontology_classes, ontology_properties, documents, subclass_of, equivalent_class, has_property, related_to, extracted_from, extends_domain\nFOR node IN @nodes\n  FOR v, e IN 1..1 ANY node extends_domain\n    FILTER e.expired == 9223372036854775807\n    LIMIT 100\n    RETURN e",
+    "bindVariables": { "nodes": [] }
+  },
+  {
     "_key": "show_provenance",
     "name": "Show Provenance",
     "title": "Show Provenance",

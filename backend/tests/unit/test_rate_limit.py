@@ -414,15 +414,12 @@ class TestSnapshotCache:
         finally:
             _snapshot_cache.pop(cache_key, None)
 
-    def test_cache_key_rounds_to_minute(self):
+    def test_cache_key_includes_precise_timestamp(self):
         from app.services.temporal import _snapshot_cache_key
 
-        # 960..1019 all floor-divide to the same 60-second bucket (960)
         key_a = _snapshot_cache_key("onto1", 960.0)
         key_b = _snapshot_cache_key("onto1", 975.0)
-        key_c = _snapshot_cache_key("onto1", 1019.9)
-        # 1020 starts the next bucket
-        key_d = _snapshot_cache_key("onto1", 1020.0)
+        key_c = _snapshot_cache_key("onto1", 960.0)
 
-        assert key_a == key_b == key_c
-        assert key_a != key_d
+        assert key_a != key_b
+        assert key_a == key_c

@@ -23,7 +23,7 @@ NEVER_EXPIRES: int = sys.maxsize
 # ---------------------------------------------------------------------------
 # Materialized snapshot cache (Week 23 — PRD R16)
 # ---------------------------------------------------------------------------
-# In-process LRU dict keyed by (ontology_id, rounded_timestamp).
+# In-process cache keyed by (ontology_id, precise_timestamp).
 # TTL: 5 minutes.  Invalidated on any write to the ontology.
 
 _SNAPSHOT_CACHE_TTL = 300  # seconds
@@ -31,9 +31,8 @@ _snapshot_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def _snapshot_cache_key(ontology_id: str, timestamp: float) -> str:
-    """Deterministic cache key: ontology + timestamp rounded to the minute."""
-    rounded = int(timestamp // 60) * 60
-    raw = f"{ontology_id}:{rounded}"
+    """Deterministic cache key: ontology + precise timestamp."""
+    raw = f"{ontology_id}:{timestamp:.6f}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -617,6 +616,8 @@ FOR doc IN @@col
       : "created",
     entity_key: doc._key,
     entity_label: doc.label || doc._key,
+    ontology_id: doc.ontology_id,
+    uri: doc.uri,
     collection: @col_name,
     extraction_run_id: doc.extraction_run_id
   }"""

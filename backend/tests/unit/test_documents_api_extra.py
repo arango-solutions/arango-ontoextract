@@ -197,39 +197,23 @@ class TestDocumentRoutes:
 
     @pytest.mark.asyncio
     async def test_delete_document_preview_returns_affected_ontologies(self):
-        db = MagicMock()
-        db.has_collection.return_value = True
         with (
             patch("app.api.documents.documents_repo.get_document", return_value={"_key": "d1"}),
-            patch("app.api.documents.get_db", return_value=db),
             patch(
-                "app.api.documents.run_aql",
-                side_effect=[
-                    [{"ontology_id": "onto1"}],
-                    [{"_key": "onto1", "name": "Ontology", "status": "active"}],
-                ],
-            ),
+                "app.api.documents.documents_repo.delete_document",
+                return_value={"_key": "d1", "status": "deleted"},
+            ) as mock_delete,
         ):
             result = await delete_document("d1", confirm=False)
-        assert result["status"] == "pending_confirmation"
-        assert result["affected_ontologies"][0]["_key"] == "onto1"
+        assert result["status"] == "deleted"
+        mock_delete.assert_called_once_with("d1")
 
     @pytest.mark.asyncio
-    async def test_delete_document_confirm_deletes_chunks_and_document(self):
-        db = MagicMock()
-        db.has_collection.return_value = True
+    async def test_delete_document_falls_back_to_minimal_deleted_payload(self):
         with (
             patch("app.api.documents.documents_repo.get_document", return_value={"_key": "d1"}),
-            patch("app.api.documents.get_db", return_value=db),
-            patch("app.api.documents.run_aql", side_effect=[[], []]) as mock_run_aql,
-            patch(
-                "app.api.documents.documents_repo.delete_chunks_for_document", return_value=3
-            ) as mock_delete_chunks,
-            patch("app.api.documents.documents_repo.hard_delete_document") as mock_hard_delete,
+            patch("app.api.documents.documents_repo.delete_document", return_value=None),
         ):
             result = await delete_document("d1", confirm=True)
         assert result["status"] == "deleted"
-        assert result["chunks_removed"] == 3
-        assert mock_run_aql.call_count == 2
-        mock_delete_chunks.assert_called_once_with("d1")
-        mock_hard_delete.assert_called_once_with("d1")
+        assert result["doc_id"] == "d1"

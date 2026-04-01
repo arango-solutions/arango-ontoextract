@@ -16,7 +16,7 @@ _BACKEND_DIR = str(Path(__file__).resolve().parent.parent.parent)
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
-from migrations.runner import apply_all  # noqa: E402
+from migrations.runner import apply_all, discover_migrations  # noqa: E402
 
 pytestmark = pytest.mark.integration
 
@@ -51,9 +51,9 @@ EXPECTED_EDGE_COLLECTIONS = {
 
 
 def test_apply_all_migrations_on_fresh_db(test_db: StandardDatabase) -> None:
-    """All 8 migrations apply cleanly on a fresh database."""
+    """All discovered migrations apply cleanly on a fresh database."""
     applied = apply_all(test_db)
-    assert len(applied) == 8
+    assert len(applied) == len(discover_migrations())
 
     existing = {c["name"] for c in test_db.collections() if not c["name"].startswith("_")}
 
@@ -118,7 +118,13 @@ def test_named_graph_structure(test_db: StandardDatabase) -> None:
     edge_defs = graph.edge_definitions()
 
     edge_names = {ed["edge_collection"] for ed in edge_defs}
-    assert edge_names == {"subclass_of", "equivalent_class", "has_property", "related_to"}
+    assert edge_names == {
+        "subclass_of",
+        "equivalent_class",
+        "has_property",
+        "related_to",
+        "extracted_from",
+    }
 
     for ed in edge_defs:
         if ed["edge_collection"] == "subclass_of":

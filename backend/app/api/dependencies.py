@@ -12,7 +12,8 @@ from typing import TypeVar
 
 from fastapi import Depends, Request
 
-from app.api.auth import AuthenticatedUser, get_user_from_request
+from app.api import auth as auth_api
+from app.api.auth import AuthenticatedUser
 from app.api.errors import ForbiddenError, NotFoundError, UnauthorizedError
 
 _T = TypeVar("_T")
@@ -22,7 +23,7 @@ ROLES = ("admin", "ontology_engineer", "domain_expert", "viewer")
 
 def get_current_user(request: Request) -> AuthenticatedUser:
     """FastAPI dependency — returns the authenticated user or raises 401."""
-    user = get_user_from_request(request)
+    user = auth_api.get_user_from_request(request)
     if user is None:
         raise UnauthorizedError("Authentication required")
     return user

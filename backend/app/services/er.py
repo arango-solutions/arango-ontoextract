@@ -7,6 +7,7 @@ ontology class deduplication with AOE-specific topological scoring.
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -21,6 +22,8 @@ from app.services.er_topology import compute_topological_similarity
 from app.services.temporal import NEVER_EXPIRES
 
 log = logging.getLogger(__name__)
+_CAMEL_CASE_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
+_NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
 
 class ERRunStatus(StrEnum):
@@ -511,8 +514,7 @@ FOR cls IN @@col
     label_groups: dict[str, list[str]] = {}
 
     for cls in classes:
-        label_lower = cls.get("label", "").lower().strip()
-        tokens = set(label_lower.split())
+        tokens = _blocking_tokens(cls.get("label", ""))
         for token in tokens:
             if len(token) > 2:
                 label_groups.setdefault(token, []).append(cls["key"])
@@ -542,15 +544,18 @@ def _execute_scoring(
 
         field_scores: dict[str, float] = {}
         weighted_sum = 0.0
+        active_weight = 0.0
 
         for fc in config.field_configs:
             val1 = str(class_1.get(fc.field_name, ""))
             val2 = str(class_2.get(fc.field_name, ""))
+            include_weight = True
 
             if fc.algorithm == "jaro_winkler":
                 sim = _jaro_winkler_sim(val1, val2)
             elif fc.algorithm == "exact":
                 sim = 1.0 if val1 == val2 else 0.0
+                include_weight = sim > 0.0
             elif fc.algorithm == "cosine":
                 sim = _token_overlap(val1, val2)
             else:
@@ -558,14 +563,17 @@ def _execute_scoring(
 
             field_scores[fc.field_name] = round(sim, 4)
             weighted_sum += fc.weight * sim
+            if include_weight:
+                active_weight += fc.weight
 
         topo_score = compute_topological_similarity(
             db, class_key_1=key1, class_key_2=key2
         )
         field_scores["topological"] = topo_score
         weighted_sum += config.topological_weight * topo_score
+        active_weight += config.topological_weight
 
-        combined = round(weighted_sum, 4)
+        combined = round(weighted_sum / active_weight, 4) if active_weight else 0.0
 
         if combined >= config.similarity_threshold:
             edge_doc = {
@@ -588,6 +596,24 @@ def _execute_scoring(
             })
 
     return scored
+
+
+def _blocking_tokens(label: str) -> set[str]:
+    """Normalize labels into blocking tokens for simple near-duplicate discovery."""
+    normalized = _CAMEL_CASE_BOUNDARY.sub(" ", label).replace("_", " ").lower().strip()
+    base_tokens = {
+        token
+        for token in _NON_ALNUM.split(normalized)
+        if token
+    }
+    expanded_tokens = set(base_tokens)
+    for token in list(base_tokens):
+        if len(token) > 3 and token.endswith("s"):
+            expanded_tokens.add(token[:-1])
+    compact = "".join(base_tokens)
+    if compact:
+        expanded_tokens.add(compact)
+    return expanded_tokens
 
 
 def _execute_clustering(

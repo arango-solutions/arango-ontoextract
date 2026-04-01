@@ -9,6 +9,7 @@ import pytest
 from app.services.arangordf_bridge import (
     _detect_format,
     _ensure_named_graph,
+    _import_with_rdflib_fallback,
     _tag_documents_with_ontology_id,
     import_from_file,
     import_from_url,
@@ -211,6 +212,92 @@ class TestImportOwlToGraph:
             )
 
         mock_get_db.assert_called_once()
+
+    @patch("app.services.arangordf_bridge._ensure_named_graph")
+    @patch("app.services.arangordf_bridge._tag_documents_with_ontology_id")
+    @patch("app.services.arangordf_bridge._import_with_rdflib_fallback")
+    @patch("app.services.arangordf_bridge._ensure_arango_rdf")
+    def test_falls_back_when_arango_rdf_missing(
+        self,
+        mock_ensure_rdf,
+        mock_fallback,
+        mock_tag,
+        mock_ensure_graph,
+    ):
+        db = MagicMock()
+        mock_ensure_rdf.side_effect = ImportError("missing")
+        mock_tag.return_value = 0
+
+        ttl = '@prefix owl: <http://www.w3.org/2002/07/owl#> . <http://x> a owl:Class .'
+
+        result = import_owl_to_graph(
+            db,
+            ttl_content=ttl,
+            graph_name="fallback_graph",
+            ontology_id="onto_fallback",
+        )
+
+        mock_fallback.assert_called_once()
+        mock_tag.assert_called_once()
+        mock_ensure_graph.assert_called_once()
+        assert result["imported"] is True
+
+
+class TestFallbackImporter:
+    @patch("app.services.arangordf_bridge.create_edge")
+    @patch("app.services.arangordf_bridge.create_property")
+    @patch("app.services.arangordf_bridge.create_class")
+    def test_creates_classes_properties_and_edges(
+        self,
+        mock_create_class,
+        mock_create_property,
+        mock_create_edge,
+    ):
+        db = MagicMock()
+        db.has_collection.return_value = False
+        mock_create_class.side_effect = [
+            {"_id": "ontology_classes/org"},
+            {"_id": "ontology_classes/dept"},
+        ]
+        mock_create_property.side_effect = [
+            {"_id": "ontology_properties/has_department"},
+            {"_id": "ontology_properties/name"},
+        ]
+
+        ttl = """
+        @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+        @prefix ex: <http://example.org/> .
+
+        ex:Organization a owl:Class ; rdfs:label "Organization" .
+        ex:Department a owl:Class ;
+            rdfs:subClassOf ex:Organization ;
+            rdfs:comment "Department doc" .
+        ex:hasDepartment a owl:ObjectProperty ;
+            rdfs:domain ex:Organization ;
+            rdfs:range ex:Department .
+        ex:name a owl:DatatypeProperty ; rdfs:domain ex:Department ; rdfs:range xsd:string .
+        """
+
+        from rdflib import Graph as RDFGraph
+
+        graph = RDFGraph()
+        graph.parse(data=ttl, format="turtle")
+
+        _import_with_rdflib_fallback(db, rdf_graph=graph, ontology_id="onto1")
+
+        assert db.create_collection.call_count >= 4
+        assert mock_create_class.call_count == 2
+        assert mock_create_property.call_count == 2
+        assert mock_create_edge.call_count == 3
+
+        first_class = mock_create_class.call_args_list[0].kwargs["data"]
+        assert first_class["rdf_type"] == "owl:Class"
+
+        first_property = mock_create_property.call_args_list[0].kwargs["data"]
+        assert first_property["property_type"] == "object"
+        assert first_property["domain_class"] == "http://example.org/Organization"
 
 
 # ---------------------------------------------------------------------------

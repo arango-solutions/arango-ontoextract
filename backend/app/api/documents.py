@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
-import time
 
 from fastapi import APIRouter, Query, UploadFile
 
@@ -207,68 +205,13 @@ async def get_document_ontologies(doc_id: str) -> dict:
     return {"doc_id": doc_id, "ontologies": ontologies}
 
 
-NEVER_EXPIRES: int = sys.maxsize
-
-
 @router.delete("/{doc_id}")
 async def delete_document(
     doc_id: str,
     confirm: bool = Query(default=False, description="Set to true to actually delete"),
 ) -> dict:
-    """Delete a document with cascade analysis (J.2).
-
-    Without ``?confirm=true``, returns the list of affected ontologies
-    without making changes.  With confirmation, removes the document,
-    its chunks, and expires ``extracted_from`` edges.
-    """
+    """Soft-delete a document."""
     get_or_404(documents_repo.get_document(doc_id), "Document", doc_id)
-
-    db = get_db()
-    affected_ontologies: list[dict] = []
-    doc_full_id = f"documents/{doc_id}"
-
-    if db.has_collection("extracted_from"):
-        edges = list(
-            run_aql(db,
-                "FOR e IN extracted_from "
-                "FILTER e._to == @doc_id AND e.expired == @never "
-                "RETURN e",
-                bind_vars={"doc_id": doc_full_id, "never": NEVER_EXPIRES},
-            )
-        )
-
-        ontology_ids = {e.get("ontology_id") for e in edges if e.get("ontology_id")}
-        if ontology_ids and db.has_collection("ontology_registry"):
-            affected_ontologies = list(
-                run_aql(db,
-                    "FOR o IN ontology_registry FILTER o._key IN @ids "
-                    "RETURN {_key: o._key, name: o.name, status: o.status}",
-                    bind_vars={"ids": list(ontology_ids)},
-                )
-            )
-
-    if not confirm:
-        return {
-            "doc_id": doc_id,
-            "status": "pending_confirmation",
-            "affected_ontologies": affected_ontologies,
-            "message": "Pass ?confirm=true to proceed with deletion.",
-        }
-
-    if db.has_collection("extracted_from"):
-        run_aql(db,
-            "FOR e IN extracted_from "
-            "FILTER e._to == @doc_id AND e.expired == @never "
-            "UPDATE e WITH {expired: @now} IN extracted_from",
-            bind_vars={"doc_id": doc_full_id, "never": NEVER_EXPIRES, "now": time.time()},
-        )
-
-    chunks_removed = documents_repo.delete_chunks_for_document(doc_id)
-    documents_repo.hard_delete_document(doc_id)
-
-    return {
-        "doc_id": doc_id,
-        "status": "deleted",
-        "chunks_removed": chunks_removed,
-        "affected_ontologies": affected_ontologies,
-    }
+    _ = confirm  # retained for backward-compatible query params
+    deleted = documents_repo.delete_document(doc_id)
+    return deleted or {"doc_id": doc_id, "status": "deleted"}

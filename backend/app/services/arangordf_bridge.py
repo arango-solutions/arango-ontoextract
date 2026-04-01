@@ -14,8 +14,11 @@ from urllib.parse import urlparse
 
 import httpx
 from arango.database import StandardDatabase
+from rdflib import OWL, RDF, RDFS, URIRef
+from rdflib import Graph as RDFGraph
 
 from app.db.client import get_db
+from app.db.ontology_repo import create_class, create_edge, create_property
 from app.db.registry_repo import create_registry_entry
 from app.db.utils import run_aql
 
@@ -58,10 +61,6 @@ def import_owl_to_graph(
     if db is None:
         db = get_db()
 
-    arango_rdf_cls = _ensure_arango_rdf()
-
-    from rdflib import Graph as RDFGraph
-
     rdf_graph = RDFGraph()
     rdf_graph.parse(data=ttl_content, format="turtle")
 
@@ -75,17 +74,27 @@ def import_owl_to_graph(
         },
     )
 
-    adb_rdf = arango_rdf_cls(db)
+    try:
+        arango_rdf_cls = _ensure_arango_rdf()
+    except ImportError:
+        log.warning("arango_rdf unavailable; using rdflib fallback importer")
+        _import_with_rdflib_fallback(
+            db,
+            rdf_graph=rdf_graph,
+            ontology_id=ontology_id,
+        )
+    else:
+        adb_rdf = arango_rdf_cls(db)
 
-    adb_rdf.init_rdf_collections(
-        bnode_collection=f"{graph_name}_bnodes",
-    )
+        adb_rdf.init_rdf_collections(
+            bnode_collection=f"{graph_name}_bnodes",
+        )
 
-    adb_rdf.rdf_to_arangodb_by_pgt(
-        name=graph_name,
-        rdf_graph=rdf_graph,
-        overwrite=False,
-    )
+        adb_rdf.rdf_to_arangodb_by_pgt(
+            name=graph_name,
+            rdf_graph=rdf_graph,
+            overwrite=False,
+        )
 
     _tag_documents_with_ontology_id(
         db,
@@ -105,6 +114,110 @@ def import_owl_to_graph(
 
     log.info("OWL import completed", extra=stats)
     return stats
+
+
+def _ensure_import_collections(db: StandardDatabase) -> None:
+    for name, edge in (
+        ("ontology_classes", False),
+        ("ontology_properties", False),
+        ("ontology_constraints", False),
+        ("subclass_of", True),
+        ("has_property", True),
+        ("equivalent_class", True),
+        ("related_to", True),
+    ):
+        if not db.has_collection(name):
+            db.create_collection(name, edge=edge)
+
+
+def _label_for(graph: RDFGraph, subject: URIRef) -> str:
+    label = graph.value(subject, RDFS.label)
+    if label:
+        return str(label)
+    return subject.split("#")[-1].split("/")[-1]
+
+
+def _comment_for(graph: RDFGraph, subject: URIRef) -> str:
+    comment = graph.value(subject, RDFS.comment)
+    return str(comment) if comment else ""
+
+
+def _import_with_rdflib_fallback(
+    db: StandardDatabase,
+    *,
+    rdf_graph: RDFGraph,
+    ontology_id: str,
+) -> None:
+    """Minimal OWL importer used when ``arango_rdf`` is unavailable."""
+    _ensure_import_collections(db)
+
+    class_ids: dict[str, str] = {}
+
+    for class_uri in sorted({str(s) for s in rdf_graph.subjects(RDF.type, OWL.Class)}):
+        doc = create_class(
+            db,
+            ontology_id=ontology_id,
+            data={
+                "uri": class_uri,
+                "label": _label_for(rdf_graph, URIRef(class_uri)),
+                "description": _comment_for(rdf_graph, URIRef(class_uri)),
+                "status": "approved",
+                "tier": "domain",
+                "rdf_type": "owl:Class",
+            },
+            created_by="import",
+        )
+        class_ids[class_uri] = doc["_id"]
+
+    property_ids: dict[str, str] = {}
+    property_specs: list[tuple[str, str | None]] = []
+    for property_type, property_kind in (
+        (OWL.ObjectProperty, "object"),
+        (OWL.DatatypeProperty, "datatype"),
+    ):
+        for prop_uri in sorted({str(s) for s in rdf_graph.subjects(RDF.type, property_type)}):
+            domain = rdf_graph.value(URIRef(prop_uri), RDFS.domain)
+            range_value = rdf_graph.value(URIRef(prop_uri), RDFS.range)
+            doc = create_property(
+                db,
+                ontology_id=ontology_id,
+                data={
+                    "uri": prop_uri,
+                    "label": _label_for(rdf_graph, URIRef(prop_uri)),
+                    "description": _comment_for(rdf_graph, URIRef(prop_uri)),
+                    "property_type": property_kind,
+                    "domain_class": str(domain) if domain else "",
+                    "range": str(range_value) if range_value else "",
+                    "status": "approved",
+                },
+                created_by="import",
+            )
+            property_ids[prop_uri] = doc["_id"]
+            property_specs.append((prop_uri, str(domain) if domain else None))
+
+    for child, parent in rdf_graph.subject_objects(RDFS.subClassOf):
+        child_id = class_ids.get(str(child))
+        parent_id = class_ids.get(str(parent))
+        if child_id and parent_id:
+            create_edge(
+                db,
+                edge_collection="subclass_of",
+                from_id=child_id,
+                to_id=parent_id,
+                data={"ontology_id": ontology_id},
+            )
+
+    for prop_uri, domain_uri in property_specs:
+        domain_id = class_ids.get(domain_uri or "")
+        prop_id = property_ids.get(prop_uri)
+        if domain_id and prop_id:
+            create_edge(
+                db,
+                edge_collection="has_property",
+                from_id=domain_id,
+                to_id=prop_id,
+                data={"ontology_id": ontology_id},
+            )
 
 
 def _tag_documents_with_ontology_id(

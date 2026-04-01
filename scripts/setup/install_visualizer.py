@@ -315,7 +315,7 @@ def install_saved_queries(
     prefix_keys: bool = False,
 ) -> list[str]:
     """Install saved queries into _editor_saved_queries and _queries.
-    Returns list of _key values for viewpoint linking."""
+    Returns list of ``_editor_saved_queries/<key>`` ids."""
     ensure_collection(db, "_editor_saved_queries")
     ensure_collection(db, "_queries")
     queries = _load_queries(
@@ -324,9 +324,9 @@ def install_saved_queries(
         graph_name,
         prefix_keys=prefix_keys,
     )
-    keys = []
+    ids = []
     for q in queries:
-        _upsert_by_key(db, "_editor_saved_queries", q)
+        query_id = _upsert_by_key(db, "_editor_saved_queries", q)
 
         viz_query = {
             "_key": q["_key"],
@@ -337,10 +337,10 @@ def install_saved_queries(
             "bindVariables": q.get("bindVariables", {}),
         }
         _upsert_by_key(db, "_queries", viz_query)
-        keys.append(q["_key"])
+        ids.append(query_id)
 
-    log.info("installed %d saved queries for %s", len(keys), graph_name)
-    return keys
+    log.info("installed %d saved queries for %s", len(ids), graph_name)
+    return ids
 
 
 # ---------------------------------------------------------------------------
@@ -386,14 +386,15 @@ def link_actions_to_viewpoint(
 def link_queries_to_viewpoint(
     db: StandardDatabase,
     viewpoint_id: str,
-    query_keys: list[str],
+    query_refs: list[str],
 ) -> None:
     """Create _viewpointQueries edges."""
     ensure_collection(db, "_viewpointQueries", edge=True)
-    for key in query_keys:
+    for ref in query_refs:
+        key = ref.split("/")[-1]
         query_id = f"_queries/{key}"
         _ensure_edge(db, "_viewpointQueries", viewpoint_id, query_id)
-    log.info("linked %d queries to viewpoint %s", len(query_keys), viewpoint_id)
+    log.info("linked %d queries to viewpoint %s", len(query_refs), viewpoint_id)
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +420,7 @@ def install_for_graph(
         actions_file,
         prefix_keys=prefix_keys,
     )
-    query_keys = install_saved_queries(
+    query_ids = install_saved_queries(
         db,
         graph_name,
         queries_file,
@@ -428,14 +429,14 @@ def install_for_graph(
 
     vp_id = ensure_default_viewpoint(db, graph_name)
     link_actions_to_viewpoint(db, vp_id, action_ids)
-    link_queries_to_viewpoint(db, vp_id, query_keys)
+    link_queries_to_viewpoint(db, vp_id, query_ids)
 
     return {
         "graph_name": graph_name,
         "theme_node_types": len(theme.get("nodeConfigMap", {})),
         "theme_edge_types": len(theme.get("edgeConfigMap", {})),
         "canvas_actions": len(action_ids),
-        "saved_queries": len(query_keys),
+        "saved_queries": len(query_ids),
         "viewpoint_id": vp_id,
     }
 

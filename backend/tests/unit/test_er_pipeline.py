@@ -9,6 +9,9 @@ from app.services.er import (
     ERFieldConfig,
     ERPipelineConfig,
     ERRunStatus,
+    _blocking_tokens,
+    _execute_blocking,
+    _execute_scoring,
     _jaro_winkler_sim,
     _token_overlap,
     configure_blocking,
@@ -144,6 +147,64 @@ class TestRunERPipeline:
         stored = get_run_status(result.run_id)
         assert stored is not None
         assert stored.run_id == result.run_id
+
+    @patch("app.services.er.run_aql")
+    def test_blocking_normalizes_plural_and_camelcase(self, mock_run_aql):
+        db = MagicMock()
+        db.has_collection.return_value = True
+        mock_run_aql.return_value = [
+            {"key": "c1", "label": "Customer", "uri": "http://ex#Customer"},
+            {"key": "c2", "label": "Customers", "uri": "http://ex#Customers"},
+            {"key": "c3", "label": "CustomerAccount", "uri": "http://ex#CustomerAccount"},
+            {"key": "c4", "label": "Customer_Account", "uri": "http://ex#Customer_Account"},
+        ]
+
+        pairs = _execute_blocking(db, "onto1", ERPipelineConfig())
+
+        assert ("c1", "c2") in pairs
+        assert ("c3", "c4") in pairs
+
+    @patch("app.services.er.compute_topological_similarity", return_value=0.0)
+    @patch("app.services.er._get_class_doc")
+    def test_scoring_does_not_penalize_nonmatching_exact_uri(
+        self,
+        mock_get_class_doc,
+        mock_topology,
+    ):
+        db = MagicMock()
+        db.has_collection.return_value = False
+        mock_get_class_doc.side_effect = [
+            {
+                "_key": "c1",
+                "label": "Customer",
+                "description": "A customer account",
+                "uri": "http://ex#Customer",
+            },
+            {
+                "_key": "c2",
+                "label": "Customers",
+                "description": "Customer account records",
+                "uri": "http://ex#Customers",
+            },
+        ]
+
+        scored = _execute_scoring(
+            db,
+            [("c1", "c2")],
+            ERPipelineConfig(similarity_threshold=0.6, topological_weight=0.0),
+        )
+
+        assert len(scored) == 1
+        assert scored[0]["combined_score"] >= 0.6
+
+
+class TestBlockingTokens:
+    def test_splits_camelcase_and_singularizes(self):
+        tokens = _blocking_tokens("CustomerAccounts")
+
+        assert "customer" in tokens
+        assert "accounts" in tokens
+        assert "account" in tokens
 
 
 class TestExplainMatch:
