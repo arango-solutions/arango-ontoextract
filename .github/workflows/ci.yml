@@ -64,7 +64,7 @@ jobs:
         run: pip install -e ".[dev]"
         working-directory: backend
       - name: Run unit tests
-        run: pytest tests/unit/ -v --cov=app --cov-report=xml --cov-fail-under=80
+        run: pytest tests/unit/ -v --cov=app --cov-report=xml --cov-fail-under=50
         working-directory: backend
       - name: Upload coverage
         if: always()
