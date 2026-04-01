@@ -317,8 +317,8 @@ This section defines the end-to-end workflows performed by each role. These work
 1. User navigates to `/pipeline`
 2. Left panel shows extraction runs: document name, status (Running/Completed/Failed), chunk count, class count, duration, model
 3. User selects a run → right panel shows Agent Pipeline DAG
-4. DAG shows 6 steps with status: Strategy Selector → Extraction Agent → Consistency Checker → Quality Judge → Entity Resolution Agent → Pre-Curation Filter
-5. Running step highlighted with animation; completed steps are green
+4. DAG shows 6 agents with fork/join topology: Strategy Selector → Extraction Agent → Consistency Checker → [Quality Judge ∥ Entity Resolution Agent] → Pre-Curation Filter. Quality Judge and ER Agent run in parallel (side-by-side in the DAG).
+5. Running steps highlighted with animation; completed steps are green; parallel steps can both be running simultaneously
 6. Below DAG: Metrics tab (duration, tokens, cost, entities, agreement, confidence, completeness), Errors tab (with run-level errors from stats.errors), Timeline tab
 7. User clicks "Curate" to review results (if `domain_expert` or above)
 
@@ -1587,57 +1587,59 @@ Ontology in the AOE Library
 **Agent Architecture:**
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    LangGraph: Extraction Pipeline                │
-│                                                                 │
-│  ┌───────────┐    ┌──────────────┐    ┌───────────────────┐     │
-│  │ Strategy   │───▶│ Extraction   │───▶│ Consistency       │     │
-│  │ Selector   │    │ Agent        │    │ Checker           │     │
-│  └───────────┘    └──────────────┘    └───────┬───────────┘     │
-│       │                                       │                 │
-│       │ picks model,         runs N passes,   │ filters by      │
-│       │ prompt template,     self-corrects     │ agreement       │
-│       │ chunk strategy       on parse errors   │ threshold       │
-│       │                                       ▼                 │
-│       │                              ┌───────────────────┐      │
-│       │                              │ Entity Resolution │      │
-│       │                              │ Agent             │      │
-│       │                              └───────┬───────────┘      │
-│       │                                      │                  │
-│       │                   vector + topo       │ flags merges,    │
-│       │                   similarity          │ auto-links       │
-│       │                                      ▼ to domain tier   │
-│       │                              ┌───────────────────┐      │
-│       │                              │ Pre-Curation      │      │
-│       │                              │ Filter Agent      │      │
-│       │                              └───────┬───────────┘      │
-│       │                                      │                  │
-│       │                   removes noise,     │ annotates with   │
-│       │                   duplicates,        │ confidence,      │
-│       │                   low-confidence     │ provenance       │
-│       │                                      ▼                  │
-│       │                              ┌───────────────────┐      │
-│       │                              │ Staging            │      │
-│       │                              │ (ready for human   │      │
-│       │                              │  curation)         │      │
-│       │                              └───────────────────┘      │
-│       │                                      │                  │
-│       │         human-in-the-loop ───────────┘                  │
-│       │         (curation dashboard)                            │
-└───────┼─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                    LangGraph: Extraction Pipeline                     │
+│                                                                      │
+│  ┌───────────┐    ┌──────────────┐    ┌───────────────────┐          │
+│  │ Strategy   │───▶│ Extraction   │───▶│ Consistency       │          │
+│  │ Selector   │    │ Agent        │    │ Checker           │          │
+│  └───────────┘    └──────────────┘    └────────┬──────────┘          │
+│       │                                        │                     │
+│       │ picks model,         runs N passes,    │ filters by          │
+│       │ prompt template,     self-corrects     │ agreement           │
+│       │ chunk strategy       on parse errors   │ threshold           │
+│       │                                ┌───────┴───────┐             │
+│       │                     PARALLEL   │               │             │
+│       │                     FORK       ▼               ▼             │
+│       │                    ┌──────────────┐  ┌──────────────────┐    │
+│       │                    │ Quality      │  │ Entity Resolution│    │
+│       │                    │ Judge        │  │ Agent            │    │
+│       │                    │ (LLM-as-     │  │ (blocking,       │    │
+│       │                    │  Judge +     │  │  scoring,        │    │
+│       │                    │  semantic    │  │  clustering)     │    │
+│       │                    │  validator)  │  │                  │    │
+│       │                    └──────┬───────┘  └────────┬─────────┘    │
+│       │                          │     JOIN           │              │
+│       │                          └────────┬───────────┘              │
+│       │                                   ▼                         │
+│       │                          ┌───────────────────┐              │
+│       │                          │ Pre-Curation      │              │
+│       │                          │ Filter Agent      │              │
+│       │                          └───────┬───────────┘              │
+│       │                                  ▼                          │
+│       │                          ┌───────────────────┐              │
+│       │                          │ Staging            │              │
+│       │                          │ (ready for human   │              │
+│       │                          │  curation)         │              │
+│       │                          └───────────────────┘              │
+│       │                                  │                          │
+│       │         human-in-the-loop ───────┘                          │
+│       │         (curation dashboard)                                │
+└───────┼──────────────────────────────────────────────────────────────┘
         │
         ▼ checkpointed state (LangGraph persistence)
 ```
 
 **Agents:**
 
-| Agent | Responsibility | Inputs | Outputs |
-|-------|---------------|--------|---------|
-| **Strategy Selector** | Analyzes document type, length, domain; picks extraction model, prompt template, and chunking strategy | Document metadata, first N chunks | Extraction config (model, prompt, chunk params) |
-| **Extraction Agent** | Runs N-pass LLM extraction with self-correction; retries on parse failures; validates output against Pydantic schemas | Chunks, extraction config, domain ontology context (for Tier 2) | Raw extracted classes + properties per pass |
-| **Consistency Checker** | Compares results across passes; keeps only concepts appearing in ≥ M of N passes; assigns confidence scores | Multi-pass extraction results | Filtered, scored extraction result |
-| **Entity Resolution Agent** | Invokes `arango-entity-resolution` pipeline (`ConfigurableERPipeline`) for vector + field similarity + topological scoring against existing ontologies; flags merge candidates via WCC clustering; auto-links EXTENSION classes to domain parents using `CrossCollectionMatchingService` | Filtered extraction, domain ontology, local ontology | Extraction + merge candidates + `extends_domain` edges |
-| **Pre-Curation Filter** | Removes obvious noise (generic terms, duplicates within run); annotates remaining entities with provenance links and confidence tiers (high/medium/low) | Extraction + merge candidates | Clean staging graph ready for human review |
+| Agent | Responsibility | Inputs | Outputs | Parallel? |
+|-------|---------------|--------|---------|-----------|
+| **Strategy Selector** | Analyzes document type, length, domain; picks extraction model, prompt template, and chunking strategy | Document metadata, first N chunks | Extraction config (model, prompt, chunk params) | Sequential |
+| **Extraction Agent** | Runs N-pass LLM extraction with self-correction; retries (up to 5) on parse failures with backoff; validates output against Pydantic schemas; clamps confidence to [0,1]; fully async (`ainvoke`) | Chunks, extraction config, domain ontology context (for Tier 2) | Raw extracted classes + properties per pass | Sequential (retries internal) |
+| **Consistency Checker** | Compares results across passes; keeps only concepts appearing in ≥ M of N passes; preserves per-pass LLM confidence; computes property agreement (Jaccard) | Multi-pass extraction results | Filtered, scored extraction result | Sequential → forks to parallel |
+| **Quality Judge** | Runs LLM-as-Judge faithfulness evaluation + semantic validator in parallel (`asyncio.gather`). Rates each class as EXPLICIT/INFERRED/PLAUSIBLE/HALLUCINATED. Checks for domain/range mismatches, disjointness violations. | Consistency result + source chunks | Per-class faithfulness + validity scores | **Parallel** with ER Agent |
+| **Entity Resolution Agent** | Invokes `arango-entity-resolution` pipeline for vector + field similarity + topological scoring against existing ontologies; flags merge candidates via WCC clustering; auto-links EXTENSION classes to domain parents | Consistency result, domain ontology, local ontology | Merge candidates + `extends_domain` edges | **Parallel** with Quality Judge |
+| **Pre-Curation Filter** | Removes obvious noise (generic terms, duplicates within run); annotates remaining entities with provenance links and confidence tiers (high/medium/low); waits for both Quality Judge and ER Agent to complete | Quality scores + merge candidates | Clean staging graph ready for human review | Sequential (join point) |
 
 **LangGraph State Schema:**
 
@@ -1720,7 +1722,7 @@ class ExtractionPipelineState(TypedDict):
 | Panel | Content | Data Source |
 |-------|---------|-------------|
 | **Run List** | All extraction/ER/schema runs with status badges (queued, running, completed, failed), sortable/filterable by date, org, status, type | `GET /api/v1/extraction/runs`, `GET /api/v1/er/runs`, `GET /api/v1/schema/extract/{run_id}` |
-| **Agent DAG** | Visual directed graph of the LangGraph pipeline; each node shows agent name, status (pending/running/completed/failed), and elapsed time | WebSocket `ws://host/ws/extraction/{run_id}` events + `extraction_runs.stats` |
+| **Agent DAG** | Visual directed acyclic graph showing the LangGraph pipeline topology with fork/join parallelism. Nodes show agent name, status (pending/running/completed/failed), and elapsed time. Quality Judge and ER Agent are positioned side-by-side to show they run in parallel. Edges animate when data flows between steps. Canvas is pannable and zoomable. | WebSocket `ws://host/ws/extraction/{run_id}` events + `extraction_runs.stats` + REST polling fallback every 5s |
 | **Node Detail** | Click an agent node to see: input/output summary, LLM prompt/response (truncated), validation errors, retry count | `GET /api/v1/extraction/runs/{run_id}` with `?detail=agent_steps` |
 | **Run Metrics** | Total duration, LLM token usage (prompt + completion), estimated cost, entity counts (classes/properties extracted), pass agreement rates | `extraction_runs.stats` |
 | **Error Log** | Timestamped list of errors and warnings per agent step; expandable stack traces for failures | Structured logs via `extraction_runs.stats.errors` |
@@ -1766,14 +1768,15 @@ The dashboard subscribes to WebSocket events per active run:
 
 **Graph Rendering:**
 
-The agent DAG is a small, fixed-topology graph (5–6 nodes) — unlike the ontology graph which can be large. This makes React Flow the natural choice since the same library is already used in the curation dashboard:
+The agent DAG is a small, fixed-topology graph (6 nodes) with a fork/join at the parallel stage. React Flow renders the DAG with explicit x/y positions reflecting the parallel topology:
 
 | Aspect | Implementation |
 |--------|---------------|
 | Library | React Flow (already in project for curation dashboard) |
-| Layout | Fixed/static layout matching the LangGraph definition; no dynamic layout needed |
-| Node renderer | Custom React Flow node component with status icon, agent name, elapsed time |
-| Edge renderer | Conditional edges styled differently (dashed for conditional, solid for always) |
+| Layout | Fixed positions: sequential nodes centered, parallel nodes (Quality Judge + ER Agent) positioned side-by-side at the same Y level to show parallelism |
+| Node renderer | Custom React Flow node component with status icon, agent name, elapsed time. Timestamp parsing handles both Unix timestamps and ISO strings. |
+| Edge renderer | Two edges fan out from Consistency Checker; two edges merge into Pre-Curation Filter. Animated edges show active data flow. |
+| Interactivity | Pannable and zoomable canvas. Scrollable to see all nodes on small screens. |
 | Interactivity | Click node → detail panel; hover → tooltip with summary |
 
 ### 6.13 Ontology Quality Metrics
