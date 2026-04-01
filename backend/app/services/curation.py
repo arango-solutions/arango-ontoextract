@@ -128,8 +128,19 @@ def _apply_reject(
     collection: str,
     key: str,
 ) -> None:
-    """Expire the entity (soft-delete)."""
-    expire_entity(db, collection=collection, key=key)
+    """Expire the entity and all connected edges (temporal soft-delete with cascade).
+
+    Per PRD §5.3 FR-5.2: expiring a vertex must also expire edges to/from it.
+    """
+    from app.db.ontology_repo import expire_class_cascade
+
+    if collection in ("ontology_classes", "ontology_properties"):
+        try:
+            expire_class_cascade(db, key=key)
+        except ValueError:
+            expire_entity(db, collection=collection, key=key)
+    else:
+        expire_entity(db, collection=collection, key=key)
 
 
 def _apply_edit(
