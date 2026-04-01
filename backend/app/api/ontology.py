@@ -389,7 +389,7 @@ async def add_document_to_ontology(
         else:
             raise ValidationError(
                 f"Unsupported file type: {mime}",
-                details={"allowed": sorted(_ALLOWED)},
+                details={"allowed": sorted(allowed)},
             )
 
     from app.services.ingestion import compute_file_hash

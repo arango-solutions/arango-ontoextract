@@ -11,6 +11,7 @@ import sys
 from fastapi import APIRouter, Query
 
 from app.api.errors import NotFoundError, ValidationError
+from app.db.client import get_db
 from app.models.curation import (
     BatchDecisionRequest,
     BatchDecisionResponse,
@@ -22,7 +23,6 @@ from app.models.curation import (
     PromotionRequest,
     PromotionStatusResponse,
 )
-from app.db.client import get_db
 from app.services import curation as curation_svc
 from app.services import promotion as promotion_svc
 
