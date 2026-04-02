@@ -1617,6 +1617,15 @@ Ontology in the AOE Library
 │       │                   low-confidence     │ provenance       │
 │       │                                      ▼                  │
 │       │                              ┌───────────────────┐      │
+│       │                              │ Qualitative       │      │
+│       │                              │ Evaluation Agent  │      │
+│       │                              └───────┬───────────┘      │
+│       │                                      │                  │
+│       │                   receives batch +   │ returns JSON     │
+│       │                   all LLM-as-judge   │ with strengths   │
+│       │                   scores             │ & weaknesses     │
+│       │                                      ▼                  │
+│       │                              ┌───────────────────┐      │
 │       │                              │ Staging            │      │
 │       │                              │ (ready for human   │      │
 │       │                              │  curation)         │      │
@@ -1638,6 +1647,32 @@ Ontology in the AOE Library
 | **Consistency Checker** | Compares results across passes; keeps only concepts appearing in ≥ M of N passes; assigns confidence scores | Multi-pass extraction results | Filtered, scored extraction result |
 | **Entity Resolution Agent** | Invokes `arango-entity-resolution` pipeline (`ConfigurableERPipeline`) for vector + field similarity + topological scoring against existing ontologies; flags merge candidates via WCC clustering; auto-links EXTENSION classes to domain parents using `CrossCollectionMatchingService` | Filtered extraction, domain ontology, local ontology | Extraction + merge candidates + `extends_domain` edges |
 | **Pre-Curation Filter** | Removes obvious noise (generic terms, duplicates within run); annotates remaining entities with provenance links and confidence tiers (high/medium/low) | Extraction + merge candidates | Clean staging graph ready for human review |
+| **Qualitative Evaluation Agent** | After all LLM-as-judge metrics (faithfulness, semantic validity, property agreement) are computed and pre-curation filtering is done, this agent performs a final qualitative evaluation pass. It receives the full batch of extracted classes along with all their per-class judge scores (faithfulness, semantic validity, confidence, structural quality, etc.) and asks the LLM to produce a qualitative summary of the ontology extraction's strengths and weaknesses. The response is enforced as structured JSON via the provider's JSON mode / structured output parameter (e.g., `response_format` for OpenAI, tool-use JSON for Anthropic). This runs **async** as a background step and does not block staging. | Filtered extraction batch + all per-class LLM-as-judge scores (faithfulness, semantic validity, property agreement, structural quality, description quality, provenance strength) | JSON: `{"strengths": ["markdown point 1", ...], "weaknesses": ["markdown point 1", ...]}` stored on the extraction run record |
+
+**Qualitative Evaluation Agent — Detail:**
+
+The qualitative evaluation agent is the final analytical step in the pipeline. It does **not** modify the extraction results — it produces a read-only summary that is stored on the extraction run and displayed on the quality dashboard.
+
+**Prompt structure:** The LLM receives:
+1. The full list of extracted classes with their labels, descriptions, and property counts
+2. Per-class scores: faithfulness, semantic validity, confidence, structural quality, description quality, provenance strength, property agreement
+3. Aggregate statistics: avg faithfulness, avg semantic validity, completeness %, orphan count, cycle detection result
+
+**Enforced JSON schema:**
+```json
+{
+  "strengths": [
+    "string — each entry is a markdown-formatted bullet point describing a strength"
+  ],
+  "weaknesses": [
+    "string — each entry is a markdown-formatted bullet point describing a weakness"
+  ]
+}
+```
+
+The JSON schema is enforced using the LLM provider's native structured output parameters (OpenAI `response_format: { type: "json_schema", ... }`, Anthropic tool-use with JSON schema). This ensures the response is always valid JSON — no parsing fallbacks needed.
+
+**Execution:** Runs async after the pre-curation filter completes. The pipeline does not wait for this step to finish before creating the staging graph. The result is written to the extraction run record (`stats.qualitative_evaluation`) when complete.
 
 **LangGraph State Schema:**
 
@@ -1652,6 +1687,7 @@ class ExtractionPipelineState(TypedDict):
     staging_entities: list[dict]       # final pre-curated output
     errors: list[str]                  # accumulated errors
     current_step: str                  # for checkpoint/resume
+    qualitative_evaluation: dict       # {"strengths": [...], "weaknesses": [...]}
 ```
 
 **Requirements:**
@@ -1668,6 +1704,9 @@ class ExtractionPipelineState(TypedDict):
 | FR-11.8 | All agents emit structured logs with trace context | Each agent step logged with run_id, step name, duration, token usage |
 | FR-11.9 | Human-in-the-loop breakpoint after pre-curation | Pipeline pauses and waits for curation decisions before final promotion |
 | FR-11.10 | Pipeline observable via API | `/api/v1/extraction/runs/{run_id}` returns current agent step, progress, and any errors |
+| FR-11.11 | Qualitative Evaluation Agent produces strengths/weaknesses | After all LLM-as-judge scores are computed and filtering is done, the agent sends the full batch + scores to the LLM and receives a JSON response with `strengths` and `weaknesses` arrays. JSON schema is enforced via the provider's structured output parameter (not regex parsing). |
+| FR-11.12 | Qualitative Evaluation runs async | The evaluation agent runs as a background task and does not block staging graph creation. Result is written to `extraction_runs.stats.qualitative_evaluation` when complete. |
+| FR-11.13 | Qualitative Evaluation displayed on dashboard | The strengths/weaknesses summary is displayed on the Ontology Quality Dashboard for each ontology, sourced from its extraction run. |
 
 ### 6.12 Pipeline Monitor Dashboard (Agentic Workflow Visualizer)
 
@@ -1895,14 +1934,173 @@ An orphan class with only datatype properties scores 0.15. A well-connected clas
 | FR-13.11 | Multi-signal per-class confidence | Each class's `confidence` field is computed as a weighted blend of cross-pass agreement, LLM self-reported confidence, structural quality, description quality, and provenance strength (see §6.13.1). Replaces single-signal agreement ratio. |
 | FR-13.12 | Composite ontology health score | Each ontology receives a 0–100 health score blending completeness, coherence, orphan ratio, avg confidence, coverage, and property richness (see §6.13.2). Displayed on ontology cards with traffic-light color coding. |
 | FR-13.13 | Provenance strength in confidence | Per-class confidence includes a provenance strength signal based on the number of distinct source chunks supporting the class via `extracted_from` edges. |
+| FR-13.14 | Ontology Quality Dashboard with radar chart | Dedicated dashboard page (`/dashboard`) displaying per-ontology LLM-as-judge metrics in a radar/spider chart (faithfulness, semantic validity, completeness, structural integrity, property richness, source coverage) alongside metric cards, as specified in §6.13.3. |
+| FR-13.15 | Per-ontology LLM-as-judge metric aggregation | The quality API aggregates `faithfulness_score` and `semantic_validity_score` from individual `ontology_classes` documents to produce per-ontology averages. These are not currently exposed — must be added to `compute_ontology_quality()`. |
+| FR-13.16 | Per-ontology estimated cost | Each ontology's estimated extraction cost (USD) is derived by tracing `ontology_registry.extraction_run_id` → `extraction_runs.stats.token_usage` and computing cost from token counts and model pricing. Displayed per-ontology on the dashboard. |
+| FR-13.17 | Qualitative evaluation display | Strengths and weaknesses from the Qualitative Evaluation Agent (§6.11) are displayed per-ontology on the dashboard, sourced from `extraction_runs.stats.qualitative_evaluation` via the ontology's linked extraction run. |
+
+#### 6.13.3 Ontology Quality Dashboard
+
+**Description:** A curated dashboard page (`/dashboard`) focused on ontology quality scores, LLM-as-judge evaluation metrics, and per-ontology extraction cost. This is the primary view for assessing the quality of all tracked ontologies at a glance.
+
+**Layout & Visual Design:**
+
+The dashboard draws inspiration from evaluation platforms (e.g., the radar chart + metric cards pattern) to present quality scores visually and at a glance.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Summary Cards                                                       │
+│  [Total Ontologies] [Avg Health Score] [Avg Confidence]              │
+│  [Avg Faithfulness] [Avg Semantic Validity] [Avg Completeness]       │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  Per-Ontology Scorecard Table (sortable, filterable)                 │
+│  ┌──────┬────┬───────┬──────┬───────┬──────┬──────┬──────┬───────┐  │
+│  │ Name │Tier│Health │Confid│Faithf │SemVal│Compl │Orphan│ Cost  │  │
+│  │      │    │ Score │ ence │ulness │idity │ ete  │Ratio │  ($)  │  │
+│  ├──────┼────┼───────┼──────┼───────┼──────┼──────┼──────┼───────┤  │
+│  │ ...  │    │ ████  │      │       │      │      │      │       │  │
+│  └──────┴────┴───────┴──────┴───────┴──────┴──────┴──────┴───────┘  │
+│                                                                      │
+├──────────────────────────────┬──────────────────────────────────────┤
+│  LLM-as-Judge Radar Chart    │  Metric Cards                        │
+│                              │                                      │
+│       Faithfulness           │  ┌─────────────┐ ┌─────────────┐    │
+│          /\                  │  │Faithfulness  │ │Completeness │    │
+│         /  \                 │  │   0.82       │ │   87%       │    │
+│  Source/    \Semantic         │  │ Grounded in  │ │ Classes w/  │    │
+│  Covg  \    / Validity       │  │ source text  │ │ properties  │    │
+│         \  /                 │  └─────────────┘ └─────────────┘    │
+│    Property  Structural      │  ┌─────────────┐ ┌─────────────┐    │
+│    Richness  Integrity       │  │Semantic Val. │ │Structural   │    │
+│                              │  │   0.91       │ │ Integrity   │    │
+│  (one line per ontology,     │  │ OWL logical  │ │   0.85      │    │
+│   overlaid for comparison)   │  │ consistency  │ │ Cycles +    │    │
+│                              │  │              │ │ orphans     │    │
+│                              │  └─────────────┘ └─────────────┘    │
+│                              │  ┌─────────────┐ ┌─────────────┐    │
+│                              │  │Property      │ │Source       │    │
+│                              │  │Richness      │ │Coverage     │    │
+│                              │  │   0.73       │ │   0.88      │    │
+│                              │  │ Props/class  │ │ Chunk ratio │    │
+│                              │  └─────────────┘ └─────────────┘    │
+├──────────────────────────────┴──────────────────────────────────────┤
+│  Strengths & Weaknesses (per ontology, from Qualitative Eval Agent)  │
+│                                                                      │
+│  Strengths:                    Weaknesses:                           │
+│  - Well-grounded in source     - 3 classes lack properties           │
+│    documents (avg faith 0.82)  - 2 orphan classes with no hierarchy  │
+│  - Strong OWL consistency      - Low provenance for "DataStream"     │
+│  - Rich property coverage      - Description quality below avg for   │
+│    across domain classes         2 classes                           │
+├─────────────────────────────────────────────────────────────────────┤
+│  Flags & Alerts                                                      │
+│  [!] Ontologies with cycles   [!] Avg confidence < 0.5              │
+│  [!] Orphan ratio > 30%       [!] Avg faithfulness < 0.4            │
+│  [!] Completeness = 0%                                               │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Section 1: Summary Cards**
+
+Top-level aggregate metrics across all tracked ontologies:
+
+| Card | Value | Source |
+|------|-------|--------|
+| **Total Ontologies** | Count of registered ontologies | `ontology_registry` collection |
+| **Avg Health Score** | Weighted avg health (0–100) with traffic-light color | `compute_quality_summary()` |
+| **Avg Confidence** | Mean blended 7-signal confidence | Aggregated from `ontology_classes.confidence` |
+| **Avg Faithfulness** | Mean LLM-judge faithfulness score | Aggregated from `ontology_classes.faithfulness_score` |
+| **Avg Semantic Validity** | Mean LLM-judge semantic validity | Aggregated from `ontology_classes.semantic_validity_score` |
+| **Avg Completeness** | Mean % of classes with properties | From `compute_quality_summary()` |
+
+**Section 2: Per-Ontology Scorecard Table**
+
+Sortable, filterable table — one row per ontology:
+
+| Column | Description | Source |
+|--------|-------------|--------|
+| **Name** | Ontology label (links to library detail) | `ontology_registry.name` |
+| **Tier** | Domain (Tier 1) / Local (Tier 2) badge | `ontology_registry.tier` |
+| **Health Score** | Composite 0–100, color-coded bar (green >= 70, yellow 50–69, red < 50) | `compute_ontology_quality()` |
+| **Avg Confidence** | Mean blended multi-signal confidence (0–1) | Mean of `ontology_classes.confidence` |
+| **Avg Faithfulness** | Mean LLM-judge faithfulness (0–1) | Mean of `ontology_classes.faithfulness_score` |
+| **Avg Semantic Validity** | Mean LLM-judge semantic validity (0–1) | Mean of `ontology_classes.semantic_validity_score` |
+| **Completeness** | % of classes with at least one property | `classes_with_props / total_classes * 100` |
+| **Property Richness** | Properties-per-class ratio (capped at 3.0 = 100%) | `total_properties / total_classes / 3.0` |
+| **Structural Integrity** | 0–1 score penalized by cycles + orphan ratio | `max(0, 1.0 - cycle_penalty - orphan_ratio)` |
+| **Has Cycles** | Red flag badge if circular subclass references exist | `_detect_cycles()` |
+| **Orphan Ratio** | % of disconnected classes (no parent or child) | `orphan_count / class_count * 100` |
+| **Source Coverage** | Chunk support ratio (0–1) | `min(chunk_count / 5.0, 1.0)` |
+| **Estimated Cost** | USD cost of the extraction run that produced this ontology | Via `ontology_registry.extraction_run_id` → `get_run_cost()` |
+
+Filters: tier, health score range, has cycles, completeness threshold.
+
+**Section 3: LLM-as-Judge Radar Chart + Metric Cards**
+
+When an ontology is selected (or as an aggregate view), display a **radar/spider chart** with the following axes, similar to the evaluation metrics pattern with overlapping polygon lines per ontology:
+
+| Radar Axis | Value | Description |
+|------------|-------|-------------|
+| **Faithfulness** | 0–1 | How well classes are grounded in source documents |
+| **Semantic Validity** | 0–1 | OWL logical consistency (domain/range, disjointness, cycles) |
+| **Completeness** | 0–1 (normalized) | Ratio of classes with properties |
+| **Structural Integrity** | 0–1 | Penalizes cycles and orphans |
+| **Property Richness** | 0–1 | Properties-per-class ratio |
+| **Source Coverage** | 0–1 | Chunk support ratio |
+
+Each axis maps to a **metric card** beside the radar chart, showing:
+- The metric name
+- The numeric score (prominently displayed)
+- A one-line description of what it measures
+- An info tooltip (ⓘ) with the full definition
+
+When multiple ontologies are selected or in aggregate mode, the radar chart overlays multiple polygons (one per ontology) with different colors for comparison, similar to the reference design where different configurations are compared visually.
+
+**Section 4: Strengths & Weaknesses (Qualitative Evaluation)**
+
+Per-ontology display of the qualitative evaluation produced by the Qualitative Evaluation Agent (§6.11, FR-11.11):
+
+- **Strengths**: Markdown bullet points highlighting what the extraction did well (e.g., high faithfulness, rich property coverage, strong hierarchy structure)
+- **Weaknesses**: Markdown bullet points highlighting areas for improvement (e.g., orphan classes, low provenance for specific classes, property gaps)
+
+Source: `extraction_runs.stats.qualitative_evaluation` via `ontology_registry.extraction_run_id`.
+
+If the qualitative evaluation is still running (async), show a loading indicator. If not available (older runs), show "Qualitative evaluation not available for this extraction run."
+
+**Section 5: Flags & Alerts**
+
+Bottom section highlighting ontologies that need attention:
+
+| Flag | Condition | Severity |
+|------|-----------|----------|
+| Has cycles | `has_cycles == true` | Red |
+| High orphan ratio | `orphan_ratio > 0.3` | Yellow |
+| Low confidence | `avg_confidence < 0.5` | Yellow |
+| Low faithfulness | `avg_faithfulness < 0.4` | Red |
+| Zero completeness | `completeness == 0` | Red |
+| Low semantic validity | `avg_semantic_validity < 0.5` | Yellow |
+
+**Per-Ontology Drill-Down (expand/click a row):**
+
+- **Confidence signal breakdown** — radar chart of all 7 individual signals for this ontology
+- **Faithfulness distribution** — histogram showing count of classes per faithfulness rating (EXPLICIT / INFERRED / PLAUSIBLE / HALLUCINATED)
+- **Semantic validity distribution** — histogram of per-class validity scores
+- **Property coverage breakdown** — which specific classes lack properties
+- **Classes flagged** — list of classes with faithfulness < 0.4 or validity < 0.4
+- **Extraction details** — tokens used, model, duration, pass agreement rate
+- **Quality trend** — health score over time if multiple snapshots exist
 
 **API Endpoints:**
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/quality/{ontology_id}` | Returns all computed quality scores including health score for an ontology |
+| `GET` | `/api/v1/quality/{ontology_id}` | Returns all computed quality scores including health score, avg faithfulness, avg semantic validity, structural metrics, and estimated cost for an ontology |
 | `GET` | `/api/v1/quality/{ontology_id}/history` | Quality metrics over time (leverages temporal snapshots) |
-| `GET` | `/api/v1/quality/summary` | Aggregate quality scores across all ontologies |
+| `GET` | `/api/v1/quality/{ontology_id}/evaluation` | Returns the qualitative evaluation (strengths/weaknesses) for the ontology's extraction run |
+| `GET` | `/api/v1/quality/{ontology_id}/class-scores` | Returns per-class faithfulness and semantic validity scores for distribution charts |
+| `GET` | `/api/v1/quality/summary` | Aggregate quality scores across all ontologies (now includes avg faithfulness, avg semantic validity) |
+| `GET` | `/api/v1/quality/dashboard` | Single aggregated payload for the dashboard: all ontology scores, summary cards, flags/alerts |
 | `POST` | `/api/v1/quality/recall` | Upload a reference OWL/TTL file to compute recall against extracted ontology |
 
 ### 6.14 Ontology Constraints (OWL Restrictions & SHACL Shapes)
@@ -2197,6 +2395,7 @@ Clients that don't support WebSocket can poll the corresponding `GET` status end
 | `/entity-resolution` | Entity Resolution | Run and review ER pipelines, view merge candidates and clusters |
 | `/login` | Login | Authentication page; renders login form (or redirects to OIDC provider). Bypassed when `NEXT_PUBLIC_DEV_MODE=true`. |
 | `/quality` | Quality Dashboard | Aggregate ontology quality metrics (extraction precision, curation throughput, structural quality) with traffic-light indicators and trend sparklines (Section 6.13). |
+| `/dashboard` | Ontology Quality Dashboard | Curated dashboard focused on ontology quality scores and LLM-as-judge metrics. Summary cards (avg health, avg faithfulness, avg semantic validity, avg completeness), per-ontology scorecard table (sortable by any metric), radar/spider chart for LLM-as-judge dimensions (faithfulness, semantic validity, completeness, structural integrity, property richness, source coverage) with overlaid polygons for multi-ontology comparison, metric cards with scores and descriptions, per-ontology strengths/weaknesses from Qualitative Evaluation Agent, per-ontology estimated extraction cost, flags/alerts for problem ontologies. Drill-down per ontology shows faithfulness distribution histogram, class-level scores, and confidence signal breakdown. See §6.13.3 for full specification. |
 
 ---
 

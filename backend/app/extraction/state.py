@@ -60,4 +60,6 @@ class ExtractionPipelineState(TypedDict, total=False):
     filter_results: dict[str, Any]
     merge_candidates: list[dict[str, Any]]
 
+    qualitative_evaluation: dict[str, Any]
+
     domain_context: str

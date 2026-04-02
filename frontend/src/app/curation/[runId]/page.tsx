@@ -351,6 +351,12 @@ export default function CurationPage() {
               Promote
             </button>
             <a
+              href="/dashboard"
+              className="text-sm text-gray-500 hover:text-gray-700"
+            >
+              Dashboard
+            </a>
+            <a
               href="/library"
               className="text-sm text-gray-500 hover:text-gray-700"
             >

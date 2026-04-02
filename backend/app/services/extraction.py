@@ -23,14 +23,15 @@ from app.db.utils import doc_get, run_aql
 from app.extraction.pipeline import run_pipeline
 from app.models.common import PaginatedResponse
 from app.services.confidence import compute_class_confidence
+from app.extraction.judges.qualitative_eval_node import run_qualitative_evaluation
 
 log = logging.getLogger(__name__)
 
-_COST_PER_1K_TOKENS: dict[str, float] = {
-    "claude-sonnet-4-20250514": 0.003,
-    "claude-3-5-sonnet-20241022": 0.003,
-    "gpt-4o": 0.005,
-    "gpt-4o-mini": 0.00015,
+_MODEL_TOKEN_RATES_PER_MILLION: dict[str, dict[str, float]] = {
+    "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0},
+    "claude-3-5-sonnet-20241022": {"input": 3.0, "output": 15.0},
+    "gpt-4o": {"input": 2.5, "output": 10.0},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
 }
 
 
@@ -293,6 +294,15 @@ async def execute_run(
                         exc_info=True,
                     )
 
+                # Fire-and-forget: async qualitative evaluation (non-blocking)
+                import asyncio
+                asyncio.ensure_future(
+                    _run_qualitative_eval_background(
+                        run_id=run_id,
+                        final_state=final_state,
+                    )
+                )
+
     except Exception as exc:
         log.exception("extraction pipeline failed", extra={"run_id": run_id})
         partial_logs: list[dict[str, Any]] = []
@@ -316,6 +326,47 @@ async def execute_run(
 
     updated = doc_get(col, run_id)
     return updated or {}
+
+
+async def _run_qualitative_eval_background(
+    *,
+    run_id: str,
+    final_state: dict[str, Any],
+) -> None:
+    """Fire-and-forget qualitative evaluation — never blocks staging."""
+    try:
+        consistency_result = final_state.get("consistency_result")
+        if consistency_result is None or not getattr(consistency_result, "classes", None):
+            return
+
+        classes = consistency_result.classes
+        chunks = final_state.get("document_chunks", [])
+        strategy_config = final_state.get("strategy_config", {})
+        batch_size = strategy_config.get("chunk_batch_size", 5)
+
+        result = await run_qualitative_evaluation(
+            classes=classes,
+            chunks=chunks,
+            batch_size=batch_size,
+        )
+
+        # Persist to extraction run record
+        db = get_db()
+        if db.has_collection("extraction_runs"):
+            col = db.collection("extraction_runs")
+            run_doc = doc_get(col, run_id)
+            if run_doc:
+                stats = run_doc.get("stats", {})
+                stats["qualitative_evaluation"] = result
+                col.update({"_key": run_id, "stats": stats})
+                log.info("qualitative evaluation stored for run %s", run_id)
+
+    except Exception:
+        log.warning(
+            "background qualitative evaluation failed for run %s",
+            run_id,
+            exc_info=True,
+        )
 
 
 async def start_run(
@@ -456,6 +507,7 @@ def get_run_cost(
     db: StandardDatabase | None = None,
     *,
     run_id: str,
+    include_quality_metrics: bool = True,
 ) -> dict[str, Any]:
     """Get token usage and estimated cost for a run.
 
@@ -473,8 +525,14 @@ def get_run_cost(
     prompt_tokens = token_usage.get("prompt_tokens", 0)
     completion_tokens = token_usage.get("completion_tokens", 0)
     total_tokens = token_usage.get("total_tokens", prompt_tokens + completion_tokens)
-    cost_per_1k = _COST_PER_1K_TOKENS.get(model, 0.003)
-    estimated_cost = (total_tokens / 1000) * cost_per_1k
+    rates = _MODEL_TOKEN_RATES_PER_MILLION.get(
+        model,
+        {"input": 3.0, "output": 15.0},
+    )
+    estimated_cost = (
+        (prompt_tokens / 1_000_000) * rates["input"]
+        + (completion_tokens / 1_000_000) * rates["output"]
+    )
 
     started = run.get("started_at", 0)
     completed = run.get("completed_at", 0)
@@ -493,11 +551,11 @@ def get_run_cost(
         if matches:
             ontology_id = matches[0]
 
-    if ontology_id:
+    if include_quality_metrics and ontology_id:
         try:
             from app.services.quality_metrics import compute_ontology_quality
 
-            oq = compute_ontology_quality(db, ontology_id)
+            oq = compute_ontology_quality(db, ontology_id, include_estimated_cost=False)
             avg_confidence = oq.get("avg_confidence")
             completeness_pct = oq.get("completeness")
         except Exception:
@@ -515,7 +573,8 @@ def get_run_cost(
         "properties_extracted": stats.get("properties_extracted", 0),
         "pass_agreement_rate": stats.get("pass_agreement_rate", 0.0),
         "token_usage": token_usage,
-        "cost_per_1k_tokens": cost_per_1k,
+        "input_cost_per_million_tokens": rates["input"],
+        "output_cost_per_million_tokens": rates["output"],
         "avg_confidence": avg_confidence,
         "completeness_pct": completeness_pct,
     }
@@ -610,6 +669,8 @@ def _materialize_to_graph(
             "ontology_id": ontology_id,
             "extraction_run_id": run_id,
             "confidence": cls_data.get("confidence", 0.0),
+            "faithfulness_score": cls_data.get("faithfulness_score"),
+            "semantic_validity_score": cls_data.get("semantic_validity_score"),
             "rdf_type": "owl:Class",
             "created": now,
             "expired": NEVER_EXPIRES,
@@ -871,7 +932,12 @@ def _recompute_multi_signal_confidence(
         )
 
         try:
-            cls_col.update({"_key": key, "confidence": new_confidence})
+            cls_col.update({
+                "_key": key,
+                "confidence": new_confidence,
+                "faithfulness_score": faithfulness,
+                "semantic_validity_score": semantic_validity,
+            })
         except Exception as exc:
             log.warning("confidence update failed for %s: %s", key, exc)
 

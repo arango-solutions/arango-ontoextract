@@ -135,6 +135,12 @@ function PipelineMonitorInner() {
               {sidebarOpen ? "Hide Runs" : "Show Runs"}
             </button>
             <Link
+              href="/dashboard"
+              className="text-sm text-gray-500 hover:text-gray-700"
+            >
+              Dashboard
+            </Link>
+            <Link
               href="/"
               className="text-sm text-gray-500 hover:text-gray-700"
             >

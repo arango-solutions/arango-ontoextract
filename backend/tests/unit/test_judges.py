@@ -19,6 +19,9 @@ from app.extraction.judges.faithfulness import (
 from app.extraction.judges.faithfulness import (
     judge_faithfulness,
 )
+from app.extraction.judges.qualitative_eval_node import (
+    run_qualitative_evaluation,
+)
 from app.extraction.judges.quality_judge_node import quality_judge_node
 from app.extraction.judges.semantic_validator import (
     _DEFAULT_SCORE as SEM_DEFAULT,
@@ -303,3 +306,71 @@ class TestQualityJudgeNode:
         assert u1_cls.semantic_validity_score == 1.0
 
         assert result["step_logs"][0]["status"] == "completed"
+
+
+class TestQualitativeEvaluation:
+    @pytest.mark.asyncio
+    async def test_returns_empty_for_no_classes(self):
+        result = await run_qualitative_evaluation(
+            classes=[],
+            chunks=[{"text": "hello"}],
+        )
+        assert result == {"strengths": [], "weaknesses": ["No classes extracted"]}
+
+    @pytest.mark.asyncio
+    async def test_map_reduce_with_text_parse_fallback(self):
+        """Map phase produces observations, reduce phase synthesises them."""
+        call_count = 0
+
+        async def _fake_ainvoke(messages):
+            nonlocal call_count
+            call_count += 1
+            # First call(s) = map phase, last call = reduce phase
+            if "Source Text" in messages[0].content:
+                return MagicMock(content=json.dumps({
+                    "observations": [
+                        "ClassA is well-grounded in the text about ontologies",
+                    ],
+                }))
+            return MagicMock(content=json.dumps({
+                "strengths": ["- Strong grounding in source text"],
+                "weaknesses": ["- Missing some concepts"],
+            }))
+
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output.side_effect = ValueError("Unsupported")
+        mock_llm.ainvoke = AsyncMock(side_effect=_fake_ainvoke)
+
+        with patch(
+            "app.extraction.judges.qualitative_eval_node._get_llm",
+            return_value=mock_llm,
+        ):
+            result = await run_qualitative_evaluation(
+                classes=[_cls("u1", "ClassA", "desc")],
+                chunks=[{"text": "This text discusses ontologies and ClassA."}],
+                model_name="test-model",
+            )
+
+        assert result["strengths"] == ["- Strong grounding in source text"]
+        assert result["weaknesses"] == ["- Missing some concepts"]
+        # At least 2 calls: 1 map batch + 1 reduce
+        assert call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_returns_fallback_on_llm_failure(self):
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output.side_effect = ValueError("Unsupported")
+        mock_llm.ainvoke = AsyncMock(side_effect=RuntimeError("LLM down"))
+
+        with patch(
+            "app.extraction.judges.qualitative_eval_node._get_llm",
+            return_value=mock_llm,
+        ):
+            result = await run_qualitative_evaluation(
+                classes=[_cls("u1")],
+                chunks=[{"text": "text"}],
+                model_name="test-model",
+            )
+
+        # Map phase fails -> no observations -> specific weakness message
+        assert "observations" in result["weaknesses"][0].lower() or "could not" in result["weaknesses"][0].lower()

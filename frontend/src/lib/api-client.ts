@@ -39,15 +39,34 @@ export class ApiError extends Error {
 
 // --- Client ---------------------------------------------------------------
 
+function resolveApiBaseUrl(baseUrl: string): string {
+  if (typeof window === "undefined") {
+    return baseUrl;
+  }
+
+  try {
+    const url = new URL(baseUrl);
+    const isLocalFrontendHost =
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1";
+
+    if (isLocalFrontendHost && url.hostname === "localhost") {
+      url.hostname = "127.0.0.1";
+    }
+
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return baseUrl;
+  }
+}
+
 class ApiClient {
   private readonly baseUrl: string;
 
   constructor(baseUrl?: string) {
-    this.baseUrl =
-      baseUrl ??
-      (typeof window !== "undefined"
-        ? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
-        : process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000");
+    this.baseUrl = resolveApiBaseUrl(
+      baseUrl ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000",
+    );
   }
 
   private getHeaders(): Record<string, string> {
@@ -115,9 +134,7 @@ export const api = new ApiClient();
 
 /** Resolve the backend API base URL (no trailing slash). */
 export function getApiBaseUrl(): string {
-  return (
-    (typeof window !== "undefined"
-      ? process.env.NEXT_PUBLIC_API_URL
-      : process.env.NEXT_PUBLIC_API_URL) ?? "http://localhost:8000"
+  return resolveApiBaseUrl(
+    process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000",
   );
 }

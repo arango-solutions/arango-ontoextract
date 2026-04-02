@@ -971,6 +971,8 @@ class TestMaterializeToGraph:
                     "uri": "http://ex.org/ontology#Animal",
                     "description": "A living creature",
                     "confidence": 0.85,
+                    "faithfulness_score": 0.91,
+                    "semantic_validity_score": 0.77,
                     "properties": [
                         {"label": "species", "range": "xsd:string", "confidence": 0.9},
                         {"label": "habitat", "range": "http://ex.org#Habitat", "confidence": 0.7},
@@ -995,6 +997,8 @@ class TestMaterializeToGraph:
         assert cls_doc["label"] == "Animal"
         assert cls_doc["ontology_id"] == "onto_1"
         assert cls_doc["confidence"] == 0.85
+        assert cls_doc["faithfulness_score"] == 0.91
+        assert cls_doc["semantic_validity_score"] == 0.77
         assert cls_doc["expired"] == NEVER_EXPIRES
 
         # Two properties inserted
@@ -1235,7 +1239,12 @@ class TestRecomputeMultiSignalConfidence:
         assert kwargs["has_parent"] is False
 
         cols["ontology_classes"].update.assert_called_once_with(
-            {"_key": "Person", "confidence": 0.88},
+            {
+                "_key": "Person",
+                "confidence": 0.88,
+                "faithfulness_score": 0.85,
+                "semantic_validity_score": 0.9,
+            },
         )
 
     @patch("app.services.extraction.compute_class_confidence", return_value=0.5)
@@ -1570,8 +1579,12 @@ class TestGetRunCost:
         assert result["run_id"] == "run_1"
         assert result["total_tokens"] == 700
         assert result["total_duration_ms"] == 10000
-        assert result["cost_per_1k_tokens"] == 0.00015
-        assert result["estimated_cost"] == round(700 / 1000 * 0.00015, 6)
+        assert result["input_cost_per_million_tokens"] == 0.15
+        assert result["output_cost_per_million_tokens"] == 0.60
+        assert result["estimated_cost"] == round(
+            (500 / 1_000_000 * 0.15) + (200 / 1_000_000 * 0.60),
+            6,
+        )
 
     @patch("app.services.extraction.run_aql")
     @patch("app.services.extraction.doc_get")
@@ -1601,11 +1614,16 @@ class TestGetRunCost:
         with patch(
             "app.services.quality_metrics.compute_ontology_quality",
             return_value={"avg_confidence": 0.75, "completeness": 0.8},
-        ):
+        ) as mock_compute_ontology_quality:
             result = get_run_cost(mock_db, run_id="run_q")
 
         assert result["avg_confidence"] == 0.75
         assert result["completeness_pct"] == 0.8
+        mock_compute_ontology_quality.assert_called_once_with(
+            mock_db,
+            "onto_from_aql",
+            include_estimated_cost=False,
+        )
 
 
 # ---------------------------------------------------------------------------

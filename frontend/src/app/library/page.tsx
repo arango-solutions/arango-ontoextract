@@ -333,12 +333,20 @@ export default function LibraryPage() {
               Browse registered ontologies and explore class hierarchies.
             </p>
           </div>
-          <Link
-            href="/"
-            className="text-sm text-gray-500 hover:text-gray-700"
-          >
-            Home
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/dashboard"
+              className="text-sm text-gray-500 hover:text-gray-700"
+            >
+              Dashboard
+            </Link>
+            <Link
+              href="/"
+              className="text-sm text-gray-500 hover:text-gray-700"
+            >
+              Home
+            </Link>
+          </div>
         </div>
       </header>
 

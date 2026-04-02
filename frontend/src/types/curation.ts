@@ -158,3 +158,155 @@ export interface SearchResponse {
   offset: number;
   limit: number;
 }
+
+/* ── Quality Dashboard Types ─────────────────────────── */
+
+export interface QualitySummary {
+  ontology_count: number;
+  total_classes: number;
+  total_properties: number;
+  avg_confidence: number | null;
+  avg_faithfulness: number | null;
+  avg_semantic_validity: number | null;
+  avg_completeness: number;
+  avg_health_score: number | null;
+  ontologies_with_cycles: number;
+  total_orphans: number;
+}
+
+export interface SchemaMetrics {
+  relationship_richness: number;
+  attribute_richness: number;
+  inheritance_richness: number;
+  max_depth: number;
+  annotation_completeness: number;
+  relationship_diversity: number;
+  avg_connectivity_degree: number;
+  uri_consistency: number;
+}
+
+export interface OntologyScorecard {
+  ontology_id: string;
+  name: string;
+  tier: string;
+  health_score: number | null;
+  avg_confidence: number | null;
+  avg_faithfulness: number | null;
+  avg_semantic_validity: number | null;
+  completeness: number;
+  connectivity: number;
+  relationship_count: number;
+  class_count: number;
+  property_count: number;
+  orphan_count: number;
+  has_cycles: boolean;
+  classes_without_properties: number;
+  estimated_cost: number | null;
+  schema_metrics: SchemaMetrics | null;
+}
+
+export interface DashboardAlert {
+  ontology_id: string;
+  name: string;
+  flag: string;
+  severity: "red" | "yellow";
+}
+
+export interface QualityDashboard {
+  summary: QualitySummary;
+  ontologies: OntologyScorecard[];
+  alerts: DashboardAlert[];
+}
+
+export interface QualitativeEvaluation {
+  strengths: string[];
+  weaknesses: string[];
+  status?: string;
+}
+
+export interface ClassScore {
+  _key: string;
+  uri: string;
+  label: string;
+  confidence: number | null;
+  faithfulness_score: number | null;
+  semantic_validity_score: number | null;
+}
+
+/* ── RAG Comparison Dashboard Types ─────────────────── */
+
+export interface RagEvalDataset {
+  id: string;
+  name: string;
+  description: string;
+  query_count: number;
+  created_at: string;
+}
+
+export interface RagMetricSummary {
+  answer_faithfulness: number;
+  answer_relevance: number;
+  context_precision: number;
+  context_recall: number;
+  avg_latency_ms: number;
+  avg_tokens_used: number;
+  avg_cost_per_query: number;
+}
+
+export type RagQueryType =
+  | "multi_hop"
+  | "factual"
+  | "aggregation"
+  | "comparison"
+  | "temporal";
+
+export interface RagQuerySideResult {
+  answer: string;
+  context_snippets: string[];
+  faithfulness: number;
+  relevance: number;
+  context_precision: number;
+  context_recall: number;
+  latency_ms: number;
+  tokens_used: number;
+}
+
+export interface RagQueryResult {
+  id: string;
+  query: string;
+  query_type: RagQueryType;
+  graph_rag: RagQuerySideResult;
+  vector_rag: RagQuerySideResult;
+  winner: "graph" | "vector" | "tie";
+  ground_truth: string;
+}
+
+export interface RagQueryTypeBreakdown {
+  query_type: string;
+  graph_avg_score: number;
+  vector_avg_score: number;
+  count: number;
+}
+
+export interface RagIndexBuildCost {
+  time_s: number;
+  cost_usd: number;
+  storage_mb: number;
+}
+
+export interface RagComparisonData {
+  dataset: RagEvalDataset;
+  graph_rag_summary: RagMetricSummary;
+  vector_rag_summary: RagMetricSummary;
+  query_type_breakdown: RagQueryTypeBreakdown[];
+  win_loss: {
+    graph_wins: number;
+    vector_wins: number;
+    ties: number;
+  };
+  queries: RagQueryResult[];
+  index_build_cost: {
+    graph_rag: RagIndexBuildCost;
+    vector_rag: RagIndexBuildCost;
+  };
+}
