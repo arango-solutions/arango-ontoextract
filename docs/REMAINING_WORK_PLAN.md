@@ -43,7 +43,7 @@ The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline
 | ArangoDB Visualizer (§6.6) | **Complete** | Themes, canvas actions, saved queries (temporal-aware), viewpoints, auto-install |
 | MCP Server (§6.10) | **Complete** | Runtime MCP tools for ontology operations |
 | Pipeline Monitor (§6.12) | **Complete** | Real-time step DAG with polling, metrics (tokens, cost, entities, confidence, completeness, agreement), error log |
-| Quality Metrics (§6.13) | **Mostly Complete** | Multi-signal confidence (7 signals incl. faithfulness judge + semantic validator), ontology health score, quality panel in library, `/quality` dashboard with recharts radar chart, OntoQA schema metrics, connectivity metric. Missing: history tracking, gold-standard recall. |
+| Quality Metrics (§6.13) | **Mostly Complete** | Multi-signal confidence (7 signals incl. faithfulness judge + semantic validator), ontology health score, quality panel in library, unified `/dashboard` with recharts radar chart, OntoQA schema metrics, connectivity metric, RAG comparison. Missing: history tracking, gold-standard recall. |
 | Import/Export (§6.8 partial) | **Partial** | Export (Turtle, JSON-LD, CSV), OWL import via ArangoRDF, library search (ArangoSearch), tagging, full CRUD with cascade. Missing: imports graph, standard ontology catalog. |
 | Admin (§7.2.1) | **Complete** | Soft/full reset (with named graph cleanup), extraction run deletion |
 | Deletion & Integrity | **Complete** | Temporal soft-delete for ontology deprecation, cross-ontology edge cascade, curation reject cascade, document delete with provenance expiry. See `docs/DELETION_AND_REFERENTIAL_INTEGRITY.md`. |
@@ -56,7 +56,7 @@ The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline
 | Imports & Dependencies (§6.15, §6.8.8–8.16) | **Not Started** | No `owl:imports` edge tracking, no standard ontology catalog, no dependency graph UI |
 | Constraints (§6.14) | **Not Started** | No OWL restriction or SHACL shape extraction, import, display, or export |
 | Schema Extraction (§6.9) | **Stub** | Service shell exists but minimal implementation |
-| Quality Dashboard (§6.13.7) | **Partially Done** | `/quality` page with recharts radar chart, OntoQA metrics, connectivity metric implemented. Missing: history tracking, gold-standard recall, curation throughput timer |
+| Quality Dashboard (§6.13.7) | **Partially Done** | Unified `/dashboard` with recharts radar chart, OntoQA metrics, connectivity metric, RAG comparison, qualitative evaluation. Missing: history tracking, gold-standard recall, curation throughput timer |
 | Testing & CI (§8) | **Partial** | ~500 unit tests exist but no CI pipeline, no coverage enforcement |
 | Production Ops (§8.5) | **Not Started** | No OpenTelemetry, no alerting, no performance benchmarks |
 | Visualizer Migration | **Not Started** | React Flow → Sigma.js/graphology (PRD target architecture) |
@@ -75,7 +75,7 @@ The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline
 | Staging endpoint standardized to `edge_type` (was `type`) | §7.8 | Consistent API contract |
 | System reset cleans up per-ontology named graphs and additional collections | §7.2.1 | Clean fresh start |
 | PRD corrected: ArangoDB uses FAISS IVF (not standalone HNSW) for vector indexes | §6.7 | Accurate technical spec |
-| Quality dashboard page (`/quality`) with recharts radar chart | FR-13.7 | All quality dimensions visible on spider chart |
+| Unified quality dashboard (`/dashboard`) with recharts radar chart, RAG comparison | FR-13.7 | All quality dimensions visible on spider chart |
 | OntoQA schema metrics (relationship/attribute/inheritance richness, max depth, etc.) | FR-13.16 | Industry-standard ontology evaluation |
 | Connectivity metric in health score (20% weight) | FR-13.14 | Flat taxonomies without relationships now penalized |
 | `related_to` edge materialization from object properties | FR-2.7 | Inter-class relationships visible in graph |
@@ -199,7 +199,7 @@ The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline
 
 | # | Task | Type | Estimate | Description |
 |---|------|------|----------|-------------|
-| Q.1 | Quality dashboard page | Frontend | 6h | New `/quality` route. Summary cards showing aggregate metrics across all ontologies. Traffic-light indicators against PRD targets (green ≥ target, yellow within 10%, red below). Per-ontology drill-down. |
+| Q.1 | Quality dashboard page | Frontend | 6h | **DONE** — unified `/dashboard` route with summary cards, per-ontology scorecard table, radar chart, metric cards, qualitative evaluation, RAG comparison, and flags/alerts. |
 | Q.2 | Quality history API | Backend | 4h | `GET /quality/{ontology_id}/history` returns quality scores over time. Store quality snapshots in a `quality_history` collection on each extraction completion. |
 | Q.3 | Trend sparklines | Frontend | 3h | Small sparkline charts on the quality dashboard showing metric trends from history data. |
 | Q.4 | Gold-standard recall comparison | Backend | 4h | `POST /quality/recall` accepts a reference OWL/TTL file. Computes `recall = |extracted ∩ reference| / |reference|` using fuzzy label matching. Returns per-class match details. |

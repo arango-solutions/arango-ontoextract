@@ -12,7 +12,6 @@ from app.services.quality_metrics import (
     compute_dashboard_payload,
     compute_extraction_quality,
     compute_ontology_quality,
-    compute_quality_summary,
     get_class_scores,
     get_qualitative_evaluation,
 )
@@ -20,17 +19,6 @@ from app.services.quality_metrics import (
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/quality", tags=["quality"])
-
-
-@router.get("/summary")
-async def quality_summary() -> dict:
-    """Aggregate quality metrics across all registered ontologies."""
-    try:
-        db = get_db()
-        return compute_quality_summary(db)
-    except Exception as exc:
-        log.exception("Failed to compute quality summary")
-        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @router.get("/dashboard")

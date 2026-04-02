@@ -580,24 +580,6 @@ def _summarise_ontologies(ontologies: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def compute_quality_summary(db: StandardDatabase) -> dict[str, Any]:
-    """Aggregate quality metrics across all registered ontologies."""
-    ontology_ids: list[str] = []
-    if _has(db, "ontology_registry"):
-        ontology_ids = list(run_aql(db,
-            "FOR o IN ontology_registry RETURN o._key"
-        ))
-
-    ontologies: list[dict[str, Any]] = []
-    for oid in ontology_ids:
-        try:
-            ontologies.append(compute_ontology_quality(db, oid))
-        except Exception:
-            log.warning("quality computation failed for ontology %s", oid, exc_info=True)
-
-    return _summarise_ontologies(ontologies)
-
-
 def get_class_scores(
     db: StandardDatabase,
     ontology_id: str,

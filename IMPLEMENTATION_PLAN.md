@@ -525,7 +525,7 @@ Each gap is classified by severity:
 | # | Task | Files | Fix |
 |---|------|-------|-----|
 | F2.1 | Quality metrics types | `frontend/src/types/quality.ts` (new) | TypeScript interfaces for `OntologyQualityMetrics` (acceptance_rate, avg_confidence, completeness, coherence_issues, coverage, dedup_accuracy, time_to_ontology), `QualityHistory`, `QualitySummary`. |
-| F2.2 | Quality dashboard page | `frontend/src/app/quality/page.tsx` (new) | New route `/quality`. Summary cards showing aggregate metrics across all ontologies. Traffic-light indicators: green (meets PRD target), yellow (within 10%), red (below target). Trend sparklines using quality history API. |
+| F2.2 | Quality dashboard page | `frontend/src/app/dashboard/page.tsx` | Unified `/dashboard` route. Summary cards, per-ontology scorecard table, radar chart, metric cards, qualitative evaluation, RAG comparison, and flags/alerts. |
 | F2.3 | Per-ontology quality panel in Library | `frontend/src/app/library/page.tsx` | Add a "Quality" tab or section to the inline detail panel when an ontology is selected. Show acceptance rate, avg confidence, completeness %, coherence issues, structural warnings (orphans, cycles). |
 | F2.4 | Curation session timer | `frontend/src/app/curation/[runId]/page.tsx` | Add session start timestamp on page load. On each curation decision, compute elapsed time and send to backend. Display "concepts reviewed / hour" counter in the curation UI header. |
 | F2.5 | Low-confidence highlighting in curation graph | `frontend/src/components/graph/GraphCanvas.tsx` | FR-4.8 requires low-confidence entities to be visually highlighted. Add conditional node styling: red border for confidence < 0.5, yellow for 0.5–0.7, green for > 0.7. |
@@ -776,7 +776,7 @@ All PRD §6 features are tracked in the implementation plan:
 | §6.10 FR-10.1–10.5 | MCP server (runtime) | Phase 5 | **IMPLEMENTED** |
 | §6.11 FR-11.1–11.10 | Agentic extraction pipeline | Phase 2 + quality judge | **IMPLEMENTED** (6-agent parallel pipeline, async `ainvoke`, concurrent extraction, `Annotated` reducers for state merging) |
 | §6.12 FR-12.1–12.10 | Pipeline monitor dashboard | Phase 2 + L + fixes | **IMPLEMENTED** (polling, step DAG, metrics, errors) |
-| §6.13 FR-13.1–13.13 | Ontology quality metrics | Sprint F + confidence fixes + Q.1 | **MOSTLY IMPLEMENTED** (7-signal confidence, health score, quality panel, `/quality` dashboard with recharts radar chart, OntoQA schema metrics, connectivity metric; missing: history tracking, gold-standard recall) |
+| §6.13 FR-13.1–13.13 | Ontology quality metrics | Sprint F + confidence fixes + Q.1 | **MOSTLY IMPLEMENTED** (7-signal confidence, health score, quality panel, unified `/dashboard` with recharts radar chart, OntoQA schema metrics, connectivity metric, RAG comparison; missing: history tracking, gold-standard recall) |
 | §6.14 FR-14.1–14.7 | OWL restrictions + SHACL | Sprint I | NOT STARTED |
 | §6.15 FR-15.1–15.6 | Ontology imports & dependencies | Sprint H | NOT STARTED |
 | §7.2.1 | Admin reset endpoints | L.3 + fixes | **IMPLEMENTED** (with named graph cleanup) |

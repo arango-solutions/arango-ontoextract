@@ -22,7 +22,7 @@ from app.api.orgs import (
     update_organization,
     update_user_role,
 )
-from app.api.quality import quality_for_ontology, quality_summary
+from app.api.quality import quality_for_ontology
 
 
 class TestOrgRoutes:
@@ -128,21 +128,6 @@ class TestOrgRoutes:
 
 
 class TestQualityRoutes:
-    @pytest.mark.asyncio
-    async def test_quality_summary_success_and_error(self):
-        with (
-            patch("app.api.quality.get_db", return_value=MagicMock()),
-            patch(
-                "app.api.quality.compute_quality_summary",
-                side_effect=[{"ontologies": 2}, RuntimeError("boom")],
-            ),
-        ):
-            result = await quality_summary()
-            assert result == {"ontologies": 2}
-            with pytest.raises(HTTPException) as exc:
-                await quality_summary()
-        assert exc.value.status_code == 500
-
     @pytest.mark.asyncio
     async def test_quality_for_ontology_merges_results_and_handles_error(self):
         with (
