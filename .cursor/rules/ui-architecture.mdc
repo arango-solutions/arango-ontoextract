@@ -1,0 +1,51 @@
+---
+description: Enforces single-page, context-centric UI patterns for the object-centric workspace
+globs: frontend/src/components/**/*.tsx, frontend/src/app/**/*.tsx
+alwaysApply: true
+---
+# UI Architecture Rules — Object-Centric Workspace
+
+## Core Principles
+
+1. **NO NEW ROUTES.** All new features must integrate into the central unified workspace layout at `/workspace`. The only exception is the login page at `/login`.
+
+2. **NO ACTION BUTTON PANELS.** Use right-click context menus (`onContextMenu`) for all node, edge, document, and ontology operations. Do not create toolbar buttons or side panel action buttons as the primary interaction path.
+
+3. **CONTEXT OVER NAVIGATION.** Do not force the user to navigate away from the graph canvas to complete a task. Use overlay panels, lenses, and context menus instead.
+
+4. **DRAG AND DROP.** Favor drag-and-drop interactions (e.g., dropping a document onto the canvas to trigger extraction, dragging a class onto another for reparenting) over multi-step form wizards.
+
+5. **GRAPH LENSES, NOT TABS.** Instead of separate modes/tabs for confidence, curation status, diff, etc., use togglable "Lenses" that change node/edge styling dynamically on the same canvas.
+
+6. **RIGHT-CLICK MENUS.** Implement rich context menus:
+   - Right-click on Class Node → [Edit Metadata, Approve/Reject, Create Relationship, Merge, View History, View Provenance, Delete]
+   - Right-click on Edge → [Change Type, Reverse Direction, Approve, Delete]
+   - Right-click on Canvas → [Add New Class, Add Document, Center View, Fit All]
+   - Right-click on Document (left panel) → [Extract to New Ontology, Extract to Selected Ontology, View Chunks, Rename, Delete]
+   - Right-click on Ontology (left panel) → [Open in Canvas, Edit Metadata, Export, Add Document, View Quality, Delete]
+
+7. **PERSISTENT ZONES.** The workspace has three persistent zones that never navigate away:
+   - Left Panel: Asset Explorer (documents + ontologies tree)
+   - Center: Graph Canvas (Sigma.js/graphology or React Flow)
+   - Bottom Bar: VCR Timeline (always visible when an ontology is open)
+
+8. **OVERLAY PANELS, NOT PAGES.** For detail views (class properties, provenance, quality metrics), use slide-in panels or floating panels overlaying the canvas, not separate pages.
+
+## Anti-Patterns to Avoid
+
+- ❌ Creating new Next.js route pages for features
+- ❌ Using `<Link href="/some-page">` for workflow navigation
+- ❌ Building multi-step wizards that require page transitions
+- ❌ Toolbar buttons as the only way to perform actions
+- ❌ Separate "edit mode" vs "view mode" — the canvas is always editable
+- ❌ Side panels that replace the canvas content
+
+## Preferred Patterns
+
+- ✅ Context menus (`onContextMenu`) for all entity actions
+- ✅ Keyboard shortcuts for common operations
+- ✅ Lens toggles in a compact toolbar above the canvas
+- ✅ Drag-and-drop between the asset explorer and canvas
+- ✅ Inline editing (double-click to rename, click to select)
+- ✅ Floating detail panels that can be repositioned/minimized
+- ✅ Toast notifications instead of page-level alerts

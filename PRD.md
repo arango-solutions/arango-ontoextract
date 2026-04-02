@@ -1078,6 +1078,9 @@ This evolution should be planned as a separate phase after the current extractio
 | FR-4.11 | Direct class/property creation in the editor | In ontology mode, users can manually add new classes, properties, and edges directly in the graph editor without needing an extraction run. New entities are created with `source_type: "manual"` and go through the same temporal versioning. Useful for filling gaps LLM extraction missed. |
 | FR-4.12 | Drag-and-drop reparenting | Users can drag a class node onto another class to create or change a `subclass_of` relationship. The old edge is expired and a new edge created (temporal versioning). Visual feedback shows valid drop targets. |
 | FR-4.13 | Library-to-editor navigation | Clicking "Edit" on an ontology card in the library page opens the ontology graph editor. Clicking a class in the class hierarchy opens the editor scrolled/zoomed to that class. |
+| FR-4.14 | Context-menu driven architecture | All entity actions MUST be accessible via right-click context menus (`onContextMenu` events), eliminating the need to navigate to side panels or separate pages. Right-click on Class Node → [Edit Metadata, Approve/Reject, Create Relationship, Merge, View History]. Right-click on Edge → [Change Type, Reverse Direction, Delete, Approve]. Right-click on Canvas → [Add New Class, Add Document, Center View]. Right-click on Document (asset explorer) → [Extract to New Ontology, View Chunks, Delete]. |
+| FR-4.15 | Viewport lenses (display modes) | Instead of separate modes or tabs for curation vs. viewing, the central canvas supports instant toggleable "Lenses" that change node/edge styling dynamically: **Semantic Lens** (default, colors by OWL type), **Confidence Lens** (traffic-light by multi-signal score), **Curation Lens** (highlights staging/unapproved with pulsing borders), **Diff Lens** (green additions, red removals based on VCR position), **Source Lens** (colors by source_type: extraction/import/manual/foundation). |
+| FR-4.16 | Single-page workspace | All curation, editing, viewing, and quality workflows occur within a single unified workspace (`/workspace`) without page-to-page navigation. The graph canvas, asset explorer, detail panel, and VCR timeline are persistent zones. See §7.8 for full specification. |
 
 ### 6.5 Temporal Time Travel & VCR Timeline (Ontology History)
 
@@ -2453,20 +2456,110 @@ The architecture supports WebSocket connections for real-time updates on long-ru
 
 Clients that don't support WebSocket can poll the corresponding `GET` status endpoints instead.
 
-### 7.8 Frontend Pages (Next.js Routes)
+### 7.8 Frontend Architecture: Object-Centric Workspace
 
-| Route | Page | Description |
-|-------|------|-------------|
-| `/` | Landing / Dashboard | Backend health status, ontology count, quick links to Upload/Library/Pipeline |
-| `/upload` | Document Upload | Drag-and-drop file upload (PDF, DOCX, Markdown), recent documents list with status and chunk counts. Option to target an existing ontology or create new. Searchable "Base Ontologies" selector to choose upper/domain ontologies as extraction context. Import from standard ontology catalog (FIBO, Schema.org, etc.). |
-| `/library` | Ontology Library | Browse registered ontologies with full-text search; filter by tier, status, source type; view imports dependency graph; click an ontology card to view its class hierarchy with inline class detail (properties, constraints, description, confidence, link to ArangoDB Visualizer). "Add Document" action to extend ontology with new source material. |
-| `/pipeline` | Pipeline Monitor | List extraction runs, view agent DAG, metrics, errors, timeline; "Curate" button links to curation page |
-| `/curation/[runId]` | Visual Curation (Staging Mode) | Interactive graph canvas showing staging graph for an extraction run, with node/edge selection, approve/reject actions, batch operations, VCR timeline, diff view, and promote panel |
-| `/ontology/[ontologyId]/edit` | Ontology Graph Editor (Ontology Mode) | Full graph editor for an approved ontology — same graph canvas, VCR timeline, and node/edge actions as curation, plus direct class/property creation, drag-and-drop reparenting, and ongoing editing without requiring an extraction run. Accessible from the library page. |
-| `/entity-resolution` | Entity Resolution | Run and review ER pipelines, view merge candidates and clusters |
-| `/login` | Login | Authentication page; renders login form (or redirects to OIDC provider). Bypassed when `NEXT_PUBLIC_DEV_MODE=true`. |
-| `/quality` | Quality Dashboard Alias | Legacy route retained for compatibility; redirects to `/dashboard`. |
-| `/dashboard` | Ontology Quality Dashboard | Curated dashboard focused on ontology quality scores and LLM-as-judge metrics. Summary cards (avg health, avg faithfulness, avg semantic validity, avg completeness), per-ontology scorecard table (sortable by any metric), radar/spider chart for LLM-as-judge dimensions (faithfulness, semantic validity, completeness, structural integrity, property richness, source coverage) with overlaid polygons for multi-ontology comparison, metric cards with scores and descriptions, per-ontology strengths/weaknesses from Qualitative Evaluation Agent, per-ontology estimated extraction cost, flags/alerts for problem ontologies, and an OntoQA panel limited to the 4 audited schema metrics. The GraphRAG vs VectorRAG tab is currently clearly labeled mock/demo data until a live benchmark API is added. Drill-down per ontology shows class-level score distribution and confidence signal breakdown. See §6.13.3 for full specification. |
+**Design Philosophy:** The frontend is a **single-page workspace** that eliminates tab-hopping and page navigation. Instead of separate pages for upload, library, curation, editing, and quality, all workflows occur within a unified interface composed of persistent zones. Users interact with objects (documents, ontologies, classes, edges) via **right-click context menus** and **drag-and-drop**, not by navigating to different pages.
+
+**Why this matters:** The original multi-route architecture (`/upload`, `/library`, `/curation/[runId]`, `/ontology/[id]/edit`, `/pipeline`, `/quality`) forces users to jump between pages to complete simple workflows. For example, editing an ontology requires: Library → click ontology → click "Edit Graph" → new page loads → find the class → edit → go back to Library. An object-centric workspace makes this: right-click ontology → it opens in the canvas → right-click class → edit. One workspace, zero navigation.
+
+#### Workspace Layout
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  [≡ AOE]  Lens: [Semantic ▾] [Confidence] [Curation] [Diff]  [⚙]  │
+├──────────┬──────────────────────────────────────────────┬───────────┤
+│          │                                              │           │
+│  Asset   │          Central Graph Canvas                │  Detail   │
+│ Explorer │     (Sigma.js / graphology viewport)         │  Panel    │
+│          │                                              │ (floating │
+│ ▼ Docs   │   Classes, edges, relationships rendered     │  overlay) │
+│   📄 fin │   as interactive graph. All editing,         │           │
+│   📄 sup │   curation, and viewing happen HERE.         │           │
+│          │                                              │           │
+│ ▼ Onto   │   Right-click any node/edge for actions.     │           │
+│   🔷 Fin │   Drag document onto canvas to extract.     │           │
+│   🔷 Sup │   Double-click label to rename inline.      │           │
+│   🔷 AWS │                                              │           │
+│          │                                              │           │
+│ ▼ Runs   │                                              │           │
+│   ⚡ run │                                              │           │
+│          │                                              │           │
+├──────────┴──────────────────────────────────────────────┴───────────┤
+│  ◄◄  ◄  ▶  ►►  ║▬▬▬▬▬▬●▬▬▬▬▬▬▬▬▬▬▬▬▬▬║  2026-04-01 14:32  1x     │
+│                    VCR Timeline (always visible)                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### Persistent Zones
+
+| Zone | Content | Behavior |
+|------|---------|----------|
+| **Left Panel: Asset Explorer** | Collapsible tree-view containing Documents, Ontologies, and Pipeline Runs. Supports search/filter, drag-and-drop, and right-click context menus. | Documents can be dragged onto an ontology to trigger extraction. Right-click for CRUD. Selecting an ontology opens it in the canvas. |
+| **Center Canvas: Unified Editor** | Graph viewport (target: Sigma.js/graphology; current: React Flow). This is where curation, editing, viewing, and exploration all happen simultaneously. No separate "edit mode" vs "view mode." | Always editable. Right-click nodes/edges for actions. Double-click labels to rename. Drag nodes to reposition. Lens toolbar toggles visual overlays. |
+| **Right Panel: Detail Panel** | Floating overlay showing contextual details for the selected entity (class metadata, properties, provenance, version history, quality scores). Appears on node/edge selection, dismissible. | Does NOT replace the canvas — overlays on top. Can be repositioned, minimized, or pinned. |
+| **Bottom Bar: VCR Timeline** | Persistent timeline slider for ontology time travel. Always visible when an ontology is open in the canvas. | Scrubbing the timeline filters the canvas to show only entities active at that point. Play/rewind for animated history. |
+| **Top Bar: Lens Toolbar** | Compact toolbar for switching viewport lenses, accessing workspace settings, and global actions (import, export, reset). | Lens switches are instant — no page reload, no tab switch. |
+
+#### Context Menus (Right-Click Actions)
+
+| Target | Menu Items |
+|--------|-----------|
+| **Class Node** | Edit Metadata, Approve/Reject (if staging), Create Relationship, Add Property, Merge with..., View Version History, View Provenance, Export, Delete |
+| **Edge** | Edit Label, Change Type, Reverse Direction, Approve (if staging), Delete |
+| **Canvas Background** | Add New Class, Import Document (triggers extraction into current ontology), Fit All Nodes, Toggle Minimap, Change Layout (hierarchical/force-directed) |
+| **Document (Left Panel)** | Extract to New Ontology, Extract to [Selected Ontology], View Chunks, Re-extract, Rename, Delete |
+| **Ontology (Left Panel)** | Open in Canvas, Edit Metadata (name, tags, description), Export (OWL/TTL/JSON-LD/CSV), Add Document, View Quality Radar, Create Release, Deprecate |
+| **Pipeline Run (Left Panel)** | View in Canvas (staging graph), View Metrics, View Errors, Retry, Delete |
+
+#### Viewport Lenses (Display Modes)
+
+Instead of separate tabs for confidence, curation status, and diff, the canvas supports instant toggleable "Lenses" that change node/edge styling dynamically without leaving the editor:
+
+| Lens | Styling | Purpose |
+|------|---------|---------|
+| **Semantic (Default)** | Colors by OWL type: blue for classes, green for datatype properties, orange for object properties, purple for imported | Standard ontology exploration |
+| **Confidence** | Traffic-light: green >0.7, yellow 0.5–0.7, red <0.5. Node size proportional to confidence. Low-confidence nodes pulse. | Spot weak LLM extractions instantly |
+| **Curation** | Staging/unapproved nodes have pulsing orange borders. Approved nodes are solid green. Rejected nodes are faded/strikethrough. | Guide curators to unreviewed entities |
+| **Diff** | Additions in green, removals in red, changes in yellow. Based on VCR timeline position vs. previous state. | Review what changed between time points |
+| **Source** | Colors by `source_type`: blue for extraction, purple for import, green for manual, gray for foundation | Understand provenance at a glance |
+
+#### Drag-and-Drop Interactions
+
+| Drag Source | Drop Target | Action |
+|-------------|-------------|--------|
+| Document (left panel) | Canvas background | Trigger extraction → results appear in canvas |
+| Document (left panel) | Ontology (left panel) | Add document to ontology → incremental extraction |
+| Class node | Another class node | Create `rdfs:subClassOf` edge (reparenting) |
+| OWL/TTL file (OS file manager) | Canvas or left panel | Import ontology |
+
+#### Legacy Route Compatibility
+
+The previous multi-page routes redirect to the workspace with appropriate context:
+
+| Legacy Route | Workspace Behavior |
+|-------------|-------------------|
+| `/` | Opens workspace with no ontology selected (landing state) |
+| `/upload` | Opens workspace with asset explorer focused, file drop zone active |
+| `/library` | Opens workspace with asset explorer expanded showing ontologies |
+| `/curation/[runId]` | Opens workspace with staging graph loaded in canvas, curation lens active |
+| `/ontology/[id]/edit` | Opens workspace with ontology loaded in canvas |
+| `/pipeline` | Opens workspace with pipeline runs expanded in asset explorer |
+| `/quality` or `/dashboard` | Opens workspace with quality radar overlay visible |
+| `/login` | Separate page (only exception to single-page rule) |
+
+#### Requirements
+
+| ID | Requirement | Acceptance Criteria |
+|----|-------------|-------------------|
+| FR-7.8.1 | Single-page workspace at `/workspace` | All ontology workflows (upload, extract, curate, edit, review quality, export) completable without page navigation. Login is the only separate page. |
+| FR-7.8.2 | Context menus for all entity actions | Right-click on any class, edge, document, ontology, or pipeline run shows a contextually appropriate menu with all available actions. |
+| FR-7.8.3 | Viewport lenses replace mode tabs | Semantic, Confidence, Curation, Diff, and Source lenses togglable from the toolbar. Switching lenses instantly changes node/edge styling without reloading data. |
+| FR-7.8.4 | Asset explorer with tree view | Left panel shows documents, ontologies (with class counts), and pipeline runs in a collapsible tree. Supports search, filter, and drag-and-drop. |
+| FR-7.8.5 | Drag-and-drop document ingestion | Dragging a document from the asset explorer or OS file manager onto the canvas triggers extraction. Dragging onto a specific ontology triggers incremental extraction. |
+| FR-7.8.6 | Floating detail panel | Selecting a node/edge opens a floating panel with metadata, properties, provenance, history, and quality scores. Panel overlays the canvas (doesn't replace it), can be repositioned and minimized. |
+| FR-7.8.7 | Persistent VCR timeline | Bottom bar always shows the VCR timeline when an ontology is open. Scrubbing filters the canvas. Play/rewind for animated history. No separate timeline tab. |
+| FR-7.8.8 | Legacy route redirects | All previous routes (`/upload`, `/library`, `/curation/*`, `/ontology/*/edit`, `/pipeline`, `/quality`, `/dashboard`) redirect to the workspace with appropriate context loaded. |
+| FR-7.8.9 | Keyboard shortcuts | Common actions have keyboard shortcuts: Ctrl+N (new class), Delete (remove selected), Ctrl+Z (undo via temporal revert), Ctrl+S (create release), Space (toggle play in VCR). |
 
 ---
 
