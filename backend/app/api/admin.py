@@ -51,7 +51,10 @@ def _remove_ontology_graphs(db) -> list[str]:
 
 def _require_reset_enabled() -> None:
     env_value = os.getenv("ALLOW_SYSTEM_RESET")
-    enabled = bool(env_value) and env_value.strip().lower() in {"1", "true", "yes", "on"}
+    if env_value is None:
+        enabled = False
+    else:
+        enabled = env_value.strip().lower() in {"1", "true", "yes", "on"}
 
     if not enabled:
         raise HTTPException(
