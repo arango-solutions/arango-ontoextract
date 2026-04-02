@@ -1441,10 +1441,12 @@ class TestTriggerExtraction:
 
 
 class TestGetExtractionStatus:
+    @patch("app.db.client.get_db")
     @patch("app.services.extraction.get_run")
-    def test_completed_run(self, mock_get_run):
+    def test_completed_run(self, mock_get_run, mock_get_db):
         from app.mcp.tools.pipeline import register_pipeline_tools
 
+        mock_get_db.return_value = MagicMock()
         mock_get_run.return_value = {
             "status": "completed",
             "doc_id": "d1",
@@ -1466,10 +1468,12 @@ class TestGetExtractionStatus:
         assert result["classes_extracted"] == 5
         assert result["step_count"] == 2
 
+    @patch("app.db.client.get_db")
     @patch("app.services.extraction.get_run")
-    def test_running_run(self, mock_get_run):
+    def test_running_run(self, mock_get_run, mock_get_db):
         from app.mcp.tools.pipeline import register_pipeline_tools
 
+        mock_get_db.return_value = MagicMock()
         mock_get_run.return_value = {
             "status": "running",
             "doc_id": "d1",
@@ -1484,10 +1488,12 @@ class TestGetExtractionStatus:
         assert result["elapsed_seconds"] is not None
         assert result["elapsed_seconds"] >= 4.0
 
+    @patch("app.db.client.get_db")
     @patch("app.services.extraction.get_run", side_effect=Exception("not found"))
-    def test_error(self, mock_get_run):
+    def test_error(self, mock_get_run, mock_get_db):
         from app.mcp.tools.pipeline import register_pipeline_tools
 
+        mock_get_db.return_value = MagicMock()
         tools = _capture_tools(register_pipeline_tools)
         result = tools["get_extraction_status"]("bad")
         assert "error" in result
