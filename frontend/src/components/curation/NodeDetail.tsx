@@ -75,7 +75,9 @@ export default function NodeDetail({
         <div className="flex items-center justify-between mb-1">
           <span className="text-xs font-medium text-gray-600">Confidence</span>
           <span className="text-xs text-gray-500">
-            {(node.confidence * 100).toFixed(0)}% — {confidenceLabel(node.confidence)}
+            {node.confidence != null && !isNaN(node.confidence)
+              ? `${(node.confidence * 100).toFixed(0)}% — ${confidenceLabel(node.confidence)}`
+              : "N/A — Imported"}
           </span>
         </div>
         <div
@@ -83,8 +85,8 @@ export default function NodeDetail({
           data-testid="confidence-bar"
         >
           <div
-            className={`h-full rounded-full transition-all ${confidenceBarColor(node.confidence)}`}
-            style={{ width: `${node.confidence * 100}%` }}
+            className={`h-full rounded-full transition-all ${confidenceBarColor(node.confidence ?? 0)}`}
+            style={{ width: `${(node.confidence ?? 0) * 100}%` }}
           />
         </div>
       </div>
