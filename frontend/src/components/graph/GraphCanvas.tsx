@@ -263,12 +263,16 @@ function computeLayout(
     nextX += COL_WIDTH / 2;
   }
 
-  for (const cls of classes) {
-    if (!positions.has(cls._key)) {
-      positions.set(cls._key, { x: nextX, y: 0 });
-      nextX += COL_WIDTH;
-    }
-  }
+  const orphans = classes.filter((c) => !positions.has(c._key));
+  const ORPHAN_COLS = Math.max(3, Math.ceil(Math.sqrt(orphans.length)));
+  orphans.forEach((cls, idx) => {
+    const col = idx % ORPHAN_COLS;
+    const row = Math.floor(idx / ORPHAN_COLS);
+    positions.set(cls._key, {
+      x: nextX + col * COL_WIDTH,
+      y: row * ROW_HEIGHT,
+    });
+  });
 
   return positions;
 }
@@ -368,18 +372,18 @@ export default function GraphCanvas({
             ? { markerStart: { type: MarkerType.ArrowClosed } }
             : { markerEnd: { type: MarkerType.ArrowClosed } }),
           style: {
-            stroke: isExtendsDomain ? "#a855f7" : (EDGE_COLORS[edgeType] ?? "#94a3b8"),
-            strokeWidth: isExtendsDomain ? 2.5 : 2,
+            stroke: EDGE_COLORS[edgeType] ?? "#94a3b8",
+            strokeWidth: edgeType === "related_to" ? 2.5 : 2,
             strokeDasharray: isExtendsDomain ? "6 3" : undefined,
           },
           labelStyle: {
-            fill: isExtendsDomain ? "#7c3aed" : "#64748b",
-            fontSize: 11,
-            fontWeight: isExtendsDomain ? 600 : 500,
+            fill: edgeType === "related_to" ? "#1d4ed8" : isExtendsDomain ? "#7c3aed" : "#64748b",
+            fontSize: edgeType === "related_to" ? 12 : 11,
+            fontWeight: edgeType === "related_to" ? 600 : 500,
           },
           labelBgStyle: {
-            fill: "#f8fafc",
-            fillOpacity: 0.9,
+            fill: edgeType === "related_to" ? "#eff6ff" : "#f8fafc",
+            fillOpacity: 0.95,
           },
           labelBgPadding: [4, 2] as [number, number],
           data: { edgeKey: edge._key },
