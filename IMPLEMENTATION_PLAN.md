@@ -761,7 +761,7 @@ All PRD §6 features are tracked in the implementation plan:
 | §6.1 FR-1.6 | Upload status + auto-extract | Phase 1 + L.7 | **IMPLEMENTED** |
 | §6.1 FR-1.7–1.8 | Multi-doc ontologies, add doc | Sprint G | **IMPLEMENTED** |
 | §6.1 FR-1.9–1.10 | Full CRUD, many-to-many | Sprint J | **IMPLEMENTED** |
-| §6.2 FR-2.1–2.6 | Core extraction pipeline | Phase 2 | **IMPLEMENTED** |
+| §6.2 FR-2.1–2.6 | Core extraction pipeline | Phase 2 | **IMPLEMENTED** (parallel fork/join, object property detection, deferred relationship resolution, `related_to` edge materialization) |
 | §6.2 FR-2.7–2.11 | Materialization, graphs, visualizer | Phase 2 + L.18–L.22 | **IMPLEMENTED** |
 | §6.2 FR-2.12–2.13 | Incremental + multi-doc extraction | Sprint G | **IMPLEMENTED** |
 | §6.3 FR-3.1–3.5 | Tier 2 local extensions | Sprint B | **IMPLEMENTED** |
@@ -774,9 +774,9 @@ All PRD §6 features are tracked in the implementation plan:
 | §6.8 FR-8.8–8.16 | Imports graph, catalog, search | Sprint J (partial) | PARTIALLY IMPLEMENTED — search done, imports/catalog pending (Sprint H) |
 | §6.9 FR-9.1–9.7 | Schema extraction from ArangoDB | Phase 6 | STUB |
 | §6.10 FR-10.1–10.5 | MCP server (runtime) | Phase 5 | **IMPLEMENTED** |
-| §6.11 FR-11.1–11.10 | Agentic extraction pipeline | Phase 2 + quality judge | **IMPLEMENTED** (6-agent pipeline, async, concurrent) |
+| §6.11 FR-11.1–11.10 | Agentic extraction pipeline | Phase 2 + quality judge | **IMPLEMENTED** (6-agent parallel pipeline, async `ainvoke`, concurrent extraction, `Annotated` reducers for state merging) |
 | §6.12 FR-12.1–12.10 | Pipeline monitor dashboard | Phase 2 + L + fixes | **IMPLEMENTED** (polling, step DAG, metrics, errors) |
-| §6.13 FR-13.1–13.13 | Ontology quality metrics | Sprint F + confidence fixes | **MOSTLY IMPLEMENTED** (7-signal confidence, health score, quality panel; missing: /quality page, history, gold-standard recall) |
+| §6.13 FR-13.1–13.13 | Ontology quality metrics | Sprint F + confidence fixes + Q.1 | **MOSTLY IMPLEMENTED** (7-signal confidence, health score, quality panel, `/quality` dashboard with recharts radar chart, OntoQA schema metrics, connectivity metric; missing: history tracking, gold-standard recall) |
 | §6.14 FR-14.1–14.7 | OWL restrictions + SHACL | Sprint I | NOT STARTED |
 | §6.15 FR-15.1–15.6 | Ontology imports & dependencies | Sprint H | NOT STARTED |
 | §7.2.1 | Admin reset endpoints | L.3 + fixes | **IMPLEMENTED** (with named graph cleanup) |
@@ -791,11 +791,11 @@ All PRD §6 features are tracked in the implementation plan:
 | ~~K: Standalone Ontology Editor~~ | ~~1.5 weeks~~ | ~~12~~ | ~~P0~~ | | **DONE** |
 | ~~B: Backend Stubs~~ | ~~1 week~~ | ~~8~~ | ~~P1~~ | | **DONE** |
 | ~~G: Multi-Doc & Incremental~~ | ~~1.5 weeks~~ | ~~8~~ | ~~P1~~ | | **DONE** |
-| ~~F: Quality Metrics~~ | ~~1.5 weeks~~ | ~~18~~ | ~~P1~~ | | **MOSTLY DONE** (dashboard page pending) |
+| ~~F: Quality Metrics~~ | ~~1.5 weeks~~ | ~~18~~ | ~~P1~~ | | **MOSTLY DONE** (dashboard page done; history tracking, gold-standard recall pending) |
 | ~~J: CRUD, Search & Organization~~ | ~~1 week~~ | ~~9~~ | ~~P1~~ | | **DONE** |
 | H: Imports & Dependencies | 1.5 weeks | 9 | **P1** | Standard ontology support | PENDING |
 | ER: Entity Resolution Integration | 1.5 weeks | 9 | **P1** | Deduplication | PENDING |
-| Q: Quality Dashboard + History | 3 days | 5 | **P1** | PRD §6.13 completeness | PENDING |
+| Q: Quality Dashboard + History | 3 days | 5 | **P1** | PRD §6.13 completeness | PARTIALLY DONE (Q.1 radar dashboard done; Q.2–Q.5 pending) |
 | I: Constraints (OWL + SHACL) | 1 week | 9 | **P2** | Formal constraints | PENDING |
 | S: Schema Extraction | 1 week | 6 | **P2** | Reverse engineering | PENDING |
 | D: Test Coverage & CI | 1 week | 7 | **P2** | Quality gate | PENDING |
