@@ -100,13 +100,11 @@ def consistency_checker_node(state: ExtractionPipelineState) -> dict:
             duration_seconds=round(time.time() - start, 3),
             error="No extraction passes available",
         )
-        existing_logs = list(state.get("step_logs", []))
-        existing_logs.append(step_log)
         return {
             "consistency_result": None,
             "current_step": "consistency_checker",
             "errors": errors,
-            "step_logs": existing_logs,
+            "step_logs": [step_log],
         }
 
     uri_counter: Counter[str] = Counter()
@@ -193,9 +191,6 @@ def consistency_checker_node(state: ExtractionPipelineState) -> dict:
         },
     )
 
-    existing_logs = list(state.get("step_logs", []))
-    existing_logs.append(step_log)
-
     log.info(
         "consistency_checker completed",
         extra={
@@ -209,5 +204,5 @@ def consistency_checker_node(state: ExtractionPipelineState) -> dict:
     return {
         "consistency_result": consistency_result,
         "current_step": "consistency_checker",
-        "step_logs": existing_logs,
+        "step_logs": [step_log],
     }

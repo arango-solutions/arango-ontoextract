@@ -105,7 +105,7 @@ async function fetchStepsFromRest(
         }
         break;
       }
-      if (!foundRunning && completedFrontendSteps.size === 0) {
+      if (!foundRunning && completedFrontendSteps.size === 0 && stepLogs.length === 0) {
         map.set(PIPELINE_STEPS[0], { status: "running" });
       }
     } else if (runStatus === "completed" || runStatus === "completed_with_errors" || runStatus === "failed") {

@@ -540,7 +540,7 @@ def get_run_cost(
 
     avg_confidence: float | None = None
     completeness_pct: float | None = None
-    ontology_id = run.get("ontology_id")
+    ontology_id = run.get("ontology_id") or run.get("target_ontology_id")
     if not ontology_id and db.has_collection("ontology_registry"):
         matches = list(run_aql(db,
             "FOR o IN ontology_registry "
@@ -550,6 +550,17 @@ def get_run_cost(
         ))
         if matches:
             ontology_id = matches[0]
+    if not ontology_id and db.has_collection("ontology_registry"):
+        doc_ids = run.get("doc_ids") or ([run["doc_id"]] if run.get("doc_id") else [])
+        if doc_ids:
+            matches = list(run_aql(db,
+                "FOR o IN ontology_registry "
+                "FILTER o.source_document_id IN @dids OR o.source_document IN @dids "
+                "LIMIT 1 RETURN o._key",
+                bind_vars={"dids": doc_ids},
+            ))
+            if matches:
+                ontology_id = matches[0]
 
     if include_quality_metrics and ontology_id:
         try:
@@ -623,6 +634,52 @@ def _store_results(
 
 NEVER_EXPIRES: int = sys.maxsize
 
+_XSD_TYPES = {
+    "xsd:string", "xsd:integer", "xsd:int", "xsd:decimal", "xsd:float",
+    "xsd:double", "xsd:boolean", "xsd:date", "xsd:dateTime", "xsd:time",
+    "xsd:anyURI", "xsd:long", "xsd:short", "xsd:byte", "xsd:nonNegativeInteger",
+    "xsd:positiveInteger", "xsd:duration", "xsd:gYear", "xsd:gMonth",
+    "xsd:base64Binary", "xsd:hexBinary", "xsd:normalizedString", "xsd:token",
+}
+
+
+def _is_object_property(
+    range_val: str,
+    property_type: str,
+    uri_to_key: dict[str, str],
+    class_keys: dict[str, str],
+) -> bool:
+    """Determine if a property is an object property (relationship between classes)."""
+    if property_type == "object":
+        return True
+    if property_type == "datatype":
+        return False
+    if range_val.startswith("http"):
+        return True
+    if range_val.lower() in _XSD_TYPES or range_val.lower().startswith("xsd:"):
+        return False
+    if "#" in range_val:
+        frag = range_val.split("#")[-1]
+        if frag in class_keys or range_val in uri_to_key:
+            return True
+        return True
+    frag = range_val.split("/")[-1]
+    if frag in class_keys or range_val in class_keys:
+        return True
+    return False
+
+
+def _infer_property_type(
+    range_val: str,
+    property_type: str,
+    uri_to_key: dict[str, str],
+    class_keys: dict[str, str],
+) -> str:
+    """Return 'owl:ObjectProperty' or 'owl:DatatypeProperty'."""
+    if _is_object_property(range_val, property_type, uri_to_key, class_keys):
+        return "owl:ObjectProperty"
+    return "owl:DatatypeProperty"
+
 
 def _materialize_to_graph(
     db: StandardDatabase,
@@ -649,11 +706,12 @@ def _materialize_to_graph(
     has_prop_col = db.collection("has_property")
     extracted_col = db.collection("extracted_from")
     subclass_col = db.collection("subclass_of")
-    db.collection("related_to")
+    related_col = db.collection("related_to")
 
     class_keys: dict[str, str] = {}
     uri_to_key: dict[str, str] = {}
     class_parent_uris: list[tuple[str, str]] = []
+    deferred_relationships: list[tuple[str, str, str, str]] = []
 
     for cls in classes:
         cls_data = cls.model_dump() if hasattr(cls, "model_dump") else dict(cls)
@@ -699,10 +757,11 @@ def _materialize_to_graph(
                 "range": prop.get("range", "xsd:string"),
                 "ontology_id": ontology_id,
                 "confidence": prop.get("confidence", 0.0),
-                "rdf_type": (
-                    "owl:ObjectProperty"
-                    if prop.get("range", "").startswith("http")
-                    else "owl:DatatypeProperty"
+                "rdf_type": _infer_property_type(
+                    prop.get("range", ""),
+                    prop.get("property_type", ""),
+                    uri_to_key,
+                    class_keys,
                 ),
                 "created": now,
                 "expired": NEVER_EXPIRES,
@@ -721,6 +780,11 @@ def _materialize_to_graph(
                     "expired": NEVER_EXPIRES,
                 })
 
+            prop_range = prop.get("range", "")
+            prop_type = prop.get("property_type", "")
+            if _is_object_property(prop_range, prop_type, uri_to_key, class_keys):
+                deferred_relationships.append((key, prop_label, prop_key, prop_range))
+
         with contextlib.suppress(Exception):
             extracted_col.insert({
                 "_from": f"ontology_classes/{key}",
@@ -736,11 +800,32 @@ def _materialize_to_graph(
         if not parent_key:
             parent_frag = parent_uri.split("#")[-1].split("/")[-1]
             parent_key = class_keys.get(parent_frag) or class_keys.get(parent_uri)
-        if parent_key:
+        if parent_key and parent_key != child_key:
             with contextlib.suppress(Exception):
                 subclass_col.insert({
                     "_from": f"ontology_classes/{child_key}",
                     "_to": f"ontology_classes/{parent_key}",
+                    "ontology_id": ontology_id,
+                    "created": now,
+                    "expired": NEVER_EXPIRES,
+                })
+        elif parent_key == child_key:
+            log.warning("skipping self-referential subclass_of: %s", child_key)
+
+    for domain_key, prop_label, prop_key, prop_range in deferred_relationships:
+        range_frag = prop_range.split("#")[-1].split("/")[-1]
+        range_class_key = (
+            uri_to_key.get(prop_range)
+            or class_keys.get(range_frag)
+            or class_keys.get(prop_range)
+        )
+        if range_class_key and range_class_key != domain_key:
+            with contextlib.suppress(Exception):
+                related_col.insert({
+                    "_from": f"ontology_classes/{domain_key}",
+                    "_to": f"ontology_classes/{range_class_key}",
+                    "label": prop_label,
+                    "property_key": prop_key,
                     "ontology_id": ontology_id,
                     "created": now,
                     "expired": NEVER_EXPIRES,

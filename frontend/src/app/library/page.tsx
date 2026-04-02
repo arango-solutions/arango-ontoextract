@@ -529,10 +529,14 @@ export default function LibraryPage() {
                       Edit Graph
                     </a>
                     <a
-                      href={`/curation/${selectedOntology.extraction_run_id ?? selectedOntology._key}`}
+                      href={
+                        selectedOntology.extraction_run_id
+                          ? `/curation/${selectedOntology.extraction_run_id}`
+                          : `/ontology/${selectedOntology._key}/edit`
+                      }
                       className="flex-1 text-center text-xs px-3 py-2 border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-lg transition-colors font-medium"
                     >
-                      Curate
+                      {selectedOntology.extraction_run_id ? "Curate" : "Edit"}
                     </a>
                     <div className="relative">
                       <button
@@ -706,10 +710,14 @@ export default function LibraryPage() {
 
                     {/* Class-level actions */}
                     <a
-                      href={`/curation/${selectedOntology.extraction_run_id ?? selectedOntology._key}?focus=${selectedClass._key}`}
+                      href={
+                        selectedOntology.extraction_run_id
+                          ? `/curation/${selectedOntology.extraction_run_id}?focus=${selectedClass._key}`
+                          : `/ontology/${selectedOntology._key}/edit`
+                      }
                       className="block w-full text-center text-xs px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg transition-colors font-medium"
                     >
-                      View in Curation Dashboard
+                      {selectedOntology.extraction_run_id ? "View in Curation Dashboard" : "View in Editor"}
                     </a>
                   </div>
                 )}

@@ -34,12 +34,21 @@ const STATUS_ICONS: Record<StepStatusValue, string> = {
   paused: "\u23F8",
 };
 
+function parseTs(value?: string | number): number {
+  if (value == null) return 0;
+  if (typeof value === "number") return value < 1e12 ? value * 1000 : value;
+  const n = Number(value);
+  if (!isNaN(n) && n > 1e9 && n < 1e12) return n * 1000;
+  return new Date(value).getTime();
+}
+
 function formatElapsed(startedAt?: string, completedAt?: string): string {
   if (!startedAt) return "";
-  const start = new Date(startedAt).getTime();
-  const end = completedAt ? new Date(completedAt).getTime() : Date.now();
-  const diffMs = end - start;
-  if (diffMs < 1000) return `${diffMs}ms`;
+  const start = parseTs(startedAt);
+  const end = completedAt ? parseTs(completedAt) : Date.now();
+  if (!start || isNaN(start)) return "";
+  const diffMs = Math.abs(end - start);
+  if (diffMs < 1000) return `${Math.round(diffMs)}ms`;
   const seconds = Math.floor(diffMs / 1000);
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
@@ -103,54 +112,70 @@ function AgentNode({ data }: NodeProps<AgentNodeData>) {
 
 const nodeTypes = { agentNode: AgentNode };
 
+const NODE_W = 220;
 const NODE_GAP_Y = 110;
-const NODE_X = 100;
+
+const PIPELINE_TOPOLOGY: { id: PipelineStep; x: number; y: number }[] = [
+  { id: "strategy_selector",       x: 140, y: 0 },
+  { id: "extraction_agent",        x: 140, y: NODE_GAP_Y },
+  { id: "consistency_checker",     x: 140, y: NODE_GAP_Y * 2 },
+  { id: "quality_judge",           x: 10,  y: NODE_GAP_Y * 3 },
+  { id: "entity_resolution_agent", x: 270, y: NODE_GAP_Y * 3 },
+  { id: "pre_curation_filter",     x: 140, y: NODE_GAP_Y * 4 },
+];
+
+const PIPELINE_EDGES: [PipelineStep, PipelineStep][] = [
+  ["strategy_selector", "extraction_agent"],
+  ["extraction_agent", "consistency_checker"],
+  ["consistency_checker", "quality_judge"],
+  ["consistency_checker", "entity_resolution_agent"],
+  ["quality_judge", "pre_curation_filter"],
+  ["entity_resolution_agent", "pre_curation_filter"],
+];
 
 export default function AgentDAG({ steps }: AgentDAGProps) {
   const { nodes, edges } = useMemo(() => {
-    const flowNodes: Node<AgentNodeData>[] = PIPELINE_STEPS.map((stepKey, idx) => {
-      const stepStatus = steps.get(stepKey) ?? { status: "pending" as const };
+    const flowNodes: Node<AgentNodeData>[] = PIPELINE_TOPOLOGY.map((pos) => {
+      const stepStatus = steps.get(pos.id) ?? { status: "pending" as const };
       return {
-        id: stepKey,
+        id: pos.id,
         type: "agentNode",
-        position: { x: NODE_X, y: idx * NODE_GAP_Y },
+        position: { x: pos.x, y: pos.y },
         data: {
-          label: STEP_LABELS[stepKey],
+          label: STEP_LABELS[pos.id],
           stepStatus,
-          stepKey,
+          stepKey: pos.id,
         },
         draggable: false,
       };
     });
 
-    const flowEdges: Edge[] = [];
-    for (let i = 0; i < PIPELINE_STEPS.length - 1; i++) {
-      flowEdges.push({
-        id: `e-${PIPELINE_STEPS[i]}-${PIPELINE_STEPS[i + 1]}`,
-        source: PIPELINE_STEPS[i],
-        target: PIPELINE_STEPS[i + 1],
-        animated:
-          steps.get(PIPELINE_STEPS[i])?.status === "completed" &&
-          steps.get(PIPELINE_STEPS[i + 1])?.status === "running",
-        style: { stroke: "#94a3b8", strokeWidth: 2 },
-      });
-    }
+    const flowEdges: Edge[] = PIPELINE_EDGES.map(([src, tgt]) => ({
+      id: `e-${src}-${tgt}`,
+      source: src,
+      target: tgt,
+      animated:
+        steps.get(src)?.status === "completed" &&
+        steps.get(tgt)?.status === "running",
+      style: { stroke: "#94a3b8", strokeWidth: 2 },
+    }));
 
     return { nodes: flowNodes, edges: flowEdges };
   }, [steps]);
 
-  const onInit = useCallback((instance: { fitView: () => void }) => {
-    instance.fitView();
+  const onInit = useCallback((instance: { fitView: (opts?: Record<string, unknown>) => void }) => {
+    setTimeout(() => instance.fitView({ padding: 0.15 }), 50);
   }, []);
 
   return (
-    <div className="w-full" style={{ height: 600 }} data-testid="agent-dag">
+    <div className="w-full h-[580px]" data-testid="agent-dag">
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
         onInit={onInit}
         fitView
+        fitViewOptions={{ padding: 0.15 }}
         panOnDrag
         zoomOnScroll
         zoomOnPinch

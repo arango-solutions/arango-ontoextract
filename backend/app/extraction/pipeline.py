@@ -25,12 +25,12 @@ log = logging.getLogger(__name__)
 
 _EVENT_BUS: dict[str, Any] | None = None
 
-_NEXT_STEP: dict[str, str] = {
-    "strategy_selector": "extractor",
-    "extractor": "consistency_checker",
-    "consistency_checker": "quality_judge",
-    "quality_judge": "er_agent",
-    "er_agent": "filter",
+_NEXT_STEPS: dict[str, list[str]] = {
+    "strategy_selector": ["extractor"],
+    "extractor": ["consistency_checker"],
+    "consistency_checker": ["quality_judge", "er_agent"],
+    "quality_judge": ["filter"],
+    "er_agent": ["filter"],
 }
 
 
@@ -71,8 +71,14 @@ def _should_proceed_to_staging(state: ExtractionPipelineState) -> str:
 def build_pipeline() -> StateGraph:
     """Construct the LangGraph StateGraph for extraction.
 
-    Full pipeline: Strategy → Extraction → Consistency → ER → Pre-Curation Filter → Staging.
-    Includes human-in-the-loop breakpoint after pre-curation filter.
+    Pipeline topology (parallel fork/join after consistency checker):
+
+    Strategy → Extraction → Consistency ─┬─→ Quality Judge ─┬─→ Filter
+                                          └─→ ER Agent ──────┘
+
+    Quality Judge and ER Agent run in parallel since they both only
+    depend on the consistency result and don't depend on each other.
+    Filter waits for both to complete before running.
     """
     graph = StateGraph(ExtractionPipelineState)
 
@@ -95,16 +101,20 @@ def build_pipeline() -> StateGraph:
         },
     )
 
+    def _fork_after_consistency(state: ExtractionPipelineState) -> list[str]:
+        """Fork: run quality_judge and er_agent in parallel."""
+        result = state.get("consistency_result")
+        if result is None or (hasattr(result, "classes") and len(result.classes) == 0):
+            return []
+        return ["quality_judge", "er_agent"]
+
     graph.add_conditional_edges(
         "consistency_checker",
-        _should_retry_consistency,
-        {
-            "end": END,
-            "continue": "quality_judge",
-        },
+        _fork_after_consistency,
+        ["quality_judge", "er_agent"],
     )
 
-    graph.add_edge("quality_judge", "er_agent")
+    graph.add_edge("quality_judge", "filter")
     graph.add_edge("er_agent", "filter")
 
     graph.add_conditional_edges(
@@ -238,8 +248,7 @@ async def run_pipeline(
                         step=node_name,
                         data={"current_step": node_name},
                     )
-                    next_step = _NEXT_STEP.get(node_name)
-                    if next_step:
+                    for next_step in _NEXT_STEPS.get(node_name, []):
                         await event_callback(
                             run_id=run_id,
                             event_type="step_started",

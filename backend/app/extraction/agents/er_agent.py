@@ -74,9 +74,6 @@ def er_agent_node(state: ExtractionPipelineState) -> dict:
         },
     )
 
-    existing_logs = list(state.get("step_logs", []))
-    existing_logs.append(step_log)
-
     log.info(
         "er_agent completed",
         extra={
@@ -89,9 +86,8 @@ def er_agent_node(state: ExtractionPipelineState) -> dict:
     return {
         "er_results": er_results,
         "merge_candidates": merge_candidates,
-        "current_step": "er_agent",
         "errors": errors,
-        "step_logs": existing_logs,
+        "step_logs": [step_log],
     }
 
 

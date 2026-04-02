@@ -317,8 +317,8 @@ This section defines the end-to-end workflows performed by each role. These work
 1. User navigates to `/pipeline`
 2. Left panel shows extraction runs: document name, status (Running/Completed/Failed), chunk count, class count, duration, model
 3. User selects a run → right panel shows Agent Pipeline DAG
-4. DAG shows 6 steps with status: Strategy Selector → Extraction Agent → Consistency Checker → Quality Judge → Entity Resolution Agent → Pre-Curation Filter
-5. Running step highlighted with animation; completed steps are green
+4. DAG shows 6 agents with fork/join topology: Strategy Selector → Extraction Agent → Consistency Checker → [Quality Judge ∥ Entity Resolution Agent] → Pre-Curation Filter. Quality Judge and ER Agent run in parallel (side-by-side in the DAG).
+5. Running steps highlighted with animation; completed steps are green; parallel steps can both be running simultaneously
 6. Below DAG: Metrics tab (duration, tokens, cost, entities, agreement, confidence, completeness), Errors tab (with run-level errors from stats.errors), Timeline tab
 7. User clicks "Curate" to review results (if `domain_expert` or above)
 
@@ -1481,6 +1481,62 @@ Revert creates a new release that restores the ontology to a previous state. It 
 | `POST` | `/api/v1/ontology/{id}/undeprecate` | Restore a deprecated ontology |
 | `GET` | `/api/v1/ontology/{id}/export?version={semver}` | Export a specific release version |
 
+### 6.8b OWL/RDFS Foundation Layer (Metamodel)
+
+**Description:** Every extracted ontology implicitly relies on the OWL 2 / RDFS / RDF metamodel vocabulary (`owl:Class`, `rdfs:subClassOf`, `rdfs:domain`, `rdfs:range`, `owl:ObjectProperty`, etc.), but AOE currently stores only the extracted domain concepts without the foundational definitions that give them formal meaning. This section specifies the addition of the OWL/RDFS foundation layer as first-class entities in the graph.
+
+**Why?**
+- Formal completeness: an `owl:Class` entity labeled "Customer" has no formal grounding without the definition of `owl:Class` itself in the graph
+- Properties lack formal `rdfs:domain` and `rdfs:range` declarations — they store domain/range as string fields but not as graph edges
+- Exported OWL files reference foundation vocabulary but the graph doesn't contain it
+- Enables formal OWL reasoning and SHACL validation against the metamodel
+
+**Foundation Entities to Seed:**
+
+| Category | Entities |
+|----------|---------|
+| **OWL Classes** | `owl:Class`, `owl:Thing`, `owl:Nothing`, `owl:Restriction`, `owl:ObjectProperty`, `owl:DatatypeProperty`, `owl:AnnotationProperty`, `owl:TransitiveProperty`, `owl:SymmetricProperty`, `owl:FunctionalProperty`, `owl:InverseFunctionalProperty`, `owl:Ontology` |
+| **RDFS Classes** | `rdfs:Class`, `rdfs:Resource`, `rdfs:Literal`, `rdfs:Datatype`, `rdfs:Container` |
+| **RDF Classes** | `rdf:Property`, `rdf:Statement`, `rdf:List` |
+| **SKOS Classes** | `skos:Concept`, `skos:ConceptScheme`, `skos:Collection` |
+| **OWL Properties** | `owl:equivalentClass`, `owl:disjointWith`, `owl:inverseOf`, `owl:complementOf`, `owl:unionOf`, `owl:intersectionOf` |
+| **RDFS Properties** | `rdfs:subClassOf`, `rdfs:subPropertyOf`, `rdfs:domain`, `rdfs:range`, `rdfs:label`, `rdfs:comment`, `rdfs:seeAlso`, `rdfs:isDefinedBy` |
+| **RDF Properties** | `rdf:type`, `rdf:value`, `rdf:first`, `rdf:rest` |
+| **XSD Datatypes** | `xsd:string`, `xsd:integer`, `xsd:decimal`, `xsd:boolean`, `xsd:date`, `xsd:dateTime`, `xsd:float`, `xsd:double`, `xsd:anyURI` |
+
+**Temporal Metadata for Foundation Entities:**
+- `created`: Unix timestamp of the W3C OWL 2 Recommendation date (2012-12-11 = `1355184000`)
+- `expired`: `NEVER_EXPIRES` (9223372036854775807)
+- `source_type`: `"foundation"` (distinguishes from `"extraction"`, `"import"`, `"manual"`)
+- `confidence`: `1.0` (definitional — not extracted)
+- `ontology_id`: `"owl_rdfs_foundation"` (shared across all ontologies)
+
+**Graph Edges Created During Materialization:**
+When domain ontology classes and properties are materialized, the following edges to the foundation layer are created:
+- `rdf:type` edge from each extracted class to `owl:Class`
+- `rdf:type` edge from each extracted object property to `owl:ObjectProperty`
+- `rdf:type` edge from each extracted datatype property to `owl:DatatypeProperty`
+- `rdfs:domain` edge from each property to its domain class
+- `rdfs:range` edge from each property to its range class (for object properties) or XSD datatype (for datatype properties)
+
+**Metric Isolation:**
+Quality metrics (confidence, completeness, connectivity, health score, OntoQA metrics) MUST exclude foundation entities. All metric queries filter by `source_type != "foundation"` or by the specific `ontology_id` of the extracted ontology. Foundation entities exist as structural scaffolding, not as extraction output.
+
+**UI Toggle:**
+The graph editor and curation dashboard include a toggle: **"Show OWL Foundation"** (default: off). When enabled, foundation classes appear as distinctly styled nodes (e.g., gray, smaller, different shape) with `rdf:type`, `rdfs:domain`, `rdfs:range` edges visible. This helps ontology engineers verify formal correctness without cluttering the default domain-focused view.
+
+**Requirements:**
+
+| ID | Requirement | Acceptance Criteria |
+|----|-------------|-------------------|
+| FR-8b.1 | OWL/RDFS foundation entities seeded in database | Migration creates foundation classes and properties with `source_type: "foundation"`, `ontology_id: "owl_rdfs_foundation"`, `created: 1355184000` (OWL 2 release date), `confidence: 1.0`. Idempotent — safe to re-run. |
+| FR-8b.2 | `rdf:type` edges created during materialization | Each extracted class gets an edge to `owl:Class`; each property to `owl:ObjectProperty` or `owl:DatatypeProperty`. |
+| FR-8b.3 | `rdfs:domain` and `rdfs:range` edges created | Each property gets formal domain/range edges linking to the appropriate class and datatype/class. |
+| FR-8b.4 | Quality metrics exclude foundation entities | All metric computations filter by `ontology_id` or `source_type != "foundation"`. Health score, confidence, completeness, connectivity unaffected by foundation layer. |
+| FR-8b.5 | UI toggle for foundation visibility | "Show OWL Foundation" toggle in graph editor toolbar and curation page. Default off. Foundation nodes rendered with distinct visual style (gray, smaller). |
+| FR-8b.6 | VCR timeline excludes foundation events | Foundation entities have static `created` timestamp (OWL 2 release date) and should not appear as timeline events in the VCR slider. |
+| FR-8b.7 | Export includes foundation references | OWL/Turtle export includes `@prefix owl:`, `@prefix rdfs:`, `@prefix rdf:` declarations and formal `rdf:type`, `rdfs:domain`, `rdfs:range` triples. |
+
 ### 6.9 Schema Extraction from ArangoDB Databases
 
 **Description:** Extract ontologies from existing ArangoDB database schemas using `arango-schema-mapper`. This provides a "reverse engineering" path — organizations that already have data in ArangoDB can generate ontologies from their live database structure rather than from documents.
@@ -1759,7 +1815,7 @@ class ExtractionPipelineState(TypedDict):
 | Panel | Content | Data Source |
 |-------|---------|-------------|
 | **Run List** | All extraction/ER/schema runs with status badges (queued, running, completed, failed), sortable/filterable by date, org, status, type | `GET /api/v1/extraction/runs`, `GET /api/v1/er/runs`, `GET /api/v1/schema/extract/{run_id}` |
-| **Agent DAG** | Visual directed graph of the LangGraph pipeline; each node shows agent name, status (pending/running/completed/failed), and elapsed time | WebSocket `ws://host/ws/extraction/{run_id}` events + `extraction_runs.stats` |
+| **Agent DAG** | Visual directed acyclic graph showing the LangGraph pipeline topology with fork/join parallelism. Nodes show agent name, status (pending/running/completed/failed), and elapsed time. Quality Judge and ER Agent are positioned side-by-side to show they run in parallel. Edges animate when data flows between steps. Canvas is pannable and zoomable. | WebSocket `ws://host/ws/extraction/{run_id}` events + `extraction_runs.stats` + REST polling fallback every 5s |
 | **Node Detail** | Click an agent node to see: input/output summary, LLM prompt/response (truncated), validation errors, retry count | `GET /api/v1/extraction/runs/{run_id}` with `?detail=agent_steps` |
 | **Run Metrics** | Total duration, LLM token usage (prompt + completion), estimated cost, entity counts (classes/properties extracted), pass agreement rates | `extraction_runs.stats` |
 | **Error Log** | Timestamped list of errors and warnings per agent step; expandable stack traces for failures | Structured logs via `extraction_runs.stats.errors` |
@@ -1805,14 +1861,15 @@ The dashboard subscribes to WebSocket events per active run:
 
 **Graph Rendering:**
 
-The agent DAG is a small, fixed-topology graph (5–6 nodes) — unlike the ontology graph which can be large. This makes React Flow the natural choice since the same library is already used in the curation dashboard:
+The agent DAG is a small, fixed-topology graph (6 nodes) with a fork/join at the parallel stage. React Flow renders the DAG with explicit x/y positions reflecting the parallel topology:
 
 | Aspect | Implementation |
 |--------|---------------|
 | Library | React Flow (already in project for curation dashboard) |
-| Layout | Fixed/static layout matching the LangGraph definition; no dynamic layout needed |
-| Node renderer | Custom React Flow node component with status icon, agent name, elapsed time |
-| Edge renderer | Conditional edges styled differently (dashed for conditional, solid for always) |
+| Layout | Fixed positions: sequential nodes centered, parallel nodes (Quality Judge + ER Agent) positioned side-by-side at the same Y level to show parallelism |
+| Node renderer | Custom React Flow node component with status icon, agent name, elapsed time. Timestamp parsing handles both Unix timestamps and ISO strings. |
+| Edge renderer | Two edges fan out from Consistency Checker; two edges merge into Pre-Curation Filter. Animated edges show active data flow. |
+| Interactivity | Pannable and zoomable canvas. Scrollable to see all nodes on small screens. |
 | Interactivity | Click node → detail panel; hover → tooltip with summary |
 
 ### 6.13 Ontology Quality Metrics
@@ -1901,14 +1958,16 @@ An orphan class with only datatype properties scores 0.15. A well-connected clas
 
 | Dimension | Weight | Scoring | Example |
 |-----------|--------|---------|---------|
-| **Completeness** | 0.25 | `classes_with_properties / total_classes` | 4/6 classes have props → 0.67 |
-| **Coherence** | 0.20 | `1.0` if no cycles detected, `0.0` if cycles exist | Clean hierarchy → 1.0 |
-| **Orphan ratio** | 0.15 | `1 - (orphan_count / total_classes)` | 2 orphans / 6 classes → 0.67 |
-| **Avg confidence** | 0.15 | Mean of multi-signal per-class confidence scores | Mean 0.72 → 0.72 |
-| **Coverage** | 0.10 | `min(total_classes / (chunk_count * 2), 1.0)` — classes-per-chunk ratio | 6 classes from 8 chunks → 0.375 |
+| **Completeness** | 0.20 | `classes_with_properties / total_classes` | 4/6 classes have props → 0.67 |
+| **Connectivity** | 0.20 | `classes_with_object_property_relationships / total_classes` — classes connected to other classes via `related_to` edges | 0/6 classes connected → 0.0 (flat taxonomy penalty) |
+| **Coherence** | 0.15 | `1.0` if no cycles detected, `0.0` if cycles exist | Clean hierarchy → 1.0 |
+| **Avg confidence** | 0.20 | Mean of multi-signal per-class confidence scores | Mean 0.72 → 0.72 |
 | **Property richness** | 0.15 | `min(avg_properties_per_class / 3, 1.0)` — richer classes = better ontology | Avg 3.3 props → 1.0 |
+| **Coverage** | 0.10 | `min(chunk_count / 5, 1.0)` — source chunk support | 8 chunks → 1.0 |
 
-**Formula:** `health_score = round((0.25 * completeness + 0.20 * coherence + 0.15 * (1 - orphan_ratio) + 0.15 * avg_confidence + 0.10 * coverage + 0.15 * property_richness) * 100)`
+**Why Connectivity matters:** An ontology with only `rdfs:subClassOf` hierarchy and datatype properties (e.g., `Customer` has `name: xsd:string`) but no inter-class relationships (e.g., `Customer holds Account`) is essentially a flat taxonomy — not a true ontology. The connectivity dimension ensures that ontologies without object property relationships between classes score significantly lower.
+
+**Formula:** `health_score = round((0.20 * completeness + 0.20 * connectivity + 0.15 * coherence + 0.20 * avg_confidence + 0.15 * property_richness + 0.10 * coverage) * 100)`
 
 **Traffic-light display:**
 - Green (≥ 70): Healthy ontology — well-structured, confident, complete
@@ -1927,12 +1986,12 @@ An orphan class with only datatype properties scores 0.15. A well-connected clas
 | FR-13.4 | Time-to-first-ontology measured | Computed as elapsed time from `documents.uploaded_at` to `extraction_runs.completed_at`. Per-run value displayed in pipeline metrics; aggregate average in quality dashboard. |
 | FR-13.5 | Gold-standard recall comparison | User can upload a reference OWL/TTL file; system computes `recall = |extracted ∩ reference| / |reference|` using fuzzy label matching. Results displayed alongside the ontology detail. |
 | FR-13.6 | Structural quality analysis per ontology | System computes: (a) **Completeness** — % of classes with ≥1 property, % of properties with defined domain+range; (b) **Coherence** — cycle detection in `subclass_of` hierarchy; (c) **Orphan count** — classes with no parent and not designated as root; (d) **Avg confidence** — mean of multi-signal per-class confidence across all current classes. |
-| FR-13.7 | Quality dashboard page | Dedicated `/quality` route showing aggregate metrics across all ontologies with traffic-light indicators against PRD targets (green ≥ target, yellow within 10%, red below). Trend sparklines from quality history. |
+| FR-13.7 | Quality dashboard page with radar chart | Dedicated `/quality` route with a **radar/spider chart** showing 6 quality dimensions normalized to 0–5, surrounded by **score cards** with numeric values and plain-English explanations. Supports per-ontology drill-down (select an ontology to see its specific radar) and aggregate view (all ontologies combined). Expandable "Schema Metrics (OntoQA)" section shows the 8 detailed metrics from §6.13.3. The 6 radar dimensions are: **Annotation Quality** (description completeness), **Completeness** (classes with properties), **Faithfulness** (avg multi-signal confidence including LLM-as-Judge), **Connectivity** (inter-class relationships), **Structural Integrity** (coherence + orphan ratio), **Curation Acceptance** (curator approval rate, N/A until curation starts). Each score card includes an (ⓘ) tooltip explaining the metric. Ontology comparison mode: select two ontologies to overlay their radar polygons. Uses `recharts` `RadarChart` component (React-native charting library). |
 | FR-13.8 | Quality history over time | Quality metrics stored with timestamps so trends can be tracked. Leverages temporal snapshot infrastructure for historical quality snapshots. |
 | FR-13.9 | Low-confidence visual highlighting in curation graph | Nodes in the curation graph canvas are color-coded by multi-signal confidence: red border < 0.5, yellow 0.5–0.7, green > 0.7. Enables curators to focus on uncertain entities first. |
 | FR-13.10 | Quality-oriented ArangoDB Visualizer queries | Saved queries for: "Low Confidence Classes" (below threshold), "Orphan Classes" (no hierarchy edges), "Classes Without Properties" (incomplete definitions). |
-| FR-13.11 | Multi-signal per-class confidence | Each class's `confidence` field is computed as a weighted blend of cross-pass agreement, LLM self-reported confidence, structural quality, description quality, and provenance strength (see §6.13.1). Replaces single-signal agreement ratio. |
-| FR-13.12 | Composite ontology health score | Each ontology receives a 0–100 health score blending completeness, coherence, orphan ratio, avg confidence, coverage, and property richness (see §6.13.2). Displayed on ontology cards with traffic-light color coding. |
+| FR-13.11 | Multi-signal per-class confidence | Each class's `confidence` field is computed as a weighted blend of 7 signals: cross-pass agreement, LLM-as-Judge faithfulness, semantic validity, structural quality (relationship richness), description quality, provenance strength, and property agreement (see §6.13.1). |
+| FR-13.12 | Composite ontology health score | Each ontology receives a 0–100 health score blending completeness, connectivity, coherence, avg confidence, property richness, and coverage (see §6.13.2). Displayed on ontology cards with traffic-light color coding. |
 | FR-13.13 | Provenance strength in confidence | Per-class confidence includes a provenance strength signal based on the number of distinct source chunks supporting the class via `extracted_from` edges. |
 | FR-13.14 | Ontology Quality Dashboard with radar chart | Dedicated dashboard page (`/dashboard`) displaying per-ontology LLM-as-judge metrics in a radar/spider chart (faithfulness, semantic validity, completeness, structural integrity, property richness, source coverage) alongside metric cards, as specified in §6.13.3. |
 | FR-13.15 | Per-ontology LLM-as-judge metric aggregation | The quality API aggregates `faithfulness_score` and `semantic_validity_score` from individual `ontology_classes` documents to produce per-ontology averages. These are not currently exposed — must be added to `compute_ontology_quality()`. |

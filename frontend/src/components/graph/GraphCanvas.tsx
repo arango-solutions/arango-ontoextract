@@ -111,7 +111,7 @@ function OntologyNode({ data, selected }: NodeProps<OntologyNodeData>) {
     borderStyle = confidence < 0.5 ? "border-dashed" : "border-solid";
   }
 
-  const nodeSize = Math.max(160, 160 + (confidence - 0.5) * 80);
+  const nodeSize = Math.max(160, 160 + ((confidence || 0) - 0.5) * 80);
 
   return (
     <div
@@ -151,17 +151,21 @@ function OntologyNode({ data, selected }: NodeProps<OntologyNodeData>) {
           </span>
         )}
       </div>
-      <div className="mt-1 flex items-center gap-1.5">
-        <span className="text-xs text-gray-400">
-          {(confidence * 100).toFixed(0)}%
-        </span>
-        <div className="flex-1 h-1 bg-gray-200 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full ${confidence > 0.7 ? "bg-green-500" : confidence >= 0.5 ? "bg-yellow-500" : "bg-red-500"}`}
-            style={{ width: `${confidence * 100}%` }}
-          />
+      {confidence != null && !isNaN(confidence) ? (
+        <div className="mt-1 flex items-center gap-1.5">
+          <span className="text-xs text-gray-400">
+            {(confidence * 100).toFixed(0)}%
+          </span>
+          <div className="flex-1 h-1 bg-gray-200 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full ${confidence > 0.7 ? "bg-green-500" : confidence >= 0.5 ? "bg-yellow-500" : "bg-red-500"}`}
+              style={{ width: `${confidence * 100}%` }}
+            />
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="mt-1 text-[10px] text-gray-300">Imported</div>
+      )}
       <Handle
         type="source"
         position={Position.Bottom}
@@ -181,7 +185,7 @@ const EDGE_COLORS: Record<string, string> = {
   equivalent_class: "#8b5cf6",
   has_property: "#0891b2",
   extends_domain: "#d97706",
-  related_to: "#64748b",
+  related_to: "#2563eb",
   extracted_from: "#059669",
   imports: "#e11d48",
 };
@@ -191,7 +195,6 @@ const EDGE_COLORS: Record<string, string> = {
 const HIERARCHY_EDGE_TYPES = new Set([
   "subclass_of",
   "extends_domain",
-  "related_to",
 ]);
 
 function computeLayout(
@@ -264,12 +267,16 @@ function computeLayout(
     nextX += COL_WIDTH / 2;
   }
 
-  for (const cls of classes) {
-    if (!positions.has(cls._key)) {
-      positions.set(cls._key, { x: nextX, y: 0 });
-      nextX += COL_WIDTH;
-    }
-  }
+  const orphans = classes.filter((c) => !positions.has(c._key));
+  const ORPHAN_COLS = Math.max(3, Math.ceil(Math.sqrt(orphans.length)));
+  orphans.forEach((cls, idx) => {
+    const col = idx % ORPHAN_COLS;
+    const row = Math.floor(idx / ORPHAN_COLS);
+    positions.set(cls._key, {
+      x: nextX + col * COL_WIDTH,
+      y: row * ROW_HEIGHT,
+    });
+  });
 
   return positions;
 }
@@ -369,18 +376,18 @@ export default function GraphCanvas({
             ? { markerStart: { type: MarkerType.ArrowClosed } }
             : { markerEnd: { type: MarkerType.ArrowClosed } }),
           style: {
-            stroke: isExtendsDomain ? "#a855f7" : (EDGE_COLORS[edgeType] ?? "#94a3b8"),
-            strokeWidth: isExtendsDomain ? 2.5 : 2,
+            stroke: EDGE_COLORS[edgeType] ?? "#94a3b8",
+            strokeWidth: edgeType === "related_to" ? 2.5 : 2,
             strokeDasharray: isExtendsDomain ? "6 3" : undefined,
           },
           labelStyle: {
-            fill: isExtendsDomain ? "#7c3aed" : "#64748b",
-            fontSize: 11,
-            fontWeight: isExtendsDomain ? 600 : 500,
+            fill: edgeType === "related_to" ? "#1d4ed8" : isExtendsDomain ? "#7c3aed" : "#64748b",
+            fontSize: edgeType === "related_to" ? 12 : 11,
+            fontWeight: edgeType === "related_to" ? 600 : 500,
           },
           labelBgStyle: {
-            fill: "#f8fafc",
-            fillOpacity: 0.9,
+            fill: edgeType === "related_to" ? "#eff6ff" : "#f8fafc",
+            fillOpacity: 0.95,
           },
           labelBgPadding: [4, 2] as [number, number],
           data: { edgeKey: edge._key },

@@ -133,11 +133,8 @@ def strategy_selector_node(state: ExtractionPipelineState) -> dict:
         },
     )
 
-    existing_logs = list(state.get("step_logs", []))
-    existing_logs.append(step_log)
-
     return {
         "strategy_config": config,
         "current_step": "strategy_selector",
-        "step_logs": existing_logs,
+        "step_logs": [step_log],
     }

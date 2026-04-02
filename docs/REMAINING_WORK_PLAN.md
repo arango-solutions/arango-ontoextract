@@ -11,8 +11,8 @@
 
 The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline, ontology editor, pipeline monitor, quality metrics, and multi-document support. This document details the remaining work required to achieve full PRD compliance and production readiness.
 
-**Completed:** ~75% of PRD requirements (§6.1–6.6, §6.10–6.13, most of §6.8, §7.2.1)
-**Remaining:** ~25% across 7 work streams, estimated 7–8 weeks total
+**Completed:** ~78% of PRD requirements (§6.1–6.6, §6.10–6.13 incl. quality dashboard, most of §6.8, §7.2.1)
+**Remaining:** ~22% across 7 work streams, estimated 7–8 weeks total
 
 **Recent completions (since v1.0 of this document):**
 - Multi-signal confidence scoring with 7 signals incl. LLM-as-Judge faithfulness + semantic validator
@@ -43,7 +43,7 @@ The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline
 | ArangoDB Visualizer (§6.6) | **Complete** | Themes, canvas actions, saved queries (temporal-aware), viewpoints, auto-install |
 | MCP Server (§6.10) | **Complete** | Runtime MCP tools for ontology operations |
 | Pipeline Monitor (§6.12) | **Complete** | Real-time step DAG with polling, metrics (tokens, cost, entities, confidence, completeness, agreement), error log |
-| Quality Metrics (§6.13) | **Mostly Complete** | Multi-signal confidence (7 signals incl. faithfulness judge + semantic validator), ontology health score, quality panel in library. Missing: `/quality` dashboard page, history tracking, gold-standard recall. |
+| Quality Metrics (§6.13) | **Mostly Complete** | Multi-signal confidence (7 signals incl. faithfulness judge + semantic validator), ontology health score, quality panel in library, `/quality` dashboard with recharts radar chart, OntoQA schema metrics, connectivity metric. Missing: history tracking, gold-standard recall. |
 | Import/Export (§6.8 partial) | **Partial** | Export (Turtle, JSON-LD, CSV), OWL import via ArangoRDF, library search (ArangoSearch), tagging, full CRUD with cascade. Missing: imports graph, standard ontology catalog. |
 | Admin (§7.2.1) | **Complete** | Soft/full reset (with named graph cleanup), extraction run deletion |
 | Deletion & Integrity | **Complete** | Temporal soft-delete for ontology deprecation, cross-ontology edge cascade, curation reject cascade, document delete with provenance expiry. See `docs/DELETION_AND_REFERENTIAL_INTEGRITY.md`. |
@@ -56,7 +56,7 @@ The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline
 | Imports & Dependencies (§6.15, §6.8.8–8.16) | **Not Started** | No `owl:imports` edge tracking, no standard ontology catalog, no dependency graph UI |
 | Constraints (§6.14) | **Not Started** | No OWL restriction or SHACL shape extraction, import, display, or export |
 | Schema Extraction (§6.9) | **Stub** | Service shell exists but minimal implementation |
-| Quality Dashboard (§6.13.7) | **Not Started** | No dedicated `/quality` page, no history tracking, no gold-standard recall |
+| Quality Dashboard (§6.13.7) | **Partially Done** | `/quality` page with recharts radar chart, OntoQA metrics, connectivity metric implemented. Missing: history tracking, gold-standard recall, curation throughput timer |
 | Testing & CI (§8) | **Partial** | ~500 unit tests exist but no CI pipeline, no coverage enforcement |
 | Production Ops (§8.5) | **Not Started** | No OpenTelemetry, no alerting, no performance benchmarks |
 | Visualizer Migration | **Not Started** | React Flow → Sigma.js/graphology (PRD target architecture) |
@@ -75,6 +75,18 @@ The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline
 | Staging endpoint standardized to `edge_type` (was `type`) | §7.8 | Consistent API contract |
 | System reset cleans up per-ontology named graphs and additional collections | §7.2.1 | Clean fresh start |
 | PRD corrected: ArangoDB uses FAISS IVF (not standalone HNSW) for vector indexes | §6.7 | Accurate technical spec |
+| Quality dashboard page (`/quality`) with recharts radar chart | FR-13.7 | All quality dimensions visible on spider chart |
+| OntoQA schema metrics (relationship/attribute/inheritance richness, max depth, etc.) | FR-13.16 | Industry-standard ontology evaluation |
+| Connectivity metric in health score (20% weight) | FR-13.14 | Flat taxonomies without relationships now penalized |
+| `related_to` edge materialization from object properties | FR-2.7 | Inter-class relationships visible in graph |
+| Parallel pipeline (Quality Judge ∥ ER Agent fork/join) | §6.11 | Faster extraction, proper DAG visualization |
+| Object property detection (`_is_object_property`) with smart range matching | FR-2.7 | Non-http class URIs correctly identified |
+| Deferred relationship resolution (second pass after all classes) | FR-2.7 | Forward-referenced classes now resolved |
+| LangGraph `Annotated` reducers for parallel state merging | §6.11 | No more "Can receive only one value per step" errors |
+| Document-ontology mapping pills on upload page | FR-1.10 | Each document shows linked ontologies |
+| OWL/RDFS foundation layer added to PRD (§6.8b) | §6.8b | Planned: metamodel entities, rdf:type edges, UI toggle |
+| Ontology release management added to PRD (§6.8a) | §6.8a | Planned: semver, breaking change detection, revert |
+| 13 use cases + RBAC matrix added to PRD (§2a) | §2a | Workflow testing matrix for E2E tests |
 
 ---
 
