@@ -92,6 +92,24 @@ The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline
 
 ## Work Streams
 
+### Stream 0: PGT Property Collection Alignment (PRIORITY — object-centric-ux branch)
+**PRD:** §5.1 (data model), ADR-006
+**Duration:** 1.5 weeks
+**Priority:** P0 — schema foundation for all other work
+**Dependencies:** None (but all other streams depend on this)
+**Branch:** `object-centric-ux`
+
+#### Objectives
+- Split `ontology_properties` into `ontology_object_properties` (relationships) + `ontology_datatype_properties` (attributes)
+- Replace `has_property` and `related_to` edges with `rdfs_domain` and `rdfs_range_class` edges
+- Update extraction prompt to separately request `attributes` and `relationships`
+- Align extracted ontology schema with ArangoRDF PGT import schema
+- Migrate existing data
+
+See `docs/adr/006-pgt-aligned-property-collections.md` for full design rationale and `IMPLEMENTATION_PLAN.md` Sprint PGT for detailed task breakdown (12 tasks).
+
+---
+
 ### Stream 1: Ontology Imports & Dependency Management
 **PRD:** §6.15 FR-15.1–15.6, §6.8 FR-8.8–8.11, FR-8.16
 **Duration:** 1.5 weeks
