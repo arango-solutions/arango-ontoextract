@@ -49,7 +49,6 @@ async def quality_judge_node(state: ExtractionPipelineState) -> dict[str, Any]:
             error="No consistency result available",
         )
         return {
-            "current_step": "quality_judge",
             "faithfulness_scores": {},
             "validity_scores": {},
             "step_logs": [step_log],
@@ -116,7 +115,6 @@ async def quality_judge_node(state: ExtractionPipelineState) -> dict[str, Any]:
     )
 
     return {
-        "current_step": "quality_judge",
         "consistency_result": updated_result,
         "faithfulness_scores": faithfulness_scores,
         "validity_scores": validity_scores,

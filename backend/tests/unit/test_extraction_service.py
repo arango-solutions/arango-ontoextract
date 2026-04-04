@@ -431,6 +431,15 @@ class TestExecuteRunSuccess:
         mock_materialize.assert_called_once()
         mock_produced_by.assert_called_once()
         assert result["status"] == "completed"
+        ontology_persist = [
+            c.args[0]
+            for c in mock_col.update.call_args_list
+            if c.args
+            and isinstance(c.args[0], dict)
+            and c.args[0].get("ontology_id") == "onto_new"
+        ]
+        assert len(ontology_persist) == 1
+        assert ontology_persist[0]["_key"] == "run_abc"
 
     @patch("app.services.extraction._create_produced_by_edge")
     @patch("app.services.extraction._update_existing_ontology", return_value="onto_existing")
@@ -473,6 +482,14 @@ class TestExecuteRunSuccess:
         mock_update_existing.assert_called_once()
         mock_materialize.assert_called_once()
         assert result["status"] == "completed"
+        ontology_persist = [
+            c.args[0]
+            for c in mock_col.update.call_args_list
+            if c.args
+            and isinstance(c.args[0], dict)
+            and c.args[0].get("ontology_id") == "onto_existing"
+        ]
+        assert len(ontology_persist) == 1
 
     @patch("app.services.extraction._load_document_chunks", return_value=[])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
@@ -680,6 +697,7 @@ class TestExecuteRunFailure:
         update_arg = mock_col.update.call_args[0][0]
         assert update_arg["status"] == "failed"
 
+    @patch("app.services.extraction._auto_register_ontology", return_value=None)
     @patch("app.services.extraction._store_results")
     @patch("app.services.extraction._load_document_chunks", return_value=[])
     @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
@@ -695,6 +713,7 @@ class TestExecuteRunFailure:
         mock_run_pipeline,
         mock_load_chunks,
         mock_store,
+        mock_auto_reg,
     ):
         from app.services.extraction import execute_run
 
@@ -730,8 +749,13 @@ class TestExecuteRunFailure:
             event_callback=MagicMock(),
         )
 
-        update_arg = mock_col.update.call_args[0][0]
-        assert update_arg["status"] == "completed_with_errors"
+        mock_auto_reg.assert_called_once()
+        status_updates = [
+            c.args[0]
+            for c in mock_col.update.call_args_list
+            if c.args and isinstance(c.args[0], dict) and "status" in c.args[0]
+        ]
+        assert status_updates[-1]["status"] == "completed_with_errors"
 
 
 # ---------------------------------------------------------------------------

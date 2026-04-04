@@ -216,6 +216,10 @@ function computeLayout(
   classes: OntologyClass[],
   edges: OntologyEdge[],
 ): Map<string, { x: number; y: number }> {
+  if (classes.length === 0) {
+    return new Map();
+  }
+
   const g = new dagre.graphlib.Graph();
   g.setGraph({
     rankdir: "TB",

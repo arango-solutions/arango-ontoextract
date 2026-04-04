@@ -51,7 +51,6 @@ class TestERAgentNode:
 
         assert result["er_results"]["status"] == "skipped"
         assert result["merge_candidates"] == []
-        assert result["current_step"] == "er_agent"
 
     def test_skips_when_empty_classes(self):
         state = _make_state(consistency_result=_make_extraction_result([]))

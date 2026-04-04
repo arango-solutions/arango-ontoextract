@@ -266,7 +266,6 @@ class TestQualityJudgeNode:
 
         assert result["faithfulness_scores"] == {}
         assert result["validity_scores"] == {}
-        assert result["current_step"] == "quality_judge"
         assert len(result["step_logs"]) == 1
         assert result["step_logs"][0]["status"] == "skipped"
 

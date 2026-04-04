@@ -52,8 +52,8 @@ class TestPipelineStepEvents:
         callback = AsyncMock()
 
         async def fake_stream():
-            yield {"strategy_selector": {"current_step": "strategy_selector"}}
-            yield {"extractor": {"current_step": "extractor"}}
+            yield {"strategy_selector": {}}
+            yield {"extractor": {}}
 
         mock_compiled = MagicMock()
         mock_compiled.astream = lambda *a, **kw: fake_stream()
@@ -82,7 +82,7 @@ class TestPipelineStepEvents:
         callback = AsyncMock()
 
         async def fake_stream():
-            yield {"filter": {"current_step": "filter"}}
+            yield {"filter": {}}
 
         mock_compiled = MagicMock()
         mock_compiled.astream = lambda *a, **kw: fake_stream()
@@ -136,7 +136,7 @@ class TestPipelineErrorEvents:
         callback = AsyncMock()
 
         async def failing_stream():
-            yield {"strategy_selector": {"current_step": "strategy_selector"}}
+            yield {"strategy_selector": {}}
             raise RuntimeError("LLM provider timeout")
 
         mock_compiled = MagicMock()

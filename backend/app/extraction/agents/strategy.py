@@ -135,6 +135,5 @@ def strategy_selector_node(state: ExtractionPipelineState) -> dict:
 
     return {
         "strategy_config": config,
-        "current_step": "strategy_selector",
         "step_logs": [step_log],
     }

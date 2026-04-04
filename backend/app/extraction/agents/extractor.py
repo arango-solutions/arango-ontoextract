@@ -368,7 +368,6 @@ async def extractor_node(state: ExtractionPipelineState) -> dict:
 
     return {
         "extraction_passes": pass_results,
-        "current_step": "extractor",
         "errors": errors,
         "token_usage": total_tokens,
         "step_logs": [step_log],

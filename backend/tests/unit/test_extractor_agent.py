@@ -232,7 +232,6 @@ class TestExtractorNode:
         ):
             result = await extractor_node(self._make_state())
 
-        assert result["current_step"] == "extractor"
         assert len(result["extraction_passes"]) == 1
         assert len(result["extraction_passes"][0].classes) == 1
         assert len(result["step_logs"]) == 1
@@ -257,7 +256,7 @@ class TestExtractorNode:
             result = await extractor_node(self._make_state(chunks=[]))
 
         # 0 chunks -> 0 batches -> 0 classes but still completes
-        assert result["current_step"] == "extractor"
+        assert len(result["extraction_passes"]) == 1
 
     @pytest.mark.asyncio
     async def test_accumulates_token_usage(self):

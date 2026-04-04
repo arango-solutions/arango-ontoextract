@@ -205,7 +205,6 @@ def consistency_checker_node(state: ExtractionPipelineState) -> dict:
         )
         return {
             "consistency_result": None,
-            "current_step": "consistency_checker",
             "errors": errors,
             "step_logs": [step_log],
         }
@@ -340,6 +339,5 @@ def consistency_checker_node(state: ExtractionPipelineState) -> dict:
 
     return {
         "consistency_result": consistency_result,
-        "current_step": "consistency_checker",
         "step_logs": [step_log],
     }

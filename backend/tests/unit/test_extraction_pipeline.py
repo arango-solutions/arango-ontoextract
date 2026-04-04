@@ -162,7 +162,7 @@ class TestRunPipelinePaused:
         callback = AsyncMock()
 
         async def fake_stream():
-            yield {"filter": {"current_step": "filter", "filter_results": {"status": "ok"}}}
+            yield {"filter": {"filter_results": {"status": "ok"}}}
 
         mock_snapshot = MagicMock()
         mock_snapshot.values = {

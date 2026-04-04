@@ -276,6 +276,7 @@ async def execute_run(
                 )
 
             if ontology_id:
+                col.update({"_key": run_id, "ontology_id": ontology_id})
                 for did in doc_ids:
                     _materialize_to_graph(
                         db,

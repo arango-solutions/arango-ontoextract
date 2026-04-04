@@ -47,7 +47,6 @@ def filter_agent_node(state: ExtractionPipelineState) -> dict:
         step_log = _build_step_log(start, "completed", 0, 0, 0)
         return {
             "filter_results": {"status": "skipped", "reason": "no_input"},
-            "current_step": "filter",
             "step_logs": [step_log],
         }
 
@@ -97,7 +96,6 @@ def filter_agent_node(state: ExtractionPipelineState) -> dict:
     return {
         "consistency_result": filtered_result,
         "filter_results": filter_results,
-        "current_step": "filter",
         "step_logs": [step_log],
     }
 
