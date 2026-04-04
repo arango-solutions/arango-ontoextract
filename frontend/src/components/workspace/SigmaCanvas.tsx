@@ -167,6 +167,29 @@ function buildGraph(
   return graph;
 }
 
+/** Fit camera so the full graph bbox is visible (Sigma v3). */
+function fitCameraToGraph(sigma: Sigma): void {
+  const { width: vw, height: vh } = sigma.getDimensions();
+  if (vw <= 0 || vh <= 0) return;
+
+  const bbox = sigma.getBBox();
+  const gw = Math.max(bbox.x[1] - bbox.x[0], 1e-6);
+  const gh = Math.max(bbox.y[1] - bbox.y[0], 1e-6);
+  const cx = (bbox.x[0] + bbox.x[1]) / 2;
+  const cy = (bbox.y[0] + bbox.y[1]) / 2;
+
+  const pad = sigma.getStagePadding() * 2;
+  const ratio = Math.max(gw / (vw - pad), gh / (vh - pad));
+
+  sigma.getCamera().setState({
+    x: cx,
+    y: cy,
+    ratio: Math.max(ratio, 1e-6),
+    angle: 0,
+  });
+  sigma.refresh();
+}
+
 /* ── Component ────────────────────────────────────────── */
 
 export default function SigmaCanvas({
@@ -241,6 +264,25 @@ export default function SigmaCanvas({
 
     sigmaRef.current = renderer;
 
+    const afterLayout = () => {
+      renderer.resize();
+      renderer.refresh();
+      fitCameraToGraph(renderer);
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(afterLayout);
+    });
+
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            renderer.resize();
+            renderer.refresh();
+            fitCameraToGraph(renderer);
+          })
+        : null;
+    resizeObserver?.observe(containerRef.current);
+
     let hoveredNode: string | null = null;
 
     renderer.on("enterNode", ({ node }) => {
@@ -294,6 +336,7 @@ export default function SigmaCanvas({
     });
 
     return () => {
+      resizeObserver?.disconnect();
       renderer.kill();
       sigmaRef.current = null;
       graphRef.current = null;
@@ -324,7 +367,9 @@ export default function SigmaCanvas({
           barnesHutOptimize: graphRef.current.order > 50,
         },
       });
+      sigmaRef.current.resize();
       sigmaRef.current.refresh();
+      fitCameraToGraph(sigmaRef.current);
     } finally {
       setLayoutRunning(false);
     }
@@ -365,7 +410,7 @@ export default function SigmaCanvas({
       )}
       <div
         ref={containerRef}
-        className="w-full h-full"
+        className="absolute inset-0 w-full min-h-0"
         style={{ background: "#1a1a2e" }}
       />
     </div>

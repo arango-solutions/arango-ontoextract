@@ -340,10 +340,10 @@ export default function WorkspacePage() {
           aria-label="Resize asset explorer"
         />
 
-        {/* Center: Canvas + VCR */}
-        <main className="flex-1 flex flex-col relative min-w-0">
+        {/* Center: Canvas + VCR — min-h-0 lets the flex child shrink so Sigma gets a real height */}
+        <main className="flex-1 flex flex-col relative min-w-0 min-h-0">
           {/* Graph Canvas area */}
-          <div className="flex-1 relative overflow-hidden">
+          <div className="flex-1 relative overflow-hidden min-h-0">
             {selectedOntologyId ? (
               graphLoading ? (
                 <div className="h-full flex flex-col items-center justify-center gap-3 bg-[#1a1a2e]">
