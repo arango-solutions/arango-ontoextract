@@ -3,6 +3,11 @@
 import { useEffect, useRef, useMemo, useState, useCallback } from "react";
 import Graph from "graphology";
 import Sigma from "sigma";
+import {
+  EdgeArrowProgram,
+  EdgeRectangleProgram,
+  NodeCircleProgram,
+} from "sigma/rendering";
 import forceAtlas2 from "graphology-layout-forceatlas2";
 import type {
   OntologyClass,
@@ -285,6 +290,12 @@ export default function SigmaCanvas({
       defaultEdgeType: "arrow",
       stagePadding: 40,
       enableEdgeEvents: true,
+      // sigma is marked sideEffects:false; default WebGL programs can be tree-shaken.
+      nodeProgramClasses: { circle: NodeCircleProgram },
+      edgeProgramClasses: {
+        arrow: EdgeArrowProgram,
+        line: EdgeRectangleProgram,
+      },
     });
 
     sigmaRef.current = renderer;

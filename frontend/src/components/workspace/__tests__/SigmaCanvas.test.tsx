@@ -1,5 +1,12 @@
 import { render, screen } from "@testing-library/react";
 
+jest.mock("sigma/rendering", () => ({
+  __esModule: true,
+  NodeCircleProgram: class {},
+  EdgeArrowProgram: class {},
+  EdgeRectangleProgram: class {},
+}));
+
 jest.mock("sigma", () => ({
   __esModule: true,
   default: class MockSigma {
