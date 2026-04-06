@@ -60,6 +60,17 @@ function resolveApiBaseUrl(baseUrl: string): string {
   }
 }
 
+/** Join base URL with an API path, avoiding duplicate `/api/v1` when base already ends with it. */
+export function buildApiUrl(baseUrl: string, path: string): string {
+  const base = baseUrl.replace(/\/$/, "");
+  const p = path.startsWith("/") ? path : `/${path}`;
+  const dup = "/api/v1";
+  if (base.endsWith(dup) && p.startsWith(`${dup}/`)) {
+    return `${base}${p.slice(dup.length)}`;
+  }
+  return `${base}${p}`;
+}
+
 class ApiClient {
   private readonly baseUrl: string;
 
@@ -83,12 +94,14 @@ class ApiClient {
   private async request<T>(
     method: string,
     path: string,
-    body?: unknown
+    body?: unknown,
+    signal?: AbortSignal,
   ): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
+    const url = buildApiUrl(this.baseUrl, path);
     const init: RequestInit = {
       method,
       headers: this.getHeaders(),
+      signal,
     };
     if (body !== undefined) {
       init.body = JSON.stringify(body);
@@ -113,20 +126,20 @@ class ApiClient {
     return res.json() as Promise<T>;
   }
 
-  async get<T>(path: string): Promise<T> {
-    return this.request<T>("GET", path);
+  async get<T>(path: string, opts?: { signal?: AbortSignal }): Promise<T> {
+    return this.request<T>("GET", path, undefined, opts?.signal);
   }
 
-  async post<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>("POST", path, body);
+  async post<T>(path: string, body?: unknown, opts?: { signal?: AbortSignal }): Promise<T> {
+    return this.request<T>("POST", path, body, opts?.signal);
   }
 
-  async put<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>("PUT", path, body);
+  async put<T>(path: string, body?: unknown, opts?: { signal?: AbortSignal }): Promise<T> {
+    return this.request<T>("PUT", path, body, opts?.signal);
   }
 
-  async del(path: string): Promise<void> {
-    await this.request<void>("DELETE", path);
+  async del(path: string, opts?: { signal?: AbortSignal }): Promise<void> {
+    await this.request<void>("DELETE", path, undefined, opts?.signal);
   }
 }
 

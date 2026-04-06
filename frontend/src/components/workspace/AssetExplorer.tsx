@@ -5,6 +5,26 @@ import { api, ApiError, type PaginatedResponse } from "@/lib/api-client";
 import type { OntologyRegistryEntry } from "@/types/curation";
 import type { ExtractionRun } from "@/types/pipeline";
 
+const CORE_LOAD_TIMEOUT_MS = 25_000;
+
+function unwrapPaginatedList<T>(res: unknown): T[] {
+  if (Array.isArray(res)) return res as T[];
+  if (
+    res &&
+    typeof res === "object" &&
+    "data" in res &&
+    Array.isArray((res as PaginatedResponse<T>).data)
+  ) {
+    return (res as PaginatedResponse<T>).data;
+  }
+  return [];
+}
+
+function isAbortError(err: unknown): boolean {
+  if (err instanceof Error && err.name === "AbortError") return true;
+  return typeof DOMException !== "undefined" && err instanceof DOMException && err.name === "AbortError";
+}
+
 interface DocumentEntry {
   _key: string;
   filename: string;
@@ -96,45 +116,16 @@ export default function AssetExplorer({
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState<string | null>(null);
 
+  /** Increment to re-run the core documents + ontology fetch (retry). */
+  const [reloadEpoch, setReloadEpoch] = useState(0);
+
+  /** Bumps on each effect run + cleanup so stale async work does not clear loading flags. */
+  const loadSeqRef = useRef(0);
+
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const toggleSection = useCallback((id: SectionId) => {
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
-  }, []);
-
-  const fetchDocuments = useCallback(async () => {
-    setDocsLoading(true);
-    setDocsError(null);
-    try {
-      const res = await api.get<PaginatedResponse<DocumentEntry> | DocumentEntry[]>(
-        "/api/v1/documents",
-      );
-      const list = Array.isArray(res) ? res : res.data;
-      setDocuments(list);
-    } catch (err) {
-      setDocsError(
-        err instanceof ApiError ? err.body.message : "Failed to load documents",
-      );
-    } finally {
-      setDocsLoading(false);
-    }
-  }, []);
-
-  const fetchOntologies = useCallback(async () => {
-    setOntLoading(true);
-    setOntError(null);
-    try {
-      const res = await api.get<PaginatedResponse<OntologyRegistryEntry>>(
-        "/api/v1/ontology/library",
-      );
-      setOntologies(res.data);
-    } catch (err) {
-      setOntError(
-        err instanceof ApiError ? err.body.message : "Failed to load ontologies",
-      );
-    } finally {
-      setOntLoading(false);
-    }
   }, []);
 
   const fetchRuns = useCallback(async () => {
@@ -155,10 +146,85 @@ export default function AssetExplorer({
     }
   }, []);
 
+  /** Load documents + ontology library together. Timeout + seq guard so we never spin forever on hung API/DB. */
   useEffect(() => {
-    fetchDocuments();
-    fetchOntologies();
-  }, [fetchDocuments, fetchOntologies]);
+    const ac = new AbortController();
+    const seq = ++loadSeqRef.current;
+    let timedOut = false;
+
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      ac.abort();
+    }, CORE_LOAD_TIMEOUT_MS);
+
+    const timeoutMsg =
+      "Request timed out — is the API running and reachable? (ArangoDB or network issues can block the backend.)";
+
+    async function loadCoreAssets() {
+      setDocsLoading(true);
+      setOntLoading(true);
+      setDocsError(null);
+      setOntError(null);
+      try {
+        const [docOutcome, ontOutcome] = await Promise.allSettled([
+          api.get<PaginatedResponse<DocumentEntry> | DocumentEntry[]>(
+            "/api/v1/documents",
+            { signal: ac.signal },
+          ),
+          api.get<PaginatedResponse<OntologyRegistryEntry>>(
+            "/api/v1/ontology/library",
+            { signal: ac.signal },
+          ),
+        ]);
+        if (seq !== loadSeqRef.current) return;
+
+        if (docOutcome.status === "fulfilled") {
+          setDocuments(unwrapPaginatedList<DocumentEntry>(docOutcome.value));
+        } else if (!isAbortError(docOutcome.reason)) {
+          const err = docOutcome.reason;
+          setDocsError(
+            err instanceof ApiError ? err.body.message : "Failed to load documents",
+          );
+        } else if (timedOut) {
+          setDocsError(timeoutMsg);
+        }
+
+        if (ontOutcome.status === "fulfilled") {
+          setOntologies(
+            unwrapPaginatedList<OntologyRegistryEntry>(ontOutcome.value),
+          );
+        } else if (!isAbortError(ontOutcome.reason)) {
+          const err = ontOutcome.reason;
+          setOntError(
+            err instanceof ApiError ? err.body.message : "Failed to load ontologies",
+          );
+        } else if (timedOut) {
+          setOntError(timeoutMsg);
+        }
+      } catch (err) {
+        if (seq !== loadSeqRef.current) return;
+        if (isAbortError(err) && timedOut) {
+          setDocsError(timeoutMsg);
+          setOntError(timeoutMsg);
+        } else if (!isAbortError(err)) {
+          setDocsError("Failed to load documents");
+          setOntError("Failed to load ontologies");
+        }
+      } finally {
+        if (seq === loadSeqRef.current) {
+          setDocsLoading(false);
+          setOntLoading(false);
+        }
+      }
+    }
+
+    loadCoreAssets();
+    return () => {
+      window.clearTimeout(timeoutId);
+      ac.abort();
+      loadSeqRef.current += 1;
+    };
+  }, [reloadEpoch]);
 
   useEffect(() => {
     if (expanded.runs && runs.length === 0 && !runsLoading) {
@@ -234,7 +300,12 @@ export default function AssetExplorer({
           onToggle={() => toggleSection("documents")}
         >
           {docsLoading && <LoadingRow />}
-          {docsError && <ErrorRow message={docsError} onRetry={fetchDocuments} />}
+          {docsError && (
+            <ErrorRow
+              message={docsError}
+              onRetry={() => setReloadEpoch((n) => n + 1)}
+            />
+          )}
           {!docsLoading && !docsError && filteredDocs.length === 0 && (
             <EmptyRow label="No documents" />
           )}
@@ -271,7 +342,12 @@ export default function AssetExplorer({
           onToggle={() => toggleSection("ontologies")}
         >
           {ontLoading && <LoadingRow />}
-          {ontError && <ErrorRow message={ontError} onRetry={fetchOntologies} />}
+          {ontError && (
+            <ErrorRow
+              message={ontError}
+              onRetry={() => setReloadEpoch((n) => n + 1)}
+            />
+          )}
           {!ontLoading && !ontError && filteredOnt.length === 0 && (
             <EmptyRow label="No ontologies" />
           )}
