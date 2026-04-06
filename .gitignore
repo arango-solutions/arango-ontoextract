@@ -4,6 +4,9 @@
 # Object-centric workspace UI rules (local / team-specific)
 .cursor/rules/ui-architecture.mdc
 
+# Cursor skills (local / machine-specific)
+.cursor/skills/
+
 # Python
 __pycache__/
 *.py[cod]
