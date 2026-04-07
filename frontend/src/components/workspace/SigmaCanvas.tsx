@@ -26,14 +26,14 @@ import type { LensType } from "@/components/workspace/LensToolbar";
 /* ── Color palettes ──────────────────────────────────── */
 
 const EDGE_COLORS: Record<string, string> = {
-  subclass_of: "#818cf8",
-  equivalent_class: "#a78bfa",
-  has_property: "#22d3ee",
-  extends_domain: "#fbbf24",
-  related_to: "#60a5fa",
-  rdfs_range_class: "#60a5fa",
-  extracted_from: "#34d399",
-  imports: "#fb7185",
+  subclass_of: "#a5b4fc",
+  equivalent_class: "#c4b5fd",
+  has_property: "#67e8f9",
+  extends_domain: "#fcd34d",
+  related_to: "#93c5fd",
+  rdfs_range_class: "#93c5fd",
+  extracted_from: "#6ee7b7",
+  imports: "#fda4af",
 };
 
 function confidenceNodeColor(confidence: number): string {
@@ -55,12 +55,12 @@ function lensNodeColor(cls: OntologyClass, lens: LensType): string {
     case "curation":
       return STATUS_NODE_COLORS[cls.status ?? "pending"] ?? "#94a3b8";
     case "diff":
-      return "#a78bfa";
+      return "#c4b5fd";
     case "source":
-      return "#38bdf8";
+      return "#7dd3fc";
     case "semantic":
     default:
-      return "#6366f1";
+      return "#818cf8";
   }
 }
 
@@ -112,7 +112,7 @@ function buildGraph(
 
   for (const cls of classes) {
     const degree = degreeCounts.get(cls._key) ?? 0;
-    const size = Math.max(8, Math.min(24, 8 + degree * 2));
+    const size = Math.max(12, Math.min(30, 12 + degree * 2));
     graph.addNode(cls._key, {
       label: cls.label,
       size,
@@ -162,7 +162,7 @@ function buildGraph(
 
     graph.addEdgeWithKey(edge._key, source, target, {
       label: displayLabel,
-      color: EDGE_COLORS[edgeType] ?? "#64748b",
+      color: EDGE_COLORS[edgeType] ?? "#94a3b8",
       size: edgeType === "subclass_of" ? 2.5 : 2,
       type: "arrow",
       edgeKey: edge._key,
@@ -509,7 +509,7 @@ export default function SigmaCanvas({
         width: "100%",
         height: "100%",
         position: "relative",
-        background: "#1a1a2e",
+        background: "#111118",
         overflow: "hidden",
       }}
     >

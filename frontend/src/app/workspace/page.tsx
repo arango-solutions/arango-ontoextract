@@ -20,7 +20,7 @@ import type { SigmaViewportApi } from "@/components/workspace/SigmaCanvas";
 const SigmaCanvas = dynamic(() => import("@/components/workspace/SigmaCanvas"), {
   ssr: false,
   loading: () => (
-    <div className="h-full flex items-center justify-center bg-[#1a1a2e]">
+    <div className="h-full flex items-center justify-center bg-[#111118]">
       <div className="animate-spin h-8 w-8 border-2 border-indigo-400 border-t-transparent rounded-full" />
     </div>
   ),
@@ -536,14 +536,14 @@ function WorkspacePageInner() {
           <div className="flex-1 relative overflow-hidden min-h-0">
             {selectedOntologyId ? (
               graphLoading ? (
-                <div className="h-full flex flex-col items-center justify-center gap-3 bg-[#1a1a2e]">
+                <div className="h-full flex flex-col items-center justify-center gap-3 bg-[#111118]">
                   <div className="animate-spin h-10 w-10 border-3 border-indigo-400 border-t-transparent rounded-full" />
                   <p className="text-sm text-gray-400">
                     Loading {ontologyName ?? selectedOntologyId}…
                   </p>
                 </div>
               ) : graphError ? (
-                <div className="h-full flex flex-col items-center justify-center gap-3 text-center px-8 bg-[#1a1a2e]">
+                <div className="h-full flex flex-col items-center justify-center gap-3 text-center px-8 bg-[#111118]">
                   <div className="w-12 h-12 rounded-full bg-red-900/30 flex items-center justify-center">
                     <svg className="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
