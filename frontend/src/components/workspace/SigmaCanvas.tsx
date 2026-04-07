@@ -158,7 +158,7 @@ function buildGraph(
         label,
         color: EDGE_COLORS.rdfs_range_class,
         size: 2,
-        type: "arrow",
+        type: "curvedArrow",
         edgeKey: syn.edgeKey,
         edgeType: "rdfs_range_class",
       },
@@ -185,7 +185,7 @@ function buildGraph(
       label: displayLabel,
       color: EDGE_COLORS[edgeType] ?? "#94a3b8",
       size: edgeType === "subclass_of" ? 2.5 : 2,
-      type: "arrow",
+      type: "curvedArrow",
       edgeKey: edge._key,
       edgeType,
     });
