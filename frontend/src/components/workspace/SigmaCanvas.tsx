@@ -398,7 +398,7 @@ export default function SigmaCanvas({
     });
 
     renderer.on("downNode", ({ node, event }) => {
-      if (event.original.button !== 0) return;
+      if ("button" in event.original && event.original.button !== 0) return;
       isDragging = true;
       draggedNode = node;
       graph.setNodeAttribute(node, "highlighted", true);

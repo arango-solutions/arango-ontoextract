@@ -463,8 +463,10 @@ function WorkspacePageInner() {
             },
           },
           {
-            label: "Open in Pipeline Monitor", icon: "⚡",
-            onClick: () => { window.location.href = `/pipeline?runId=${runKey}`; },
+            label: "View Pipeline Metrics", icon: "⚡",
+            onClick: () => {
+              handleSelectRun(runKey);
+            },
           },
           { label: "separator", separator: true },
           {
@@ -701,15 +703,29 @@ function AssetInfoPanel({
       { label: "Created", value: data.created_at as string },
     );
   } else if (type === "run") {
+    const stats = (data.stats ?? {}) as Record<string, unknown>;
+    const startedAt = data.started_at as number | undefined;
+    const completedAt = data.completed_at as number | undefined;
+    const duration = startedAt && completedAt
+      ? `${Math.round(((completedAt as number) - (startedAt as number)))}s`
+      : data.duration_ms != null
+        ? `${Math.round((data.duration_ms as number) / 1000)}s`
+        : undefined;
+    const tokenUsage = stats.token_usage as Record<string, number> | undefined;
+    const totalTokens = tokenUsage
+      ? (tokenUsage.prompt_tokens ?? 0) + (tokenUsage.completion_tokens ?? 0)
+      : undefined;
+
     rows.push(
-      { label: "Document", value: data.document_name as string },
+      { label: "Document", value: data.document_name as string ?? (data.doc_id as string) },
       { label: "Status", value: data.status as string },
-      { label: "Current Step", value: data.current_step as string },
-      { label: "Classes Extracted", value: data.classes_extracted as number },
-      { label: "Properties Extracted", value: data.properties_extracted as number },
-      { label: "Duration", value: data.duration_ms != null ? `${Math.round((data.duration_ms as number) / 1000)}s` : undefined },
       { label: "Model", value: data.model as string },
-      { label: "Created", value: data.created_at as string },
+      { label: "Duration", value: duration },
+      { label: "Classes Extracted", value: data.classes_extracted as number ?? stats.classes_extracted as number },
+      { label: "Properties Extracted", value: data.properties_extracted as number ?? stats.properties_extracted as number },
+      { label: "Total Tokens", value: totalTokens },
+      { label: "Estimated Cost", value: stats.estimated_cost != null ? `$${(stats.estimated_cost as number).toFixed(4)}` : undefined },
+      { label: "Agreement Rate", value: stats.pass_agreement_rate != null ? `${((stats.pass_agreement_rate as number) * 100).toFixed(1)}%` : undefined },
     );
   }
 
