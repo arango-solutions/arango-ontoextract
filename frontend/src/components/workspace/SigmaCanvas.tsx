@@ -173,42 +173,20 @@ function buildGraph(
   return graph;
 }
 
-/** Fit camera so the full graph bbox is visible (Sigma v3). */
+/**
+ * Reset camera to show the full graph.
+ *
+ * Sigma v3 with autoRescale (default) normalizes node positions to fit the
+ * viewport, so the default camera state {x:0.5, y:0.5, ratio:1} already
+ * shows everything. We just need to reset to that default.
+ */
 function fitCameraToGraph(sigma: Sigma): void {
-  const { width: vw, height: vh } = sigma.getDimensions();
-  if (vw <= 0 || vh <= 0) return;
-
-  const bbox = sigma.getBBox();
-  const gw = Math.max(bbox.x[1] - bbox.x[0], 1e-6);
-  const gh = Math.max(bbox.y[1] - bbox.y[0], 1e-6);
-  const cx = (bbox.x[0] + bbox.x[1]) / 2;
-  const cy = (bbox.y[0] + bbox.y[1]) / 2;
-
-  const pad = sigma.getStagePadding() * 2;
-  const ratio = Math.max(gw / (vw - pad), gh / (vh - pad));
-
-  sigma.getCamera().setState({
-    x: cx,
-    y: cy,
-    ratio: Math.max(ratio, 1e-6),
-    angle: 0,
-  });
+  sigma.getCamera().setState({ x: 0.5, y: 0.5, ratio: 1, angle: 0 });
   sigma.refresh();
 }
 
-/** Pan camera to graph centroid without changing zoom (current ratio preserved). */
 function centerCameraOnGraph(sigma: Sigma): void {
-  const bbox = sigma.getBBox();
-  const cx = (bbox.x[0] + bbox.x[1]) / 2;
-  const cy = (bbox.y[0] + bbox.y[1]) / 2;
-  const cam = sigma.getCamera();
-  const prev = cam.getState();
-  cam.setState({
-    x: cx,
-    y: cy,
-    ratio: prev.ratio,
-    angle: prev.angle,
-  });
+  sigma.getCamera().setState({ x: 0.5, y: 0.5, ratio: 1, angle: 0 });
   sigma.refresh();
 }
 
