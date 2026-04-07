@@ -244,11 +244,17 @@ export default function SigmaCanvas({
     [edges],
   );
 
-  const graph = useMemo(
-    () => buildGraph(classes, edges, activeLens),
+  const graph = useMemo(() => {
+    const g = buildGraph(classes, edges, activeLens);
+    console.log("[SigmaCanvas] buildGraph result", {
+      classCount: classes.length,
+      edgeCount: edges.length,
+      graphOrder: g.order,
+      graphSize: g.size,
+    });
+    return g;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stableClassesKey, stableEdgesKey, activeLens],
-  );
+  }, [stableClassesKey, stableEdgesKey, activeLens]);
 
   useEffect(() => {
     if (graph.order === 0) return;
@@ -275,6 +281,14 @@ export default function SigmaCanvas({
   onContextMenuRef.current = onContextMenu;
 
   useEffect(() => {
+    console.log("[SigmaCanvas] useEffect fired", {
+      hasContainer: !!containerRef.current,
+      graphOrder: graph.order,
+      graphSize: graph.size,
+      containerDims: containerRef.current
+        ? { w: containerRef.current.offsetWidth, h: containerRef.current.offsetHeight }
+        : null,
+    });
     if (!containerRef.current || graph.order === 0) return;
     graphRef.current = graph;
 
@@ -305,18 +319,26 @@ export default function SigmaCanvas({
     const MAX_RETRIES = 30;
 
     const afterLayout = () => {
-      if (killed) return;
+      if (killed) { console.log("[SigmaCanvas] afterLayout: killed, skipping"); return; }
       renderer.resize();
       const dims = renderer.getDimensions();
+      console.log("[SigmaCanvas] afterLayout", { dims, retryCount, killed });
       if (dims.width === 0 || dims.height === 0) {
         retryCount++;
         if (retryCount < MAX_RETRIES) {
           setTimeout(afterLayout, 100);
+        } else {
+          console.error("[SigmaCanvas] afterLayout: gave up after MAX_RETRIES — container never got dimensions");
         }
         return;
       }
-      renderer.refresh();
-      fitCameraToGraph(renderer);
+      try {
+        renderer.refresh();
+        fitCameraToGraph(renderer);
+        console.log("[SigmaCanvas] afterLayout: refresh + fitCamera complete");
+      } catch (err) {
+        console.error("[SigmaCanvas] afterLayout: refresh threw", err);
+      }
     };
     requestAnimationFrame(() => {
       requestAnimationFrame(afterLayout);
@@ -387,7 +409,16 @@ export default function SigmaCanvas({
       onContextMenuRef.current(event.original as MouseEvent, "canvas");
     });
 
+    console.log("[SigmaCanvas] Sigma instance created successfully", {
+      dims: renderer.getDimensions(),
+      settings: {
+        defaultNodeType: renderer.getSetting("defaultNodeType"),
+        defaultEdgeType: renderer.getSetting("defaultEdgeType"),
+      },
+    });
+
     return () => {
+      console.log("[SigmaCanvas] cleanup: killing renderer");
       killed = true;
       resizeObserver?.disconnect();
       renderer.kill();
@@ -472,7 +503,16 @@ export default function SigmaCanvas({
   }
 
   return (
-    <div className="relative w-full h-full" data-testid="sigma-canvas">
+    <div
+      data-testid="sigma-canvas"
+      style={{
+        width: "100%",
+        height: "100%",
+        position: "relative",
+        background: "#1a1a2e",
+        overflow: "hidden",
+      }}
+    >
       {layoutRunning && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#1a1a2e]/60 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-3">
@@ -481,10 +521,16 @@ export default function SigmaCanvas({
           </div>
         </div>
       )}
+      <div className="absolute top-2 left-2 z-20 text-xs text-gray-500 bg-black/50 px-2 py-1 rounded pointer-events-none">
+        nodes: {graph.order} | edges: {graph.size}
+      </div>
       <div
         ref={containerRef}
-        className="absolute inset-0"
-        style={{ background: "#1a1a2e", width: "100%", height: "100%" }}
+        style={{
+          width: "100%",
+          height: "100%",
+          position: "relative",
+        }}
       />
     </div>
   );
