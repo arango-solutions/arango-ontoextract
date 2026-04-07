@@ -305,6 +305,11 @@ export default function SigmaCanvas({
     const afterLayout = () => {
       if (killed) return;
       renderer.resize();
+      const dims = renderer.getDimensions();
+      if (dims.width === 0 || dims.height === 0) {
+        setTimeout(afterLayout, 100);
+        return;
+      }
       renderer.refresh();
       fitCameraToGraph(renderer);
     };
@@ -473,8 +478,8 @@ export default function SigmaCanvas({
       )}
       <div
         ref={containerRef}
-        className="absolute inset-0 w-full min-h-0"
-        style={{ background: "#1a1a2e" }}
+        className="absolute inset-0"
+        style={{ background: "#1a1a2e", width: "100%", height: "100%" }}
       />
     </div>
   );

@@ -420,10 +420,15 @@ export default function WorkspacePage() {
           },
           {
             label: "Open Ontology", icon: "🔷",
-            disabled: !data.ontology_id,
+            disabled: !data.ontology_id && !data.target_ontology_id,
             onClick: () => {
-              if (data.ontology_id) handleSelectOntology(data.ontology_id as string);
+              const oid = (data.ontology_id ?? data.target_ontology_id) as string | undefined;
+              if (oid) handleSelectOntology(oid);
             },
+          },
+          {
+            label: "Open in Pipeline Monitor", icon: "⚡",
+            onClick: () => { window.location.href = `/pipeline?run=${runKey}`; },
           },
           { label: "separator", separator: true },
           {
