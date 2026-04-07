@@ -300,7 +300,10 @@ export default function SigmaCanvas({
 
     sigmaRef.current = renderer;
 
+    let killed = false;
+
     const afterLayout = () => {
+      if (killed) return;
       renderer.resize();
       renderer.refresh();
       fitCameraToGraph(renderer);
@@ -312,6 +315,7 @@ export default function SigmaCanvas({
     const resizeObserver =
       typeof ResizeObserver !== "undefined"
         ? new ResizeObserver(() => {
+            if (killed) return;
             renderer.resize();
             renderer.refresh();
             fitCameraToGraph(renderer);
@@ -322,6 +326,7 @@ export default function SigmaCanvas({
     let hoveredNode: string | null = null;
 
     renderer.on("enterNode", ({ node }) => {
+      if (killed) return;
       hoveredNode = node;
       renderer.setSetting("labelRenderedSizeThreshold", 0);
       graph.setNodeAttribute(node, "highlighted", true);
@@ -329,6 +334,7 @@ export default function SigmaCanvas({
     });
 
     renderer.on("leaveNode", ({ node }) => {
+      if (killed) return;
       hoveredNode = null;
       renderer.setSetting("labelRenderedSizeThreshold", 6);
       graph.setNodeAttribute(node, "highlighted", false);
@@ -372,6 +378,7 @@ export default function SigmaCanvas({
     });
 
     return () => {
+      killed = true;
       resizeObserver?.disconnect();
       renderer.kill();
       sigmaRef.current = null;
