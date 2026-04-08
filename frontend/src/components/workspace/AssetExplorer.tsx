@@ -317,7 +317,7 @@ export default function AssetExplorer({
                 e.preventDefault();
                 onContextMenu(e, "document", doc);
               }}
-              className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors group"
+              className="w-full text-left pl-7 pr-3 py-1.5 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors group"
             >
               <StatusDot status={doc.status} />
               <span className="truncate flex-1 text-gray-700 group-hover:text-gray-900">
@@ -359,7 +359,7 @@ export default function AssetExplorer({
                 e.preventDefault();
                 onContextMenu(e, "ontology", ont);
               }}
-              className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors group
+              className={`w-full text-left pl-7 pr-3 py-1.5 text-xs flex items-center gap-2 transition-colors group
                 ${selectedOntologyId === ont._key ? "bg-blue-50 text-blue-800" : "hover:bg-gray-50"}
               `}
             >
@@ -397,7 +397,7 @@ export default function AssetExplorer({
                 e.preventDefault();
                 onContextMenu(e, "run", run);
               }}
-              className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors group"
+              className="w-full text-left pl-7 pr-3 py-1.5 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors group"
             >
               <StatusDot status={run.status} />
               <span className="truncate flex-1 text-gray-700 group-hover:text-gray-900">
