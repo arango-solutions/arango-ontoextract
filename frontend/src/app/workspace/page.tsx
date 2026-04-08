@@ -40,6 +40,10 @@ const AgentDAG = dynamic(() => import("@/components/pipeline/AgentDAG"), {
   ),
 });
 
+const RunMetrics = dynamic(() => import("@/components/pipeline/RunMetrics"), {
+  ssr: false,
+});
+
 interface ContextMenuState {
   x: number;
   y: number;
@@ -260,14 +264,9 @@ function WorkspacePageInner() {
     }
   }, []);
 
-  const handleSelectRun = useCallback(async (runId: string) => {
+  const handleSelectRun = useCallback((runId: string) => {
     setPipelineRunId(runId);
-    try {
-      const run = await api.get<Record<string, unknown>>(`/api/v1/extraction/runs/${runId}`);
-      setInfoPanelItem({ type: "run", data: run });
-    } catch {
-      setInfoPanelItem({ type: "run", data: { _key: runId } });
-    }
+    setInfoPanelItem(null);
   }, []);
 
   const handleAssetContextMenu = useCallback(
@@ -567,7 +566,8 @@ function WorkspacePageInner() {
           {/* Graph Canvas area */}
           <div className="flex-1 relative overflow-hidden min-h-0">
             {pipelineRunId && !graphLoading ? (
-              <div className="h-full flex flex-col bg-white">
+              <div className="h-full flex flex-col bg-white overflow-hidden">
+                {/* Header */}
                 <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
                   <div className="flex items-center gap-2">
                     <span className="text-xs px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 font-medium">
@@ -576,14 +576,20 @@ function WorkspacePageInner() {
                     <span className="text-xs text-gray-500 font-mono">{pipelineRunId}</span>
                   </div>
                   <button
-                    onClick={() => { setPipelineRunId(null); setInfoPanelItem(null); }}
+                    onClick={() => { setPipelineRunId(null); }}
                     className="text-xs text-gray-400 hover:text-gray-600"
                   >
                     &times; Close
                   </button>
                 </div>
-                <div className="flex-1 min-h-0">
-                  <AgentDAG steps={pipelineSteps} />
+                {/* DAG + Metrics stacked vertically */}
+                <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+                  <div className="min-h-[350px] flex-shrink-0" style={{ height: "55%" }}>
+                    <AgentDAG steps={pipelineSteps} />
+                  </div>
+                  <div className="border-t border-gray-200 flex-shrink-0">
+                    <RunMetrics runId={pipelineRunId} />
+                  </div>
                 </div>
               </div>
             ) : selectedOntologyId ? (
