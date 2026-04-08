@@ -310,25 +310,15 @@ export default function AssetExplorer({
             <EmptyRow label="No documents" />
           )}
           {filteredDocs.map((doc) => (
-            <button
+            <DocumentItem
               key={doc._key}
-              onClick={() => onSelectDocument(doc._key)}
+              doc={doc}
+              onSelect={() => onSelectDocument(doc._key)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 onContextMenu(e, "document", doc);
               }}
-              className="w-full text-left pl-7 pr-3 py-1.5 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors group"
-            >
-              <StatusDot status={doc.status} />
-              <span className="truncate flex-1 text-gray-700 group-hover:text-gray-900">
-                {doc.filename}
-              </span>
-              {doc.chunk_count != null && (
-                <span className="text-[10px] text-gray-400 flex-shrink-0">
-                  {doc.chunk_count} chunks
-                </span>
-              )}
-            </button>
+            />
           ))}
         </Section>
 
@@ -476,5 +466,88 @@ function ErrorRow({ message, onRetry }: { message: string; onRetry: () => void }
 function EmptyRow({ label }: { label: string }) {
   return (
     <p className="px-3 py-2 text-xs text-gray-400 italic">{label}</p>
+  );
+}
+
+function DocumentItem({
+  doc,
+  onSelect,
+  onContextMenu: onCtx,
+}: {
+  doc: DocumentEntry;
+  onSelect: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [chunks, setChunks] = useState<{ _key: string; text: string; section_heading?: string; chunk_index?: number }[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!expanded || chunks.length > 0) return;
+    let cancelled = false;
+    setLoading(true);
+    api
+      .get<{ data: { _key: string; text: string; section_heading?: string; chunk_index?: number }[] }>(
+        `/api/v1/documents/${doc._key}/chunks`,
+      )
+      .then((res) => {
+        if (!cancelled) {
+          const list = Array.isArray(res) ? res : res.data;
+          setChunks(Array.isArray(list) ? list : []);
+        }
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [expanded, chunks.length, doc._key]);
+
+  return (
+    <div>
+      <button
+        onClick={() => {
+          setExpanded((v) => !v);
+          onSelect();
+        }}
+        onContextMenu={onCtx}
+        className="w-full text-left pl-7 pr-3 py-1.5 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors group"
+      >
+        <span className="text-[10px] text-gray-400 w-3 text-center flex-shrink-0">
+          {expanded ? "▼" : "▶"}
+        </span>
+        <StatusDot status={doc.status} />
+        <span className="truncate flex-1 text-gray-700 group-hover:text-gray-900">
+          {doc.filename}
+        </span>
+        {doc.chunk_count != null && (
+          <span className="text-[10px] text-gray-400 flex-shrink-0">
+            {doc.chunk_count}
+          </span>
+        )}
+      </button>
+      {expanded && (
+        <div>
+          {loading && (
+            <p className="pl-12 pr-3 py-1 text-[10px] text-gray-400 animate-pulse">Loading chunks…</p>
+          )}
+          {!loading && chunks.length === 0 && (
+            <p className="pl-12 pr-3 py-1 text-[10px] text-gray-400 italic">No chunks</p>
+          )}
+          {chunks.map((chunk, idx) => (
+            <div
+              key={chunk._key ?? idx}
+              className="pl-12 pr-3 py-1 text-[10px] text-gray-500 truncate hover:bg-gray-50 cursor-default"
+              title={chunk.text?.slice(0, 200)}
+            >
+              <span className="text-gray-400 mr-1">#{chunk.chunk_index ?? idx + 1}</span>
+              {chunk.section_heading ? (
+                <span className="font-medium text-gray-600">{chunk.section_heading}</span>
+              ) : (
+                <span className="italic">{chunk.text?.slice(0, 60)}…</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
