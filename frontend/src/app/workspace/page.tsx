@@ -9,7 +9,8 @@ import EmptyCanvasState from "@/components/workspace/EmptyCanvasState";
 import FloatingDetailPanel from "@/components/workspace/FloatingDetailPanel";
 import ContextMenu, { type ContextMenuItem } from "@/components/workspace/ContextMenu";
 import { api, ApiError, type PaginatedResponse } from "@/lib/api-client";
-import { useExtractionSocket } from "@/lib/use-websocket";
+import type { StepStatus } from "@/types/pipeline";
+import { getApiBaseUrl } from "@/lib/api-client";
 import type {
   OntologyRegistryEntry,
   OntologyClass,
@@ -90,7 +91,70 @@ function WorkspacePageInner() {
   const [timelineVisibleKeys, setTimelineVisibleKeys] = useState<Set<string> | null>(null);
 
   const [pipelineRunId, setPipelineRunId] = useState<string | null>(null);
-  const { steps: pipelineSteps } = useExtractionSocket(pipelineRunId);
+  const [pipelineSteps, setPipelineSteps] = useState<Map<string, StepStatus>>(new Map());
+
+  useEffect(() => {
+    if (!pipelineRunId) {
+      setPipelineSteps(new Map());
+      return;
+    }
+    let cancelled = false;
+
+    const PIPELINE_STEP_ORDER = [
+      "strategy_selector", "extractor", "consistency_checker",
+      "quality_judge", "er_agent", "filter",
+    ];
+    const BACKEND_MAP: Record<string, string> = {
+      strategy_selector: "strategy_selector",
+      extractor: "extractor",
+      consistency_checker: "consistency_checker",
+      quality_judge: "quality_judge",
+      er_agent: "er_agent",
+      filter: "filter",
+    };
+
+    async function load() {
+      try {
+        const res = await fetch(`${getApiBaseUrl()}/api/v1/extraction/runs/${pipelineRunId}`);
+        if (!res.ok || cancelled) return;
+        const run = await res.json();
+        const stepLogs: { step: string; status: string; started_at?: number; completed_at?: number; error?: string | null; metadata?: Record<string, unknown> }[] =
+          run?.stats?.step_logs ?? [];
+
+        const map = new Map<string, StepStatus>();
+        for (const s of PIPELINE_STEP_ORDER) {
+          map.set(s, { status: "pending" });
+        }
+
+        for (const log of stepLogs) {
+          const key = BACKEND_MAP[log.step] ?? log.step;
+          if (!map.has(key)) continue;
+          const status = log.status === "completed" || log.status === "skipped"
+            ? "completed"
+            : log.status === "failed" ? "failed"
+            : log.status === "running" ? "running"
+            : "pending";
+          const duration = log.started_at && log.completed_at
+            ? Math.round((log.completed_at - log.started_at) * 1000)
+            : undefined;
+          map.set(key, {
+            status: status as StepStatus["status"],
+            startedAt: log.started_at ? new Date(log.started_at * 1000).toISOString() : undefined,
+            completedAt: log.completed_at ? new Date(log.completed_at * 1000).toISOString() : undefined,
+            error: log.error ?? undefined,
+            data: { ...log.metadata, duration_ms: duration },
+          });
+        }
+
+        if (!cancelled) setPipelineSteps(map);
+      } catch {
+        // silent — metrics panel will show error if needed
+      }
+    }
+
+    load();
+    return () => { cancelled = true; };
+  }, [pipelineRunId]);
 
   const resizingRef = useRef(false);
   const startXRef = useRef(0);
