@@ -242,6 +242,42 @@ def _detect_range_conflicts(
     conflicts: list[ConflictReport],
 ) -> None:
     """Flag when a local property contradicts a domain property's range."""
+    _detect_range_conflicts_legacy_properties(
+        db, staging_ontology_id, domain_ontology_id, conflicts
+    )
+    _detect_range_conflicts_pgt_datatype(
+        db, staging_ontology_id, domain_ontology_id, conflicts
+    )
+    _detect_range_conflicts_pgt_object(
+        db, staging_ontology_id, domain_ontology_id, conflicts
+    )
+
+
+def _append_range_conflicts(
+    results: list[dict[str, Any]],
+    conflicts: list[ConflictReport],
+) -> None:
+    for row in results:
+        conflicts.append(
+            ConflictReport(
+                entity_key=row["local_key"],
+                conflict_type=ConflictType.CONTRADICTING_RANGE,
+                description=(
+                    f"Property '{row['uri']}' has range '{row['local_range']}' "
+                    f"but domain defines range '{row['domain_range']}'. "
+                    "Domain property takes precedence unless overridden."
+                ),
+                domain_entity_key=row["domain_key"],
+            )
+        )
+
+
+def _detect_range_conflicts_legacy_properties(
+    db: StandardDatabase,
+    staging_ontology_id: str,
+    domain_ontology_id: str,
+    conflicts: list[ConflictReport],
+) -> None:
     if not db.has_collection("ontology_properties"):
         return
 
@@ -270,20 +306,98 @@ FOR local_prop IN ontology_properties
             },
         )
     )
+    _append_range_conflicts(results, conflicts)
 
-    for row in results:
-        conflicts.append(
-            ConflictReport(
-                entity_key=row["local_key"],
-                conflict_type=ConflictType.CONTRADICTING_RANGE,
-                description=(
-                    f"Property '{row['uri']}' has range '{row['local_range']}' "
-                    f"but domain defines range '{row['domain_range']}'. "
-                    "Domain property takes precedence unless overridden."
-                ),
-                domain_entity_key=row["domain_key"],
-            )
+
+def _detect_range_conflicts_pgt_datatype(
+    db: StandardDatabase,
+    staging_ontology_id: str,
+    domain_ontology_id: str,
+    conflicts: list[ConflictReport],
+) -> None:
+    if not db.has_collection("ontology_datatype_properties"):
+        return
+
+    results = list(
+        run_aql(
+            db,
+            """\
+FOR local IN ontology_datatype_properties
+  FILTER local.ontology_id == @staging_oid
+  FILTER local.expired == @never
+  FOR domain IN ontology_datatype_properties
+    FILTER domain.ontology_id == @domain_oid
+    FILTER domain.expired == @never
+    FILTER local.uri == domain.uri
+    FILTER local.range_datatype != domain.range_datatype
+    RETURN {
+      local_key: local._key,
+      domain_key: domain._key,
+      uri: local.uri,
+      local_range: local.range_datatype,
+      domain_range: domain.range_datatype
+    }""",
+            bind_vars={
+                "staging_oid": staging_ontology_id,
+                "domain_oid": domain_ontology_id,
+                "never": NEVER_EXPIRES,
+            },
         )
+    )
+    _append_range_conflicts(results, conflicts)
+
+
+def _detect_range_conflicts_pgt_object(
+    db: StandardDatabase,
+    staging_ontology_id: str,
+    domain_ontology_id: str,
+    conflicts: list[ConflictReport],
+) -> None:
+    if not db.has_collection("ontology_object_properties"):
+        return
+    if not db.has_collection("rdfs_range_class"):
+        return
+
+    results = list(
+        run_aql(
+            db,
+            """\
+FOR local IN ontology_object_properties
+  FILTER local.ontology_id == @staging_oid
+  FILTER local.expired == @never
+  LET local_range = FIRST(
+    FOR e IN rdfs_range_class
+      FILTER e._from == local._id AND e.expired == @never
+      LET target = DOCUMENT(e._to)
+      RETURN target.uri
+  )
+  FOR domain IN ontology_object_properties
+    FILTER domain.ontology_id == @domain_oid
+    FILTER domain.expired == @never
+    FILTER domain.uri == local.uri
+    LET domain_range = FIRST(
+      FOR e IN rdfs_range_class
+        FILTER e._from == domain._id AND e.expired == @never
+        LET target = DOCUMENT(e._to)
+        RETURN target.uri
+    )
+    FILTER local_range != null AND domain_range != null
+    FILTER local_range != domain_range
+    RETURN {
+      local_key: local._key,
+      domain_key: domain._key,
+      uri: local.uri,
+      local_range: local_range,
+      domain_range: domain_range
+    }""",
+            bind_vars={
+                "staging_oid": staging_ontology_id,
+                "domain_oid": domain_ontology_id,
+                "never": NEVER_EXPIRES,
+            },
+        )
+    )
+    _append_range_conflicts(results, conflicts)
 
 
 def _detect_hierarchy_conflicts(

@@ -86,6 +86,33 @@ class TestGetClassNeighborhood:
         assert result["parents"] == set()
         assert result["children"] == set()
 
+    def test_merges_rdfs_domain_and_has_property_uris(self):
+        mock_db = MagicMock()
+
+        def mock_has_collection(name: str) -> bool:
+            return name in ("rdfs_domain", "has_property", "subclass_of")
+
+        mock_db.has_collection.side_effect = mock_has_collection
+
+        call_count = [0]
+
+        def mock_run_aql(db, query, bind_vars=None):
+            call_count[0] += 1
+            if "INBOUND" in query and "rdfs_domain" in query:
+                return iter(["http://ex.org#fromRdfs"])
+            if "OUTBOUND" in query and "has_property" in query:
+                return iter(["http://ex.org#fromLegacy"])
+            if "OUTBOUND" in query and "subclass_of" in query:
+                return iter([])
+            if "INBOUND" in query and "subclass_of" in query:
+                return iter([])
+            return iter([])
+
+        with patch("app.services.er_topology.run_aql", side_effect=mock_run_aql):
+            result = _get_class_neighborhood(mock_db, "cls_key")
+
+        assert result["properties"] == {"http://ex.org#fromRdfs", "http://ex.org#fromLegacy"}
+
 
 # ---------------------------------------------------------------------------
 # compute_topological_similarity

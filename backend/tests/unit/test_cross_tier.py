@@ -51,27 +51,35 @@ def _mock_db_for_edges(
 def _mock_db_for_conflicts(
     same_uri_results: list[dict] | None = None,
     range_results: list[dict] | None = None,
+    pgt_dt_range_results: list[dict] | None = None,
+    pgt_obj_range_results: list[dict] | None = None,
     domain_edges: list[dict] | None = None,
     staging_classes_with_parents: list[dict] | None = None,
 ):
     """Create a mock DB for conflict detection."""
-    db = MagicMock()
-    db.has_collection.return_value = True
-
-    call_count = {"n": 0}
 
     def execute_side(query, bind_vars=None):
-        call_count["n"] += 1
-        if "local.uri == domain.uri" in query:
+        q = query
+        if "local.uri == domain.uri" in q and "ontology_classes" in q:
             return iter(same_uri_results or [])
-        if "local_prop.range != domain_prop.range" in query:
+        if "local_prop.range != domain_prop.range" in q:
             return iter(range_results or [])
-        if "DOCUMENT(e._from)" in query:
+        if "ontology_datatype_properties" in q and "range_datatype" in q:
+            return iter(pgt_dt_range_results or [])
+        if (
+            "ontology_object_properties" in q
+            and "rdfs_range_class" in q
+            and "local_range" in q
+        ):
+            return iter(pgt_obj_range_results or [])
+        if "DOCUMENT(e._from)" in q and "subclass_of" in q:
             return iter(domain_edges or [])
-        if "cls.parent_uri != null" in query:
+        if "cls.parent_uri != null" in q:
             return iter(staging_classes_with_parents or [])
         return iter([])
 
+    db = MagicMock()
+    db.has_collection.return_value = True
     db.aql.execute.side_effect = execute_side
     return db
 
@@ -146,6 +154,30 @@ class TestDetectConflicts:
         conflicts = detect_conflicts(db, run_id="run1", ontology_id="domain_onto")
         assert any(c.conflict_type == ConflictType.CONTRADICTING_RANGE for c in conflicts)
 
+    def test_detects_pgt_datatype_range_conflicts(self):
+        row = {
+            "local_key": "lp1",
+            "domain_key": "dp1",
+            "uri": "http://ex.org#amount",
+            "local_range": "xsd:decimal",
+            "domain_range": "xsd:integer",
+        }
+        db = _mock_db_for_conflicts(pgt_dt_range_results=[row])
+        conflicts = detect_conflicts(db, run_id="run1", ontology_id="domain_onto")
+        assert any(c.conflict_type == ConflictType.CONTRADICTING_RANGE for c in conflicts)
+
+    def test_detects_pgt_object_range_conflicts(self):
+        row = {
+            "local_key": "lo1",
+            "domain_key": "do1",
+            "uri": "http://ex.org#holdsAccount",
+            "local_range": "http://ex.org#SavingsAccount",
+            "domain_range": "http://ex.org#Account",
+        }
+        db = _mock_db_for_conflicts(pgt_obj_range_results=[row])
+        conflicts = detect_conflicts(db, run_id="run1", ontology_id="domain_onto")
+        assert any(c.conflict_type == ConflictType.CONTRADICTING_RANGE for c in conflicts)
+
     def test_no_conflicts_when_clean(self):
         db = _mock_db_for_conflicts()
         conflicts = detect_conflicts(db, run_id="run1", ontology_id="domain_onto")
@@ -168,15 +200,24 @@ class TestDetectConflicts:
         )
 
         def execute_side(query, bind_vars=None):
-            if "local.uri == domain.uri" in query:
+            q = query
+            if "local.uri == domain.uri" in q and "ontology_classes" in q:
                 return iter([])
-            if "local_prop.range != domain_prop.range" in query:
+            if "local_prop.range != domain_prop.range" in q:
                 return iter([])
-            if "DOCUMENT(e._from)" in query:
+            if "ontology_datatype_properties" in q and "range_datatype" in q:
+                return iter([])
+            if (
+                "ontology_object_properties" in q
+                and "rdfs_range_class" in q
+                and "local_range" in q
+            ):
+                return iter([])
+            if "DOCUMENT(e._from)" in q and "subclass_of" in q:
                 return iter(domain_edges)
-            if "cls.parent_uri != null" in query:
+            if "cls.parent_uri != null" in q:
                 return iter(staging_with_parents)
-            if "cls.uri == @uri" in query:
+            if "cls.uri == @uri" in q:
                 return iter([{"_key": "domain_car", "uri": "http://ex.org#Car"}])
             return iter([])
 

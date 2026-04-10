@@ -115,6 +115,21 @@ def _get_class_neighborhood(
         "children": set(),
     }
 
+    prop_uris: set[str] = set()
+
+    # PGT (ADR-006): domain edges point property vertex → class (_to is the class).
+    if db.has_collection("rdfs_domain"):
+        props = list(
+            run_aql(db,
+                """\
+FOR v, e IN 1..1 INBOUND @cls_id rdfs_domain
+  FILTER e.expired == @never
+  RETURN v.uri""",
+                bind_vars={"cls_id": class_id, "never": NEVER_EXPIRES},
+            )
+        )
+        prop_uris.update(p for p in props if p)
+
     if db.has_collection("has_property"):
         props = list(
             run_aql(db,
@@ -125,7 +140,9 @@ FOR v, e IN 1..1 OUTBOUND @cls_id has_property
                 bind_vars={"cls_id": class_id, "never": NEVER_EXPIRES},
             )
         )
-        result["properties"] = {p for p in props if p}
+        prop_uris.update(p for p in props if p)
+
+    result["properties"] = prop_uris
 
     if db.has_collection("subclass_of"):
         parents = list(
