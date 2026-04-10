@@ -26,14 +26,14 @@ class TestPromoteStaging:
             "status": "approved",
             "ontology_id": "extraction_run_1",
         }
+        # One entry per vertex collection in promote_staging (classes + 3 property cols)
         mock_approved.side_effect = [
             [approved_class],
             [],
-        ]
-        mock_non_approved.side_effect = [
             [],
             [],
         ]
+        mock_non_approved.side_effect = [[], [], [], []]
         mock_promote_entity.return_value = {
             "_key": "prod_cls1",
             "_id": "ontology_classes/prod_cls1",
@@ -60,12 +60,14 @@ class TestPromoteStaging:
     ):
         from app.services.promotion import promote_staging
 
-        mock_approved.side_effect = [[], []]
+        mock_approved.side_effect = [[], [], [], []]
         mock_non_approved.side_effect = [
             [
                 {"_key": "cls_draft", "status": "draft"},
                 {"_key": "cls_rejected", "status": "rejected"},
             ],
+            [],
+            [],
             [],
         ]
         mock_promote_edges.return_value = 0
@@ -91,8 +93,10 @@ class TestPromoteStaging:
         mock_approved.side_effect = [
             [{"_key": "bad_cls", "_id": "ontology_classes/bad_cls", "status": "approved"}],
             [],
+            [],
+            [],
         ]
-        mock_non_approved.side_effect = [[], []]
+        mock_non_approved.side_effect = [[], [], [], []]
         mock_promote_entity.side_effect = Exception("DB write failure")
         mock_promote_edges.return_value = 0
 
@@ -114,8 +118,8 @@ class TestPromoteStaging:
     ):
         from app.services.promotion import promote_staging
 
-        mock_approved.side_effect = [[], []]
-        mock_non_approved.side_effect = [[], []]
+        mock_approved.side_effect = [[], [], [], []]
+        mock_non_approved.side_effect = [[], [], [], []]
         mock_promote_edges.return_value = 0
 
         mock_db = MagicMock()

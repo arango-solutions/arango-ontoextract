@@ -80,15 +80,31 @@ def get_staging_graph(
             )
         )
 
-    if db.has_collection("ontology_properties"):
-        properties = list(
-            run_aql(db,
-                "FOR p IN ontology_properties FILTER p.ontology_id == @oid RETURN p",
-                bind_vars={"oid": ontology_id},
+    for prop_col in (
+        "ontology_properties",
+        "ontology_object_properties",
+        "ontology_datatype_properties",
+    ):
+        if db.has_collection(prop_col):
+            properties.extend(
+                list(
+                    run_aql(
+                        db,
+                        f"FOR p IN {prop_col} FILTER p.ontology_id == @oid RETURN p",
+                        bind_vars={"oid": ontology_id},
+                    )
+                )
             )
-        )
 
-    edge_collections = ["subclass_of", "has_property", "equivalent_class", "related_to"]
+    edge_collections = [
+        "subclass_of",
+        "has_property",
+        "equivalent_class",
+        "related_to",
+        "rdfs_domain",
+        "rdfs_range_class",
+        "extracted_from",
+    ]
     for edge_col in edge_collections:
         if db.has_collection(edge_col):
             col_edges = list(

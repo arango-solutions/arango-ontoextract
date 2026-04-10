@@ -20,13 +20,22 @@ from app.services.temporal import NEVER_EXPIRES, create_version
 
 log = logging.getLogger(__name__)
 
-_VERTEX_COLLECTIONS = ["ontology_classes", "ontology_properties"]
+_VERTEX_COLLECTIONS = [
+    "ontology_classes",
+    "ontology_properties",
+    "ontology_object_properties",
+    "ontology_datatype_properties",
+]
 _EDGE_COLLECTIONS = [
     "subclass_of",
     "has_property",
     "equivalent_class",
     "extends_domain",
     "related_to",
+    "rdfs_domain",
+    "rdfs_range_class",
+    "extracted_from",
+    "imports",
 ]
 
 _promotion_cache: dict[str, dict[str, Any]] = {}

@@ -70,14 +70,19 @@ class TestGetStagingGraph:
         prop_doc = {"_key": "name", "label": "name", "ontology_id": "extraction_r1"}
         edge_doc = {"_from": "ontology_classes/Person", "_to": "ontology_classes/Animal"}
 
-        # run_aql is called for classes, properties, and each edge collection
+        # run_aql: classes, three property collections, then each edge collection
         mock_aql.side_effect = [
-            [class_doc],   # ontology_classes
-            [prop_doc],    # ontology_properties
-            [edge_doc],    # subclass_of
-            [],            # has_property
-            [],            # equivalent_class
-            [],            # related_to
+            [class_doc],
+            [prop_doc],
+            [],
+            [],
+            [edge_doc],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
         ]
 
         result = get_staging_graph(db, run_id="r1")

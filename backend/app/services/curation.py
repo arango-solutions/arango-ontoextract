@@ -15,7 +15,7 @@ from arango.database import StandardDatabase
 
 from app.db import curation_repo
 from app.db.client import get_db
-from app.db.ontology_repo import _ONTOLOGY_EDGE_COLLECTIONS
+from app.db.ontology_repo import _ONTOLOGY_EDGE_COLLECTIONS, _resolve_property_collection
 from app.db.utils import run_aql
 from app.services.temporal import (
     NEVER_EXPIRES,
@@ -26,17 +26,28 @@ from app.services.temporal import (
 
 log = logging.getLogger(__name__)
 
-_ENTITY_COLLECTION_MAP = {
-    "class": "ontology_classes",
-    "property": "ontology_properties",
-}
+def _collection_for(
+    entity_type: str,
+    *,
+    db: StandardDatabase | None = None,
+    entity_key: str | None = None,
+) -> str:
+    """Resolve Arango collection for curation entity_type.
 
-
-def _collection_for(entity_type: str) -> str:
-    col = _ENTITY_COLLECTION_MAP.get(entity_type)
-    if col is None:
-        raise ValueError(f"Unsupported entity_type: {entity_type}")
-    return col
+    ``property`` resolves via ``_resolve_property_collection`` when ``db`` and
+    ``entity_key`` are provided (PGT split collections).
+    """
+    if entity_type == "class":
+        return "ontology_classes"
+    if entity_type == "property":
+        if db is not None and entity_key:
+            return _resolve_property_collection(db, entity_key)
+        return "ontology_properties"
+    if entity_type == "object_property":
+        return "ontology_object_properties"
+    if entity_type == "datatype_property":
+        return "ontology_datatype_properties"
+    raise ValueError(f"Unsupported entity_type: {entity_type}")
 
 
 def record_decision(
@@ -81,7 +92,11 @@ def record_decision(
         )
         return saved
 
-    collection = _collection_for(entity_type)
+    collection = _collection_for(
+        entity_type,
+        db=db,
+        entity_key=entity_key,
+    )
 
     if action == "approve":
         _apply_approve(db, collection=collection, key=entity_key, curator_id=curator_id)
@@ -135,11 +150,8 @@ def _apply_reject(
     """
     from app.db.ontology_repo import expire_class_cascade
 
-    if collection in ("ontology_classes", "ontology_properties"):
-        try:
-            expire_class_cascade(db, key=key)
-        except ValueError:
-            expire_entity(db, collection=collection, key=key)
+    if collection == "ontology_classes":
+        expire_class_cascade(db, key=key)
     else:
         expire_entity(db, collection=collection, key=key)
 

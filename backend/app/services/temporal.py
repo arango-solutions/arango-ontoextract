@@ -370,14 +370,38 @@ FOR doc IN @@col
 # Temporal query functions (Week 10)
 # ---------------------------------------------------------------------------
 
-_VERTEX_COLLECTIONS = ["ontology_classes", "ontology_properties"]
-_EDGE_COLLECTIONS = [
+# PGT-aligned: include split property collections (ADR-006). Legacy
+# ``ontology_properties`` remains for databases not yet migrated.
+_ONTOLOGY_VERTEX_COLLECTIONS = [
+    "ontology_classes",
+    "ontology_properties",
+    "ontology_object_properties",
+    "ontology_datatype_properties",
+]
+
+_PROPERTY_VERTEX_COLLECTIONS = [
+    "ontology_properties",
+    "ontology_object_properties",
+    "ontology_datatype_properties",
+]
+
+# Edges included in point-in-time snapshot and diff. Aligns with
+# ``ontology_repo._ONTOLOGY_EDGE_COLLECTIONS`` plus provenance.
+_ONTOLOGY_TEMPORAL_EDGE_COLLECTIONS = [
     "subclass_of",
     "has_property",
     "equivalent_class",
     "extends_domain",
     "related_to",
+    "rdfs_domain",
+    "rdfs_range_class",
+    "imports",
+    "extracted_from",
 ]
+
+# Backward-compatible aliases (used by get_diff, get_timeline_events, revert)
+_VERTEX_COLLECTIONS = _ONTOLOGY_VERTEX_COLLECTIONS
+_EDGE_COLLECTIONS = _ONTOLOGY_TEMPORAL_EDGE_COLLECTIONS
 
 
 def get_snapshot(
@@ -391,8 +415,8 @@ def get_snapshot(
 
     Checks the materialized snapshot cache first (keyed by ontology_id +
     timestamp rounded to the minute, TTL 5 min).  On miss, queries
-    ontology_classes, ontology_properties, and all edge collections
-    filtering by ``created <= ts < expired``.
+    ontology classes, all property vertex collections (legacy + PGT split),
+    and ontology edge collections filtering by ``created <= ts < expired``.
     """
     cache_key = _snapshot_cache_key(ontology_id, timestamp)
 
@@ -424,15 +448,20 @@ FOR doc IN @@col
             )
         )
 
-    if db.has_collection("ontology_properties"):
-        properties = list(
-            run_aql(db,
-                vertex_query,
-                bind_vars={
-                    "@col": "ontology_properties",
-                    "oid": ontology_id,
-                    "ts": timestamp,
-                },
+    for prop_col in _PROPERTY_VERTEX_COLLECTIONS:
+        if not db.has_collection(prop_col):
+            continue
+        properties.extend(
+            list(
+                run_aql(
+                    db,
+                    vertex_query,
+                    bind_vars={
+                        "@col": prop_col,
+                        "oid": ontology_id,
+                        "ts": timestamp,
+                    },
+                )
             )
         )
 
@@ -444,7 +473,7 @@ FOR e IN @@col
   FILTER e.expired > @ts
   RETURN e"""
 
-    for edge_col in _EDGE_COLLECTIONS:
+    for edge_col in _ONTOLOGY_TEMPORAL_EDGE_COLLECTIONS:
         if not db.has_collection(edge_col):
             continue
         col_edges = list(

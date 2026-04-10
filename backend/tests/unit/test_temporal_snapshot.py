@@ -45,10 +45,11 @@ class TestGetSnapshot:
             col = bind_vars.get("@col", "")
             if col == "ontology_classes":
                 return iter([cls_doc])
-            elif col == "ontology_properties":
+            if col == "ontology_properties":
                 return iter([prop_doc])
-            else:
-                return iter([edge_doc])
+            if col in ("ontology_object_properties", "ontology_datatype_properties"):
+                return iter([])
+            return iter([edge_doc])
 
         mock_db.aql.execute = mock_execute
 

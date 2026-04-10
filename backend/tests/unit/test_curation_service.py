@@ -46,8 +46,8 @@ class TestRecordDecision:
         assert mock_update.call_args.kwargs["new_data"]["status"] == "approved"
 
     @patch("app.services.curation.curation_repo")
-    @patch("app.services.curation.expire_entity")
-    def test_reject_expires_entity(self, mock_expire, mock_repo):
+    @patch("app.db.ontology_repo.expire_class_cascade")
+    def test_reject_cascades_class(self, mock_cascade, mock_repo):
         from app.services.curation import record_decision
 
         mock_repo.create_decision.return_value = {
@@ -60,7 +60,7 @@ class TestRecordDecision:
             "curator_id": "curator_a",
             "created_at": 1700000000.0,
         }
-        mock_expire.return_value = {"_key": "cls2", "expired": 1700000000.0}
+        mock_cascade.return_value = {"_key": "cls2"}
 
         mock_db = MagicMock()
         result = record_decision(
@@ -73,7 +73,7 @@ class TestRecordDecision:
         )
 
         assert result["action"] == "reject"
-        mock_expire.assert_called_once()
+        mock_cascade.assert_called_once_with(mock_db, key="cls2")
 
     @patch("app.services.curation.curation_repo")
     @patch("app.services.curation.update_entity")
@@ -139,6 +139,21 @@ class TestRecordDecision:
 
         with pytest.raises(ValueError, match="Unsupported entity_type"):
             _collection_for("unknown")
+
+    @patch("app.services.curation._resolve_property_collection")
+    def test_property_entity_type_resolves_collection_via_db(self, mock_resolve):
+        from app.services.curation import _collection_for
+
+        mock_db = MagicMock()
+        mock_resolve.return_value = "ontology_object_properties"
+        col = _collection_for("property", db=mock_db, entity_key="k1")
+        assert col == "ontology_object_properties"
+        mock_resolve.assert_called_once_with(mock_db, "k1")
+
+    def test_property_entity_type_defaults_without_db(self):
+        from app.services.curation import _collection_for
+
+        assert _collection_for("property") == "ontology_properties"
 
 
 class TestBatchDecide:
