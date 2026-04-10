@@ -16,6 +16,7 @@ import { createNodeBorderProgram } from "@sigma/node-border";
 import forceAtlas2 from "graphology-layout-forceatlas2";
 import noverlap from "graphology-layout-noverlap";
 import { circular } from "graphology-layout";
+import pagerank from "graphology-metrics/centrality/pagerank";
 import type {
   OntologyClass,
   OntologyEdge,
@@ -28,26 +29,14 @@ import {
   buildSyntheticRdfsRangeClassEdges,
   RDFS_RANGE_CLASS_LABEL_FALLBACK,
 } from "@/components/graph/graphCanvasEdges";
+import { ONTOLOGY_EDGE_COLORS as EDGE_COLORS } from "@/components/graph/graphVisualPalette";
+import {
+  confidenceNodeColor,
+  normalizeConfidence01,
+} from "@/components/workspace/confidenceLensPalette";
 import type { LensType } from "@/components/workspace/LensToolbar";
 
 /* ── Color palettes ──────────────────────────────────── */
-
-const EDGE_COLORS: Record<string, string> = {
-  subclass_of: "#a5b4fc",
-  equivalent_class: "#c4b5fd",
-  has_property: "#67e8f9",
-  extends_domain: "#fcd34d",
-  related_to: "#93c5fd",
-  rdfs_range_class: "#93c5fd",
-  extracted_from: "#6ee7b7",
-  imports: "#fda4af",
-};
-
-function confidenceNodeColor(confidence: number): string {
-  if (confidence > 0.7) return "#22c55e";
-  if (confidence >= 0.5) return "#eab308";
-  return "#ef4444";
-}
 
 const STATUS_NODE_COLORS: Record<CurationStatus, string> = {
   pending: "#94a3b8",
@@ -55,34 +44,145 @@ const STATUS_NODE_COLORS: Record<CurationStatus, string> = {
   rejected: "#ef4444",
 };
 
-/** Border ring for approval state (visible on every lens, including semantic). */
+/** Curation ring colors — only used when the active lens is "curation". */
 function statusBorderForClass(cls: OntologyClass): string {
   if (cls.status === "approved") return "#22c55e";
   if (cls.status === "rejected") return "#ef4444";
   return "#f59e0b";
 }
 
-function lensNodeColor(cls: OntologyClass, lens: LensType): string {
+/** Neutral outline so semantic/confidence/diff/source lenses are not dominated by curation. */
+const NEUTRAL_NODE_BORDER = "#475569";
+
+function borderColorForLens(lens: LensType, cls: OntologyClass): string {
+  if (lens === "curation") return statusBorderForClass(cls);
+  return NEUTRAL_NODE_BORDER;
+}
+
+/** Deterministic layout seed so lens switches do not reshuffle the graph. */
+function stableNodePosition(nodeKey: string): { x: number; y: number } {
+  let h = 0;
+  for (let i = 0; i < nodeKey.length; i++) {
+    h = (Math.imul(31, h) + nodeKey.charCodeAt(i)) | 0;
+  }
+  const u = (h % 1000) / 1000;
+  const v = ((h >>> 8) % 1000) / 1000;
+  return { x: u * 200 - 100, y: v * 200 - 100 };
+}
+
+/** Semantic lens: varied hues by URI hash + bright OWL-type hints (dark canvas). */
+function semanticNodeColor(cls: OntologyClass): string {
+  const rt = (cls.rdf_type || "").toLowerCase();
+  if (rt.includes("objectproperty")) return "#e879f9";
+  if (rt.includes("datatype")) return "#7dd3fc";
+  if (rt.includes("restriction")) return "#fdba74";
+  let h = 0;
+  const s = cls.uri || cls._key;
+  for (let i = 0; i < s.length; i++) {
+    h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  }
+  const hue = 18 + (Math.abs(h) % 312);
+  return `hsl(${hue}, 82%, 70%)`;
+}
+
+function effectiveTier(
+  cls: OntologyClass,
+  ontologyTier: "domain" | "local" | null | undefined,
+): string | undefined {
+  return cls.tier ?? ontologyTier ?? undefined;
+}
+
+function lensNodeColor(
+  cls: OntologyClass,
+  lens: LensType,
+  visibleNodeKeys: Set<string> | null | undefined,
+  ontologyTier: "domain" | "local" | null | undefined,
+): string {
   switch (lens) {
     case "confidence":
-      return confidenceNodeColor(cls.confidence);
+      return confidenceNodeColor(cls.confidence ?? 0.5);
     case "curation":
       return STATUS_NODE_COLORS[cls.status ?? "pending"] ?? "#94a3b8";
     case "diff":
-      return "#c4b5fd";
-    case "source":
-      return "#7dd3fc";
+      if (visibleNodeKeys != null && visibleNodeKeys.size > 0) {
+        return visibleNodeKeys.has(cls._key) ? "#34d399" : "#475569";
+      }
+      return semanticNodeColor(cls);
+    case "source": {
+      const tier = effectiveTier(cls, ontologyTier)?.toLowerCase();
+      if (tier === "local") return "#fbbf24";
+      if (tier === "domain") return "#2dd4bf";
+      return "#94a3b8";
+    }
     case "semantic":
     default:
-      return "#818cf8";
+      return semanticNodeColor(cls);
   }
+}
+
+function lensNodeSize(
+  baseSize: number,
+  cls: OntologyClass,
+  lens: LensType,
+): number {
+  if (lens !== "confidence") return baseSize;
+  const c = normalizeConfidence01(cls.confidence ?? 0.5);
+  const scale = 0.72 + 0.56 * Math.min(1, Math.max(0, c));
+  return Math.max(10, Math.min(36, baseSize * scale));
+}
+
+function displayNodeLabel(cls: OntologyClass, lens: LensType): string {
+  if (lens !== "confidence") return cls.label;
+  const pct = Math.round(normalizeConfidence01(cls.confidence ?? 0) * 100);
+  return `${cls.label} ${pct}%`;
+}
+
+function lensEdgeVisual(
+  edge: OntologyEdge,
+  edgeType: string,
+  lens: LensType,
+): { color: string; size: number } {
+  const fallbackColor = EDGE_COLORS[edgeType] ?? "#94a3b8";
+  const baseSize = edgeType === "subclass_of" ? 2.5 : 2;
+
+  if (lens === "confidence") {
+    const c = edge.confidence;
+    if (c == null || Number.isNaN(c)) {
+      return {
+        color: fallbackColor,
+        size: Math.max(1, baseSize * 0.85),
+      };
+    }
+    return {
+      color: confidenceNodeColor(c),
+      size: Math.max(1.2, Math.min(5, 1.1 + c * 3.5)),
+    };
+  }
+
+  if (lens === "curation" && edge.status) {
+    const cur: Record<string, string> = {
+      approved: "#22c55e",
+      rejected: "#ef4444",
+      pending: "#f59e0b",
+    };
+    return {
+      color: cur[edge.status] ?? fallbackColor,
+      size: baseSize * 1.15,
+    };
+  }
+
+  return { color: fallbackColor, size: baseSize };
 }
 
 /* ── Props ────────────────────────────────────────────── */
 
+/** Outer ring = `borderColor` (e.g. curation); inner fill = `color` (lens / semantic).
+ * A single-border config omits the fill pass and Sigma's shader divides by zero fill count,
+ * so `color` never appears — confidence/semantic fills looked grey. */
 const NodeBorderProgram = createNodeBorderProgram({
   borders: [
     { size: { value: 0.15 }, color: { attribute: "borderColor" } },
+    { size: { fill: true }, color: { attribute: "color" } },
   ],
 });
 
@@ -90,6 +190,8 @@ export interface SigmaCanvasProps {
   classes: OntologyClass[];
   edges: OntologyEdge[];
   activeLens: LensType;
+  /** Registry tier for the open ontology — classes often omit ``tier`` on each vertex */
+  ontologyTier?: "domain" | "local" | null;
   onNodeSelect: (key: string) => void;
   onEdgeSelect: (key: string) => void;
   onContextMenu: (
@@ -103,47 +205,24 @@ export interface SigmaCanvasProps {
   visibleNodeKeys?: Set<string> | null;
 }
 
-/* ── Build graphology Graph from domain data ─────────── */
+/* ── Topology graph (lens-independent positions & structure) ── */
 
-function buildGraph(
-  classes: OntologyClass[],
-  edges: OntologyEdge[],
-  lens: LensType,
-): Graph {
+function buildTopologyGraph(classes: OntologyClass[], edges: OntologyEdge[]): Graph {
   const graph = new Graph({ multi: true, type: "directed" });
 
   const classKeySet = new Set(classes.map((c) => c._key));
 
-  const degreeCounts = new Map<string, number>();
-  for (const cls of classes) degreeCounts.set(cls._key, 0);
-
-  const countableEdges = edges.filter((edge) => {
-    const edgeType = getEdgeType(edge);
-    if (FILTERED_FROM_CLASS_GRAPH.has(edgeType)) return false;
-    const fromKey = documentKey(edge._from);
-    const toKey = documentKey(edge._to);
-    return classKeySet.has(fromKey) && classKeySet.has(toKey) && fromKey !== toKey;
-  });
-
-  for (const edge of countableEdges) {
-    const fromKey = documentKey(edge._from);
-    const toKey = documentKey(edge._to);
-    degreeCounts.set(fromKey, (degreeCounts.get(fromKey) ?? 0) + 1);
-    degreeCounts.set(toKey, (degreeCounts.get(toKey) ?? 0) + 1);
-  }
-
   for (const cls of classes) {
-    const degree = degreeCounts.get(cls._key) ?? 0;
-    const size = Math.max(12, Math.min(30, 12 + degree * 2));
-    const statusBorder = statusBorderForClass(cls);
+    const pos = stableNodePosition(cls._key);
     graph.addNode(cls._key, {
       label: cls.label,
-      size,
-      color: lensNodeColor(cls, lens),
-      borderColor: statusBorder,
+      size: 18,
+      baseSize: 18,
+      color: "#64748b",
+      borderColor: NEUTRAL_NODE_BORDER,
       type: "bordered",
-      x: Math.random() * 100,
-      y: Math.random() * 100,
+      x: pos.x,
+      y: pos.y,
       confidence: cls.confidence,
       status: cls.status,
       uri: cls.uri,
@@ -195,7 +274,94 @@ function buildGraph(
     });
   }
 
+  if (graph.order > 0) {
+    try {
+      pagerank.assign(graph);
+    } catch {
+      // Very small / degenerate graphs — fall back to degree below
+    }
+    let minP = Infinity;
+    let maxP = -Infinity;
+    graph.forEachNode((node) => {
+      const p = graph.getNodeAttribute(node, "pagerank") as number | undefined;
+      if (typeof p === "number" && !Number.isNaN(p)) {
+        minP = Math.min(minP, p);
+        maxP = Math.max(maxP, p);
+      }
+    });
+    if (Number.isFinite(minP) && maxP > minP) {
+      graph.forEachNode((node) => {
+        const p = graph.getNodeAttribute(node, "pagerank") as number;
+        const t = (p - minP) / (maxP - minP);
+        const baseSize = 12 + t * 18;
+        const clamped = Math.max(12, Math.min(30, baseSize));
+        graph.setNodeAttribute(node, "baseSize", clamped);
+        graph.setNodeAttribute(node, "size", clamped);
+      });
+    } else {
+      graph.forEachNode((node) => {
+        const d = graph.degree(node);
+        const baseSize = Math.max(12, Math.min(30, 12 + d * 2));
+        graph.setNodeAttribute(node, "baseSize", baseSize);
+        graph.setNodeAttribute(node, "size", baseSize);
+      });
+    }
+  }
+
   return graph;
+}
+
+function paintLensOnGraph(
+  g: Graph,
+  classes: OntologyClass[],
+  edges: OntologyEdge[],
+  lens: LensType,
+  visibleNodeKeys: Set<string> | null | undefined,
+  ontologyTier: "domain" | "local" | null | undefined,
+): void {
+  g.forEachNode((node) => {
+    const cls = classes.find((c) => c._key === node);
+    if (!cls) return;
+    const stored = g.getNodeAttribute(node, "baseSize") as number | undefined;
+    const baseSize =
+      typeof stored === "number" && !Number.isNaN(stored)
+        ? stored
+        : Math.max(12, Math.min(30, 12 + g.degree(node) * 2));
+    const sized = lensNodeSize(baseSize, cls, lens);
+    g.setNodeAttribute(node, "size", sized);
+    g.setNodeAttribute(node, "label", displayNodeLabel(cls, lens));
+    g.setNodeAttribute(
+      node,
+      "color",
+      lensNodeColor(cls, lens, visibleNodeKeys, ontologyTier),
+    );
+    g.setNodeAttribute(node, "borderColor", borderColorForLens(lens, cls));
+    g.setNodeAttribute(node, "status", cls.status);
+  });
+
+  g.forEachEdge((eid) => {
+    const attrs = g.getEdgeAttributes(eid);
+    const ek = attrs.edgeKey as string | undefined;
+    const et = attrs.edgeType as string | undefined;
+    if (!ek || !et) return;
+    const domainEdge = edges.find((ed) => ed._key === ek);
+    if (!domainEdge) {
+      const synEdge: OntologyEdge = {
+        _key: ek,
+        _from: "",
+        _to: "",
+        type: "rdfs_range_class",
+        label: String(attrs.label ?? ""),
+      };
+      const ev = lensEdgeVisual(synEdge, et, lens);
+      g.setEdgeAttribute(eid, "color", ev.color);
+      g.setEdgeAttribute(eid, "size", ev.size);
+      return;
+    }
+    const ev = lensEdgeVisual(domainEdge, et, lens);
+    g.setEdgeAttribute(eid, "color", ev.color);
+    g.setEdgeAttribute(eid, "size", ev.size);
+  });
 }
 
 /**
@@ -269,6 +435,7 @@ export default function SigmaCanvas({
   classes,
   edges,
   activeLens,
+  ontologyTier = null,
   onNodeSelect,
   onEdgeSelect,
   onContextMenu,
@@ -289,21 +456,33 @@ export default function SigmaCanvas({
     [edges],
   );
 
+  const topologySignature = `${stableClassesKey}|${stableEdgesKey}`;
+  const lastLaidOutTopologyRef = useRef<string>("");
+
   const graph = useMemo(
-    () => buildGraph(classes, edges, activeLens),
+    () => buildTopologyGraph(classes, edges),
+    // Rebuild only when vertex/edge keys change — class field updates repaint via paintLensOnGraph.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stableClassesKey, stableEdgesKey, activeLens],
+    [stableClassesKey, stableEdgesKey],
   );
 
   useEffect(() => {
     if (graph.order === 0) return;
+    if (lastLaidOutTopologyRef.current === topologySignature) return;
+    lastLaidOutTopologyRef.current = topologySignature;
     setLayoutRunning(true);
     try {
       applyLayout(graph, "force");
     } finally {
       setLayoutRunning(false);
     }
-  }, [graph]);
+  }, [graph, topologySignature]);
+
+  useEffect(() => {
+    if (graph.order === 0) return;
+    paintLensOnGraph(graph, classes, edges, activeLens, visibleNodeKeys, ontologyTier);
+    sigmaRef.current?.refresh();
+  }, [graph, classes, edges, activeLens, visibleNodeKeys, ontologyTier]);
 
   const onNodeSelectRef = useRef(onNodeSelect);
   onNodeSelectRef.current = onNodeSelect;
@@ -311,6 +490,8 @@ export default function SigmaCanvas({
   onEdgeSelectRef.current = onEdgeSelect;
   const onContextMenuRef = useRef(onContextMenu);
   onContextMenuRef.current = onContextMenu;
+  const edgesRef = useRef(edges);
+  edgesRef.current = edges;
 
   useEffect(() => {
     if (!containerRef.current || graph.order === 0) return;
@@ -409,16 +590,16 @@ export default function SigmaCanvas({
       renderer.setSetting("enableCameraPanning", false);
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    renderer.getMouseCaptor().on("mousemovebody", (event: any) => {
-      if (!isDragging || !draggedNode) return;
-      const pos = renderer.viewportToGraph({ x: event.x, y: event.y });
-      graph.setNodeAttribute(draggedNode, "x", pos.x);
-      graph.setNodeAttribute(draggedNode, "y", pos.y);
-      if (typeof event.preventSigmaDefault === "function") {
-        event.preventSigmaDefault();
-      }
-    });
+    renderer.getMouseCaptor().on(
+      "mousemovebody",
+      (event: { x: number; y: number; preventSigmaDefault?: () => void }) => {
+        if (!isDragging || !draggedNode) return;
+        const pos = renderer.viewportToGraph({ x: event.x, y: event.y });
+        graph.setNodeAttribute(draggedNode, "x", pos.x);
+        graph.setNodeAttribute(draggedNode, "y", pos.y);
+        event.preventSigmaDefault?.();
+      },
+    );
 
     renderer.getMouseCaptor().on("mouseup", () => {
       if (draggedNode) {
@@ -454,10 +635,13 @@ export default function SigmaCanvas({
     renderer.on("rightClickEdge", ({ edge, event }) => {
       event.original.preventDefault();
       const attrs = graph.getEdgeAttributes(edge);
+      const ek = (attrs.edgeKey ?? edge) as string;
+      const full = edgesRef.current.find((ed) => ed._key === ek);
       onContextMenuRef.current(event.original as MouseEvent, "edge", {
-        _key: attrs.edgeKey ?? edge,
+        _key: ek,
         edgeType: attrs.edgeType,
         label: attrs.label,
+        status: full?.status,
       });
     });
 
@@ -474,20 +658,6 @@ export default function SigmaCanvas({
       graphRef.current = null;
     };
   }, [graph]);
-
-  useEffect(() => {
-    if (!graphRef.current) return;
-    const g = graphRef.current;
-    g.forEachNode((node) => {
-      const cls = classes.find((c) => c._key === node);
-      if (cls) {
-        g.setNodeAttribute(node, "color", lensNodeColor(cls, activeLens));
-        g.setNodeAttribute(node, "borderColor", statusBorderForClass(cls));
-        g.setNodeAttribute(node, "status", cls.status);
-      }
-    });
-    sigmaRef.current?.refresh();
-  }, [activeLens, classes]);
 
   useEffect(() => {
     const s = sigmaRef.current;

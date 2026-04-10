@@ -17,6 +17,16 @@ const mockOntology: OntologyRegistryEntry = {
 };
 
 describe("OntologyCard", () => {
+  it("uses label when name is missing", () => {
+    const onlyLabel = {
+      ...mockOntology,
+      name: undefined,
+      label: "From RDF label",
+    };
+    render(<OntologyCard ontology={onlyLabel} />);
+    expect(screen.getByText("From RDF label")).toBeInTheDocument();
+  });
+
   it("renders ontology name and description", () => {
     render(<OntologyCard ontology={mockOntology} />);
     expect(screen.getByText("AWS Cloud Ontology")).toBeInTheDocument();

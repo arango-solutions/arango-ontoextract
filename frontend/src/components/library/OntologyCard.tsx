@@ -45,9 +45,14 @@ function formatRelativeTime(value: string | number | undefined): string {
   return new Date(ts).toLocaleDateString();
 }
 
+function displayOntologyName(o: OntologyRegistryEntry): string {
+  return (o.name?.trim() || o.label?.trim() || o._key).trim();
+}
+
 export default function OntologyCard({ ontology, onClick }: OntologyCardProps) {
   const tier = TIER_CONFIG[ontology.tier] ?? TIER_CONFIG.domain;
   const status = STATUS_CONFIG[ontology.status] ?? STATUS_CONFIG.draft;
+  const title = displayOntologyName(ontology);
 
   return (
     <button
@@ -60,7 +65,7 @@ export default function OntologyCard({ ontology, onClick }: OntologyCardProps) {
       <div className="p-5">
         <div className="flex items-start justify-between mb-2">
           <h3 className="font-semibold text-gray-900 group-hover:text-blue-700 transition-colors">
-            {ontology.name}
+            {title}
           </h3>
           <span
             className={`text-xs font-medium px-2 py-0.5 rounded-full ${tier.bg} ${tier.text}`}

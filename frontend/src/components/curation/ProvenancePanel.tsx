@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { api, ApiError } from "@/lib/api-client";
+import { splitTextByKeywordAlternation } from "@/lib/textHighlight";
 import type { SourceChunk } from "@/types/curation";
 
 interface ProvenancePanelProps {
@@ -17,15 +18,11 @@ interface ChunkResponse {
 
 function highlightKeywords(text: string, keywords: string[]): JSX.Element {
   if (keywords.length === 0) return <>{text}</>;
-
-  const escaped = keywords.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const pattern = new RegExp(`(${escaped.join("|")})`, "gi");
-  const parts = text.split(pattern);
-
+  const parts = splitTextByKeywordAlternation(text, keywords);
   return (
     <>
       {parts.map((part, i) =>
-        pattern.test(part) ? (
+        i % 2 === 1 ? (
           <mark key={i} className="bg-yellow-200 rounded px-0.5">
             {part}
           </mark>
@@ -92,6 +89,11 @@ export default function ProvenancePanel({
       <p className="text-xs text-gray-500">
         Showing document chunks that contributed to{" "}
         <span className="font-medium text-gray-700">{entityLabel}</span>
+      </p>
+      <p className="text-[11px] leading-snug text-gray-600 bg-gray-100 border border-gray-200 rounded-md px-2 py-1.5">
+        Each class is linked to <span className="font-medium">whole source documents</span>, not a
+        specific substring. Listed chunks are from those documents; yellow highlights match the class
+        name (and long words) heuristically — we do not store character offsets from extraction.
       </p>
 
       {loading && (

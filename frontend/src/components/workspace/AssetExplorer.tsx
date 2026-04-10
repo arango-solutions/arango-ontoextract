@@ -5,7 +5,8 @@ import { api, ApiError, type PaginatedResponse } from "@/lib/api-client";
 import type { OntologyRegistryEntry } from "@/types/curation";
 import type { ExtractionRun } from "@/types/pipeline";
 
-const CORE_LOAD_TIMEOUT_MS = 25_000;
+/** Per-request ceiling; documents and library use separate AbortControllers so one slow route does not cancel the other. */
+const CORE_LOAD_TIMEOUT_MS = 60_000;
 
 function unwrapPaginatedList<T>(res: unknown): T[] {
   if (Array.isArray(res)) return res as T[];
@@ -40,6 +41,8 @@ interface AssetExplorerProps {
   onSelectRun: (runId: string) => void;
   selectedOntologyId: string | null;
   onContextMenu: (e: React.MouseEvent, type: string, data: unknown) => void;
+  /** Increment (e.g. after ontology rename) to refetch documents + library lists. */
+  libraryReloadNonce?: number;
 }
 
 type SectionId = "documents" | "ontologies" | "runs";
@@ -96,6 +99,7 @@ export default function AssetExplorer({
   onSelectRun,
   selectedOntologyId,
   onContextMenu,
+  libraryReloadNonce = 0,
 }: AssetExplorerProps) {
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Record<SectionId, boolean>>({
@@ -144,87 +148,87 @@ export default function AssetExplorer({
   }, []);
 
   /**
-   * Load documents + ontology library. Uses the standard React `cancelled` flag (not request ids):
-   * stale async work must not apply data or clear loading; the newest effect always owns loading.
+   * Load documents and ontology library independently (separate AbortSignal + timeout each).
+   * A slow /ontology/library handler must not abort /documents or vice versa.
    */
   useEffect(() => {
-    const ac = new AbortController();
     let cancelled = false;
-    let timedOut = false;
+    const acDoc = new AbortController();
+    const acOnt = new AbortController();
+    let docTimedOut = false;
+    let ontTimedOut = false;
 
-    const timeoutId = window.setTimeout(() => {
-      timedOut = true;
-      ac.abort();
+    const timeoutDoc = window.setTimeout(() => {
+      docTimedOut = true;
+      acDoc.abort();
+    }, CORE_LOAD_TIMEOUT_MS);
+    const timeoutOnt = window.setTimeout(() => {
+      ontTimedOut = true;
+      acOnt.abort();
     }, CORE_LOAD_TIMEOUT_MS);
 
     const timeoutMsg =
       "Request timed out — is the API running and reachable? (ArangoDB or network issues can block the backend.)";
 
-    async function loadCoreAssets() {
-      setDocsLoading(true);
-      setOntLoading(true);
-      setDocsError(null);
-      setOntError(null);
-      try {
-        const [docOutcome, ontOutcome] = await Promise.allSettled([
-          api.get<PaginatedResponse<DocumentEntry> | DocumentEntry[]>(
-            "/api/v1/documents",
-            { signal: ac.signal },
-          ),
-          api.get<PaginatedResponse<OntologyRegistryEntry>>(
-            "/api/v1/ontology/library",
-            { signal: ac.signal },
-          ),
-        ]);
-        if (cancelled) return;
+    setDocsLoading(true);
+    setOntLoading(true);
+    setDocsError(null);
+    setOntError(null);
 
-        if (docOutcome.status === "fulfilled") {
-          setDocuments(unwrapPaginatedList<DocumentEntry>(docOutcome.value));
-        } else if (!isAbortError(docOutcome.reason)) {
-          const err = docOutcome.reason;
+    async function loadDocuments() {
+      try {
+        const res = await api.get<PaginatedResponse<DocumentEntry> | DocumentEntry[]>(
+          "/api/v1/documents",
+          { signal: acDoc.signal },
+        );
+        if (cancelled) return;
+        setDocuments(unwrapPaginatedList<DocumentEntry>(res));
+      } catch (err) {
+        if (cancelled) return;
+        if (isAbortError(err)) {
+          if (docTimedOut) setDocsError(timeoutMsg);
+        } else {
           setDocsError(
             err instanceof ApiError ? err.body.message : "Failed to load documents",
           );
-        } else if (timedOut) {
-          setDocsError(timeoutMsg);
-        }
-
-        if (ontOutcome.status === "fulfilled") {
-          setOntologies(
-            unwrapPaginatedList<OntologyRegistryEntry>(ontOutcome.value),
-          );
-        } else if (!isAbortError(ontOutcome.reason)) {
-          const err = ontOutcome.reason;
-          setOntError(
-            err instanceof ApiError ? err.body.message : "Failed to load ontologies",
-          );
-        } else if (timedOut) {
-          setOntError(timeoutMsg);
-        }
-      } catch (err) {
-        if (cancelled) return;
-        if (isAbortError(err) && timedOut) {
-          setDocsError(timeoutMsg);
-          setOntError(timeoutMsg);
-        } else if (!isAbortError(err)) {
-          setDocsError("Failed to load documents");
-          setOntError("Failed to load ontologies");
         }
       } finally {
-        if (!cancelled) {
-          setDocsLoading(false);
-          setOntLoading(false);
-        }
+        if (!cancelled) setDocsLoading(false);
       }
     }
 
-    loadCoreAssets();
+    async function loadOntologies() {
+      try {
+        const res = await api.get<PaginatedResponse<OntologyRegistryEntry>>(
+          "/api/v1/ontology/library",
+          { signal: acOnt.signal },
+        );
+        if (cancelled) return;
+        setOntologies(unwrapPaginatedList<OntologyRegistryEntry>(res));
+      } catch (err) {
+        if (cancelled) return;
+        if (isAbortError(err)) {
+          if (ontTimedOut) setOntError(timeoutMsg);
+        } else {
+          setOntError(
+            err instanceof ApiError ? err.body.message : "Failed to load ontologies",
+          );
+        }
+      } finally {
+        if (!cancelled) setOntLoading(false);
+      }
+    }
+
+    void Promise.all([loadDocuments(), loadOntologies()]);
+
     return () => {
       cancelled = true;
-      window.clearTimeout(timeoutId);
-      ac.abort();
+      window.clearTimeout(timeoutDoc);
+      window.clearTimeout(timeoutOnt);
+      acDoc.abort();
+      acOnt.abort();
     };
-  }, [reloadEpoch]);
+  }, [reloadEpoch, libraryReloadNonce]);
 
   useEffect(() => {
     if (expanded.runs && runs.length === 0 && !runsLoading) {
@@ -238,9 +242,12 @@ export default function AssetExplorer({
       )
     : documents;
 
+  const ontologyDisplayName = (o: OntologyRegistryEntry) =>
+    (o.name?.trim() || o.label?.trim() || o._key).trim();
+
   const filteredOnt = search
     ? ontologies.filter((o) =>
-        o.name.toLowerCase().includes(search.toLowerCase()),
+        ontologyDisplayName(o).toLowerCase().includes(search.toLowerCase()),
       )
     : ontologies;
 
@@ -355,7 +362,7 @@ export default function AssetExplorer({
             >
               <StatusDot status={ont.status} />
               <span className="truncate flex-1 font-medium group-hover:text-gray-900">
-                {ont.name}
+                {ontologyDisplayName(ont)}
               </span>
               <span className="text-[10px] text-gray-400 flex-shrink-0">
                 {ont.class_count}c

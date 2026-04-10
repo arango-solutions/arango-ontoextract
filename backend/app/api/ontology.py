@@ -22,6 +22,7 @@ from app.models.ontology import (
     CreateEdgeRequest,
     CreatePropertyRequest,
     UpdateClassRequest,
+    UpdateEdgeRequest,
     UpdatePropertyRequest,
 )
 from app.services import export as export_svc
@@ -40,6 +41,49 @@ NEVER_EXPIRES: int = sys.maxsize
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/ontology", tags=["ontology"])
+
+_LIBRARY_EDGE_COLLECTIONS = (
+    "subclass_of",
+    "rdfs_domain",
+    "rdfs_range_class",
+    "has_property",
+    "related_to",
+)
+
+
+def _batch_edge_counts_for_ontology_ids(db: Any, ontology_ids: list[str]) -> dict[str, int]:
+    """One AQL per edge collection, grouped by ontology_id (avoids N×5 round-trips).
+
+    The previous per-entry loop blocked the asyncio event loop and stalled other
+    API routes (e.g. GET /documents) on the same worker.
+    """
+    if not ontology_ids:
+        return {}
+    counts: dict[str, int] = {oid: 0 for oid in ontology_ids}
+    unique_ids = sorted(set(ontology_ids))
+    never = NEVER_EXPIRES
+    for edge_col in _LIBRARY_EDGE_COLLECTIONS:
+        if not db.has_collection(edge_col):
+            continue
+        try:
+            rows = list(
+                run_aql(
+                    db,
+                    f"FOR e IN {edge_col} "
+                    "FILTER e.ontology_id IN @oids AND e.expired == @never "
+                    "COLLECT oid = e.ontology_id WITH COUNT INTO cnt "
+                    "RETURN {{ oid: oid, cnt: cnt }}",
+                    bind_vars={"oids": unique_ids, "never": never},
+                )
+            )
+        except Exception:
+            log.debug("batch edge count failed for %s", edge_col, exc_info=True)
+            continue
+        for row in rows:
+            oid = row.get("oid")
+            if oid in counts:
+                counts[oid] += int(row.get("cnt") or 0)
+    return counts
 
 
 # ---------------------------------------------------------------------------
@@ -65,29 +109,24 @@ async def list_ontology_library(
         if tag:
             entries = [e for e in entries if tag in (e.get("tags") or [])]
 
+        oids = [str(e.get("_key", "")) for e in entries if e.get("_key")]
+        batch_counts = _batch_edge_counts_for_ontology_ids(db, oids)
+
         for entry in entries:
             entry.setdefault("tags", [])
             oid = entry.get("_key", "")
             entry.setdefault("edge_count", 0)
             entry.setdefault("updated_at", entry.get("created_at"))
             entry.setdefault("last_updated", entry.get("updated_at") or entry.get("created_at"))
-            try:
-                edge_count = 0
-                for edge_col in (
-                    "subclass_of", "rdfs_domain", "rdfs_range_class",
-                    "has_property", "related_to",
-                ):
-                    if db.has_collection(edge_col):
-                        result = list(run_aql(db,
-                            f"FOR e IN {edge_col} FILTER e.ontology_id == @oid "
-                            "AND e.expired == @never "
-                            "COLLECT WITH COUNT INTO cnt RETURN cnt",
-                            bind_vars={"oid": oid, "never": NEVER_EXPIRES},
-                        ))
-                        edge_count += result[0] if result else 0
-                entry["edge_count"] = edge_count
-            except Exception:
-                log.debug("Could not compute edge count for ontology entry")
+            if oid:
+                entry["edge_count"] = batch_counts.get(oid, 0)
+            # File imports historically stored only ``label``; UI and APIs expect ``name``.
+            raw_name = entry.get("name")
+            if raw_name is None or (isinstance(raw_name, str) and not raw_name.strip()):
+                fallback = entry.get("label") or oid or "Ontology"
+                entry["name"] = str(fallback).strip() or "Ontology"
+            if entry.get("tier") not in ("domain", "local"):
+                entry["tier"] = "local"
 
         return {
             "data": entries,
@@ -135,7 +174,11 @@ async def update_ontology_metadata(
 
     updates: dict = {}
     if body.name is not None:
-        updates["name"] = body.name
+        stripped = body.name.strip()
+        if not stripped:
+            raise ValidationError("Name cannot be empty or whitespace")
+        updates["name"] = stripped
+        updates["label"] = stripped
     if body.description is not None:
         updates["description"] = body.description
     if body.tags is not None:
@@ -1383,6 +1426,33 @@ async def create_or_update_edge(ontology_id: str, body: CreateEdgeRequest) -> di
     return edge_doc
 
 
+@router.put("/{ontology_id}/edges/{edge_key}")
+async def update_edge_endpoint(
+    ontology_id: str,
+    edge_key: str,
+    body: UpdateEdgeRequest,
+) -> dict:
+    """Update curation status (or other fields) on a versioned ontology edge."""
+    db = get_db()
+    resolved = ontology_repo.resolve_ontology_edge(db, edge_key=edge_key)
+    if resolved is None:
+        raise NotFoundError(f"Edge '{edge_key}' not found")
+    _col, doc = resolved
+    if doc.get("ontology_id") != ontology_id:
+        raise ValidationError("Edge belongs to a different ontology")
+
+    try:
+        return ontology_repo.update_edge(
+            db,
+            edge_key=edge_key,
+            data={"status": body.status},
+            created_by="workspace",
+            change_summary=f"Edge {edge_key} status → {body.status}",
+        )
+    except ValueError as exc:
+        raise NotFoundError(str(exc)) from exc
+
+
 @router.put("/{ontology_id}/classes/{class_key}")
 async def update_class_endpoint(
     ontology_id: str, class_key: str, body: UpdateClassRequest
@@ -1598,7 +1668,11 @@ async def get_snapshot(
 
 @router.get("/class/{class_key}/provenance")
 async def get_class_provenance(class_key: str) -> dict:
-    """Source chunks that contributed to extracting this class."""
+    """Chunks from documents linked to this class via ``extracted_from`` (class → document).
+
+    Provenance is **document-level**: we do not store which substring of a chunk defined the class.
+    The query returns all chunks for those documents (same as the workspace list view).
+    """
     db = get_db()
     chunks: list[dict] = []
     if db.has_collection("extracted_from") and db.has_collection("chunks"):

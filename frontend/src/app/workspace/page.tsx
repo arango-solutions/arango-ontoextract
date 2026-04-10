@@ -5,10 +5,16 @@ import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import LensToolbar, { type LensType } from "@/components/workspace/LensToolbar";
 import AssetExplorer from "@/components/workspace/AssetExplorer";
+import OntologyRenameDialog from "@/components/workspace/OntologyRenameDialog";
+import CanvasLensLegend from "@/components/workspace/CanvasLensLegend";
 import EmptyCanvasState from "@/components/workspace/EmptyCanvasState";
 import FloatingDetailPanel from "@/components/workspace/FloatingDetailPanel";
 import ContextMenu, { type ContextMenuItem } from "@/components/workspace/ContextMenu";
 import { api, ApiError, type PaginatedResponse } from "@/lib/api-client";
+import {
+  buildQualityReportMetrics,
+  formatOntologyHealthSummary,
+} from "@/lib/qualityReportDisplay";
 import type { StepStatus } from "@/types/pipeline";
 import { getApiBaseUrl } from "@/lib/api-client";
 import type {
@@ -18,6 +24,12 @@ import type {
   OntologyEdge,
 } from "@/types/curation";
 import type { SigmaViewportApi } from "@/components/workspace/SigmaCanvas";
+import PanelDragGrip from "@/components/workspace/PanelDragGrip";
+import {
+  splitTextByKeywordAlternation,
+  termsFromEntityLabel,
+} from "@/lib/textHighlight";
+import { useDraggablePanel } from "@/hooks/useDraggablePanel";
 
 const SigmaCanvas = dynamic(() => import("@/components/workspace/SigmaCanvas"), {
   ssr: false,
@@ -82,6 +94,13 @@ function WorkspacePageInner() {
   const [activeLens, setActiveLens] = useState<LensType>("semantic");
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [ontologyName, setOntologyName] = useState<string | null>(null);
+  const [ontologyTier, setOntologyTier] = useState<"domain" | "local" | null>(null);
+  const [explorerLibraryNonce, setExplorerLibraryNonce] = useState(0);
+  const [renameOntology, setRenameOntology] = useState<{
+    key: string;
+    name: string;
+    description: string;
+  } | null>(null);
 
   const [classes, setClasses] = useState<OntologyClass[]>([]);
   const [properties, setProperties] = useState<OntologyProperty[]>([]);
@@ -178,6 +197,7 @@ function WorkspacePageInner() {
   useEffect(() => {
     if (!selectedOntologyId) {
       setOntologyName(null);
+      setOntologyTier(null);
       return;
     }
 
@@ -188,14 +208,23 @@ function WorkspacePageInner() {
           "/api/v1/ontology/library",
         );
         const match = res.data.find((o) => o._key === selectedOntologyId);
-        if (!cancelled && match) setOntologyName(match.name);
+        if (!cancelled) {
+          if (match) {
+            const display =
+              (match.name?.trim() || match.label?.trim() || match._key).trim();
+            setOntologyName(display);
+            setOntologyTier(match.tier ?? null);
+          } else {
+            setOntologyTier(null);
+          }
+        }
       } catch {
         // non-critical — fall back to ID display
       }
     }
     loadName();
     return () => { cancelled = true; };
-  }, [selectedOntologyId]);
+  }, [selectedOntologyId, explorerLibraryNonce]);
 
   const fetchGraphData = useCallback(async (ontologyId: string) => {
     setGraphLoading(true);
@@ -231,6 +260,7 @@ function WorkspacePageInner() {
       setProperties([]);
       setEdges([]);
       setGraphError(null);
+      setOntologyTier(null);
       return;
     }
     fetchGraphData(selectedOntologyId);
@@ -385,6 +415,40 @@ function WorkspacePageInner() {
     }
   }, [selectedOntologyId, refreshGraph]);
 
+  const approveEdge = useCallback(async (key: string) => {
+    if (!selectedOntologyId) return;
+    setEdges((prev) =>
+      prev.map((e) =>
+        e._key === key ? { ...e, status: "approved" as const } : e,
+      ),
+    );
+    try {
+      await api.put(`/api/v1/ontology/${selectedOntologyId}/edges/${key}`, {
+        status: "approved",
+      });
+    } catch (err) {
+      console.error("Failed to approve edge", err);
+      refreshGraph();
+    }
+  }, [selectedOntologyId, refreshGraph]);
+
+  const rejectEdge = useCallback(async (key: string) => {
+    if (!selectedOntologyId) return;
+    setEdges((prev) =>
+      prev.map((e) =>
+        e._key === key ? { ...e, status: "rejected" as const } : e,
+      ),
+    );
+    try {
+      await api.put(`/api/v1/ontology/${selectedOntologyId}/edges/${key}`, {
+        status: "rejected",
+      });
+    } catch (err) {
+      console.error("Failed to reject edge", err);
+      refreshGraph();
+    }
+  }, [selectedOntologyId, refreshGraph]);
+
   const deleteClass = useCallback(async (key: string) => {
     if (!selectedOntologyId) return;
     try {
@@ -432,6 +496,62 @@ function WorkspacePageInner() {
       console.error("Failed to retry run", err);
     }
   }, []);
+
+  const fetchOntologyQualityReport = useCallback(
+    async (ontologyData: Record<string, unknown>) => {
+      const base = { ...ontologyData };
+      const id = String(base._key ?? base.ontology_id ?? "").trim();
+      setInfoPanelItem({
+        type: "ontology",
+        data: {
+          ...base,
+          _qualityReport: undefined,
+          _qualityReportLoading: true,
+          _qualityReportError: undefined,
+        },
+      });
+      if (!id) {
+        setInfoPanelItem({
+          type: "ontology",
+          data: {
+            ...base,
+            _qualityReportLoading: false,
+            _qualityReportError: "Ontology has no id (_key or ontology_id).",
+          },
+        });
+        return;
+      }
+      try {
+        const quality = await api.get<Record<string, unknown>>(
+          `/api/v1/quality/${encodeURIComponent(id)}`,
+        );
+        setInfoPanelItem({
+          type: "ontology",
+          data: {
+            ...base,
+            _qualityReport: quality,
+            _qualityReportLoading: false,
+          },
+        });
+      } catch (err) {
+        const message =
+          err instanceof ApiError
+            ? err.body.message
+            : err instanceof Error
+              ? err.message
+              : "Failed to load quality report";
+        setInfoPanelItem({
+          type: "ontology",
+          data: {
+            ...base,
+            _qualityReportLoading: false,
+            _qualityReportError: message,
+          },
+        });
+      }
+    },
+    [],
+  );
 
   function getContextMenuItems(): ContextMenuItem[] {
     if (!contextMenu) return [];
@@ -511,7 +631,16 @@ function WorkspacePageInner() {
               setDetailPanelOpen(true);
             },
           },
-          { label: "separator", separator: true },
+          { label: "separator0", separator: true },
+          {
+            label: "Approve edge", icon: "✅",
+            onClick: () => { approveEdge(edgeKey); },
+          },
+          {
+            label: "Reject edge", icon: "❌",
+            onClick: () => { rejectEdge(edgeKey); },
+          },
+          { label: "separator1", separator: true },
           {
             label: "Delete", icon: "🗑️", danger: true,
             disabled: true,
@@ -533,45 +662,44 @@ function WorkspacePageInner() {
         ];
       }
       case "ontology": {
-        const ontKey = (data._key) as string;
+        const ontKey = String(data._key ?? data.ontology_id ?? "").trim();
         return [
           {
             label: "Open in Canvas", icon: "🔷",
-            onClick: () => handleSelectOntology(ontKey),
+            onClick: () => {
+              if (ontKey) handleSelectOntology(ontKey);
+            },
           },
           {
             label: "View Info", icon: "ℹ️",
             onClick: () => { setInfoPanelItem({ type: "ontology", data }); },
           },
           {
-            label: "View Quality Report", icon: "📊",
-            onClick: async () => {
-              try {
-                const quality = await api.get<Record<string, unknown>>(
-                  `/api/v1/quality/${ontKey}`,
-                );
-                setInfoPanelItem({
-                  type: "ontology",
-                  data: { ...data, _qualityReport: quality },
-                });
-              } catch {
-                setInfoPanelItem({ type: "ontology", data });
-              }
+            label: "Edit name & description", icon: "✏️",
+            onClick: () => {
+              if (!ontKey) return;
+              const n = String(data.name ?? data.label ?? ontKey).trim();
+              const d = typeof data.description === "string" ? data.description : "";
+              setRenameOntology({ key: ontKey, name: n || ontKey, description: d });
             },
+          },
+          {
+            label: "View Quality Report", icon: "📊",
+            onClick: () => fetchOntologyQualityReport(data),
           },
           {
             label: "Export",
             icon: "📤",
             submenu: [
-              { label: "Turtle (.ttl)", onClick: () => { exportOntology(ontKey, "turtle"); } },
-              { label: "JSON-LD", onClick: () => { exportOntology(ontKey, "jsonld"); } },
-              { label: "CSV", onClick: () => { exportOntology(ontKey, "csv"); } },
+              { label: "Turtle (.ttl)", onClick: () => { if (ontKey) exportOntology(ontKey, "turtle"); } },
+              { label: "JSON-LD", onClick: () => { if (ontKey) exportOntology(ontKey, "jsonld"); } },
+              { label: "CSV", onClick: () => { if (ontKey) exportOntology(ontKey, "csv"); } },
             ],
           },
           { label: "separator1", separator: true },
           {
             label: "Delete", icon: "🗑️", danger: true,
-            onClick: () => { deleteOntology(ontKey); },
+            onClick: () => { if (ontKey) deleteOntology(ontKey); },
           },
         ];
       }
@@ -663,6 +791,7 @@ function WorkspacePageInner() {
             onSelectRun={handleSelectRun}
             selectedOntologyId={selectedOntologyId}
             onContextMenu={handleAssetContextMenu}
+            libraryReloadNonce={explorerLibraryNonce}
           />
         </aside>
 
@@ -726,16 +855,23 @@ function WorkspacePageInner() {
                   </button>
                 </div>
               ) : (
-                <SigmaCanvas
-                  classes={classes}
-                  edges={edges}
-                  activeLens={activeLens}
-                  onNodeSelect={handleNodeSelect}
-                  onEdgeSelect={handleEdgeSelect}
-                  onContextMenu={handleSigmaContextMenu}
-                  onViewportApi={handleViewportApi}
-                  visibleNodeKeys={timelineVisibleKeys}
-                />
+                <>
+                  <SigmaCanvas
+                    classes={classes}
+                    edges={edges}
+                    activeLens={activeLens}
+                    ontologyTier={ontologyTier}
+                    onNodeSelect={handleNodeSelect}
+                    onEdgeSelect={handleEdgeSelect}
+                    onContextMenu={handleSigmaContextMenu}
+                    onViewportApi={handleViewportApi}
+                    visibleNodeKeys={timelineVisibleKeys}
+                  />
+                  <CanvasLensLegend
+                    activeLens={activeLens}
+                    timelineActive={timelineVisibleKeys != null}
+                  />
+                </>
               )
             ) : (
               <EmptyCanvasState />
@@ -765,7 +901,9 @@ function WorkspacePageInner() {
               <AssetInfoPanel
                 type={infoPanelItem.type}
                 data={infoPanelItem.data}
+                mainColumnLeftInset={assetExplorerWidth + 4}
                 onClose={() => setInfoPanelItem(null)}
+                onReloadQualityReport={fetchOntologyQualityReport}
                 onOpenOntology={(key) => {
                   setInfoPanelItem(null);
                   handleSelectOntology(key);
@@ -795,23 +933,52 @@ function WorkspacePageInner() {
           onClose={closeContextMenu}
         />
       )}
+
+      {renameOntology && (
+        <OntologyRenameDialog
+          open
+          ontologyKey={renameOntology.key}
+          initialName={renameOntology.name}
+          initialDescription={renameOntology.description}
+          onClose={() => setRenameOntology(null)}
+          onSaved={(displayName, key) => {
+            setExplorerLibraryNonce((n) => n + 1);
+            if (selectedOntologyId === key) {
+              setOntologyName(displayName);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
 
 /* ── Asset info panel (left-click detail overlay) ───── */
 
+const ASSET_INFO_PANEL_WIDTH = 360;
+
 function AssetInfoPanel({
   type,
   data,
+  mainColumnLeftInset,
   onClose,
   onOpenOntology,
+  onReloadQualityReport,
 }: {
   type: "document" | "ontology" | "run";
   data: Record<string, unknown>;
+  /** Left edge of main column (explorer + separator) so the panel clears the sidebar. */
+  mainColumnLeftInset: number;
   onClose: () => void;
   onOpenOntology: (key: string) => void;
+  onReloadQualityReport?: (ontologyData: Record<string, unknown>) => void | Promise<void>;
 }) {
+  const { panelRef, panelStyle, dragHandleProps } = useDraggablePanel(ASSET_INFO_PANEL_WIDTH, {
+    placement: "mainColumnTopLeft",
+    mainColumnLeftInset,
+  });
+  const { className: dragHandleClassName, ...dragHandleEvents } = dragHandleProps;
+
   const titleMap: Record<string, string> = {
     document: "Document",
     ontology: "Ontology",
@@ -836,7 +1003,7 @@ function AssetInfoPanel({
       { label: "Classes", value: data.class_count as number },
       { label: "Properties", value: data.property_count as number },
       { label: "Edges", value: data.edge_count as number },
-      { label: "Health Score", value: data.health_score != null ? `${Math.round((data.health_score as number) * 100)}%` : undefined },
+      { label: "Health Score", value: formatOntologyHealthSummary(data.health_score) },
       { label: "Created", value: data.created_at as string },
     );
   } else if (type === "run") {
@@ -870,12 +1037,18 @@ function AssetInfoPanel({
 
   return (
     <div
-      className="absolute top-4 right-4 w-[360px] max-h-[70vh] bg-white rounded-xl border border-gray-200 shadow-xl overflow-hidden flex flex-col z-50"
+      ref={panelRef}
+      style={panelStyle}
+      className="max-h-[70vh] bg-white rounded-xl border border-gray-200 shadow-xl overflow-hidden flex flex-col"
       role="dialog"
       aria-label={`${titleMap[type]} info panel`}
     >
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 flex-shrink-0">
+      <div
+        className={`flex items-center justify-between px-4 py-3 border-b border-gray-100 flex-shrink-0 ${dragHandleClassName}`}
+        {...dragHandleEvents}
+      >
         <div className="flex items-center gap-2 min-w-0">
+          <PanelDragGrip />
           <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 font-medium flex-shrink-0">
             {titleMap[type]}
           </span>
@@ -884,8 +1057,10 @@ function AssetInfoPanel({
           </span>
         </div>
         <button
+          type="button"
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={onClose}
-          className="text-gray-400 hover:text-gray-600 text-lg leading-none ml-2 flex-shrink-0"
+          className="text-gray-400 hover:text-gray-600 text-lg leading-none ml-2 flex-shrink-0 cursor-pointer"
           aria-label="Close info panel"
         >
           &times;
@@ -913,6 +1088,10 @@ function AssetInfoPanel({
             <dt className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
               Source Chunks ({(data._provenance as unknown[]).length})
             </dt>
+            <p className="text-[10px] leading-snug text-gray-500 mb-2">
+              Classes link to whole documents; chunks here are from those documents. Highlights match
+              the class name heuristically — exact extraction spans are not stored.
+            </p>
             <div className="space-y-2 max-h-[300px] overflow-y-auto">
               {(data._provenance as Record<string, unknown>[]).map((chunk, idx) => (
                 <div key={(chunk._key as string) ?? idx} className="text-xs bg-amber-50 rounded-md p-2 border border-amber-100">
@@ -1161,21 +1340,11 @@ function QualityReportSection({ report }: { report: Record<string, unknown> }) {
 
 function HighlightedText({ text, highlight }: { text: string; highlight: string }) {
   if (!highlight || highlight.length < 2) return <>{text}</>;
-
-  const terms = [highlight];
-  const words = highlight.split(/\s+/).filter((w) => w.length >= 3);
-  for (const w of words) {
-    if (!terms.includes(w)) terms.push(w);
-  }
-
-  const pattern = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
-  const regex = new RegExp(`(${pattern})`, "gi");
-  const parts = text.split(regex);
-
+  const parts = splitTextByKeywordAlternation(text, termsFromEntityLabel(highlight));
   return (
     <>
       {parts.map((part, i) =>
-        regex.test(part) ? (
+        i % 2 === 1 ? (
           <mark key={i} className="bg-yellow-200 text-yellow-900 rounded-sm px-0.5">
             {part}
           </mark>

@@ -1,17 +1,21 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { Suspense, useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { QualityDashboard, OntologyScorecard } from "@/types/curation";
-import { getApiBaseUrl } from "@/lib/api-client";
+import { api, ApiError } from "@/lib/api-client";
 import SummaryCards from "@/components/dashboard/SummaryCards";
 import OntologyScoreTable from "@/components/dashboard/OntologyScoreTable";
 import MetricCards from "@/components/dashboard/MetricCards";
 import AlertsFlags from "@/components/dashboard/AlertsFlags";
 import StrengthsWeaknesses from "@/components/dashboard/StrengthsWeaknesses";
 import SchemaMetricsPanel from "@/components/dashboard/SchemaMetricsPanel";
-import RagComparisonDashboard from "@/components/rag-comparison/RagComparisonDashboard";
+import PerOntologyQualityReport from "@/components/dashboard/PerOntologyQualityReport";
+
+/** Dashboard aggregates every ontology with many AQL queries each; short client timeouts were aborting healthy backends. */
+const DASHBOARD_FETCH_TIMEOUT_MS = 120_000;
 
 const RadarMetricChart = dynamic(
   () => import("@/components/dashboard/RadarMetricChart"),
@@ -23,10 +27,26 @@ const ClassScoreDistribution = dynamic(
   { ssr: false },
 );
 
-type DashboardTab = "quality" | "rag-comparison";
+type DashboardTab = "quality" | "per-ontology-quality";
 
 export default function DashboardPage() {
-  const [activeTab, setActiveTab] = useState<DashboardTab>("quality");
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-500">Loading…</main>}>
+      <DashboardPageInner />
+    </Suspense>
+  );
+}
+
+function DashboardPageInner() {
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+  const tabFromUrl = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState<DashboardTab>(() =>
+    tabFromUrl === "per-ontology-quality" || tabFromUrl === "rag-comparison"
+      ? "per-ontology-quality"
+      : "quality",
+  );
   const [data, setData] = useState<QualityDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -35,32 +55,56 @@ export default function DashboardPage() {
   const fetchDashboard = useCallback(async () => {
     setLoading(true);
     setError(null);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DASHBOARD_FETCH_TIMEOUT_MS);
     try {
-      const baseUrl = getApiBaseUrl();
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
-      const res = await fetch(
-        `${baseUrl}/api/v1/quality/dashboard`,
-        { signal: controller.signal },
-      );
-      clearTimeout(timeout);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json() as QualityDashboard;
+      const json = await api.get<QualityDashboard>("/api/v1/quality/dashboard", {
+        signal: controller.signal,
+      });
       setData(json);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
-        setError("Request timed out. Is the backend running?");
+        setError(
+          `Request timed out after ${DASHBOARD_FETCH_TIMEOUT_MS / 1000}s. The server builds scores for every ontology and can take a while. If the backend is running, try Refresh or reduce workloads.`,
+        );
+      } else if (err instanceof ApiError) {
+        setError(err.body.message || `Request failed (${err.status})`);
       } else {
         setError("Failed to load dashboard data. Is the backend running?");
       }
     } finally {
+      clearTimeout(timeout);
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchDashboard();
-  }, [fetchDashboard]);
+    if (activeTab !== "quality") return;
+    void fetchDashboard();
+  }, [fetchDashboard, activeTab]);
+
+  useEffect(() => {
+    if (tabFromUrl === "per-ontology-quality" || tabFromUrl === "rag-comparison") {
+      setActiveTab("per-ontology-quality");
+    } else if (tabFromUrl === "quality") {
+      setActiveTab("quality");
+    }
+  }, [tabFromUrl]);
+
+  const setDashboardTab = useCallback(
+    (key: DashboardTab) => {
+      setActiveTab(key);
+      const params = new URLSearchParams(searchParams.toString());
+      if (key === "per-ontology-quality") {
+        params.set("tab", "per-ontology-quality");
+      } else {
+        params.delete("tab");
+      }
+      const q = params.toString();
+      router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
 
   const selectedOntology: OntologyScorecard | null =
     data?.ontologies.find((o) => o.ontology_id === selectedId) ?? null;
@@ -72,9 +116,9 @@ export default function DashboardPage() {
       subtitle: "Ontology quality scores, LLM-as-judge metrics, and extraction cost",
     },
     {
-      key: "rag-comparison",
-      label: "GraphRAG vs VectorRAG",
-      subtitle: "Side-by-side retrieval quality, cost, and latency comparison",
+      key: "per-ontology-quality",
+      label: "Per-Ontology Quality",
+      subtitle: "Live six-dimension radar, score cards, and schema metrics per ontology",
     },
   ];
 
@@ -119,7 +163,7 @@ export default function DashboardPage() {
             {TABS.map((tab) => (
               <button
                 key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
+                onClick={() => setDashboardTab(tab.key)}
                 className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                   activeTab === tab.key
                     ? "border-indigo-600 text-indigo-700"
@@ -134,16 +178,19 @@ export default function DashboardPage() {
       </header>
 
       <div className="max-w-[1600px] mx-auto px-6 py-6 space-y-6">
-        {/* ── RAG Comparison Tab ────────────────────────── */}
-        {activeTab === "rag-comparison" && <RagComparisonDashboard />}
+        {/* ── Per-ontology quality (restored from pre-mock dashboard) ── */}
+        {activeTab === "per-ontology-quality" && <PerOntologyQualityReport />}
 
         {/* ── Quality Tab ───────────────────────────────── */}
         {activeTab === "quality" && (
           <>
             {/* Loading */}
             {loading && !data && (
-              <div className="flex items-center justify-center py-20">
-                <p className="text-gray-400 animate-pulse">Loading dashboard...</p>
+              <div className="flex flex-col items-center justify-center py-20 gap-2">
+                <p className="text-gray-400 animate-pulse">Loading dashboard…</p>
+                <p className="text-xs text-gray-400 max-w-md text-center">
+                  Computing quality for each ontology can take up to a few minutes on large libraries.
+                </p>
               </div>
             )}
 

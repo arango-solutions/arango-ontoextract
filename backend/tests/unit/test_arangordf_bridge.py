@@ -414,6 +414,11 @@ class TestImportFromFile:
         mock_sync_imports.assert_called_once()
         assert mock_sync_imports.call_args[0][0] is db
         assert mock_sync_imports.call_args[0][2] == "my_onto"
+        reg_payload = mock_registry.call_args[0][0]
+        assert reg_payload["name"] == "My Ontology"
+        assert reg_payload["label"] == "My Ontology"
+        assert reg_payload["tier"] == "local"
+        assert "Imported from" in reg_payload["description"]
 
     @patch("app.services.arangordf_bridge.create_registry_entry")
     @patch("app.services.arangordf_bridge.import_owl_to_graph")
@@ -464,6 +469,64 @@ class TestImportFromFile:
                 ontology_id="x",
                 db=db,
             )
+
+    @patch("app.services.arangordf_bridge.sync_owl_imports_edges")
+    @patch("app.services.arangordf_bridge.create_registry_entry")
+    @patch("app.services.arangordf_bridge.import_owl_to_graph")
+    def test_import_uses_owl_ontology_rdfs_label_when_no_param_label(
+        self, mock_import, mock_registry, mock_sync_imports,
+    ):
+        db = MagicMock()
+        mock_import.return_value = {"imported": True, "ontology_id": "fin", "graph_name": "fin"}
+        mock_registry.return_value = {"_key": "fin"}
+        mock_sync_imports.return_value = {"created": 0, "skipped": 0, "warnings": []}
+
+        ttl = (
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+            "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
+            "@prefix ex: <http://example.org/> .\n"
+            'ex:RootOnto a owl:Ontology ; rdfs:label "Finance Schema" .\n'
+            "ex:Person a owl:Class .\n"
+        )
+
+        import_from_file(
+            file_content=ttl.encode("utf-8"),
+            filename="data.ttl",
+            ontology_id="fin",
+            db=db,
+            ontology_label=None,
+        )
+
+        reg_payload = mock_registry.call_args[0][0]
+        assert reg_payload["name"] == "Finance Schema"
+        assert reg_payload["label"] == "Finance Schema"
+
+    @patch("app.services.arangordf_bridge.sync_owl_imports_edges")
+    @patch("app.services.arangordf_bridge.create_registry_entry")
+    @patch("app.services.arangordf_bridge.import_owl_to_graph")
+    def test_import_title_from_filename_when_no_ontology_label(
+        self, mock_import, mock_registry, mock_sync_imports,
+    ):
+        db = MagicMock()
+        mock_import.return_value = {"imported": True, "ontology_id": "x", "graph_name": "x"}
+        mock_registry.return_value = {"_key": "x"}
+        mock_sync_imports.return_value = {"created": 0, "skipped": 0, "warnings": []}
+
+        ttl = (
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+            "<http://example.org/Person> a owl:Class .\n"
+        )
+
+        import_from_file(
+            file_content=ttl.encode("utf-8"),
+            filename="my_schema_file.ttl",
+            ontology_id="x",
+            db=db,
+            ontology_label=None,
+        )
+
+        reg_payload = mock_registry.call_args[0][0]
+        assert reg_payload["name"] == "My Schema File"
 
 
 # ---------------------------------------------------------------------------

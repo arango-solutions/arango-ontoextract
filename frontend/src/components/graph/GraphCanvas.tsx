@@ -33,6 +33,7 @@ import {
   buildSyntheticRdfsRangeClassEdges,
   RDFS_RANGE_CLASS_LABEL_FALLBACK,
 } from "./graphCanvasEdges";
+import { ONTOLOGY_EDGE_COLORS as EDGE_COLORS } from "./graphVisualPalette";
 
 // --- Confidence-based color helpers ---
 
@@ -189,16 +190,7 @@ const nodeTypes = { ontologyNode: OntologyNode };
 // --- Edge label config ---
 
 // rdfs_domain / has_property are filtered (property↔class); not used for stroke.
-const EDGE_COLORS: Record<string, string> = {
-  subclass_of: "#6366f1",
-  equivalent_class: "#8b5cf6",
-  has_property: "#0891b2",
-  extends_domain: "#d97706",
-  related_to: "#2563eb",
-  rdfs_range_class: "#2563eb",
-  extracted_from: "#059669",
-  imports: "#e11d48",
-};
+// Stroke colors shared with Sigma workspace — see graphVisualPalette.ts.
 
 // --- Layout: dagre automatic graph layout ---
 

@@ -99,6 +99,12 @@ class UpdatePropertyRequest(BaseModel):
     range: str | None = None
 
 
+class UpdateEdgeRequest(BaseModel):
+    """Partial update for a versioned ontology edge (subclass_of, related_to, etc.)."""
+
+    status: Literal["pending", "approved", "rejected"]
+
+
 class ExtractionClassification(StrEnum):
     EXISTING = "existing"
     EXTENSION = "extension"

@@ -24,7 +24,10 @@ _ONTOLOGY_EDGE_COLLECTIONS = [
     "related_to",
     "rdfs_domain",
     "rdfs_range_class",
+    "imports",
 ]
+
+_EDGE_COLLECTIONS_FOR_LOOKUP = list(_ONTOLOGY_EDGE_COLLECTIONS)
 
 
 def create_class(
@@ -358,3 +361,54 @@ def create_edge(
         },
     )
     return result["new"]
+
+
+def resolve_ontology_edge(
+    db: StandardDatabase | None = None,
+    *,
+    edge_key: str,
+) -> tuple[str, dict[str, Any]] | None:
+    """Return ``(collection_name, doc)`` for the current version of an edge by ``_key``."""
+    if db is None:
+        db = get_db()
+
+    for col_name in _EDGE_COLLECTIONS_FOR_LOOKUP:
+        if not db.has_collection(col_name):
+            continue
+        try:
+            doc = db.collection(col_name).get(edge_key)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+        if doc and doc.get("expired") == NEVER_EXPIRES:
+            return col_name, doc
+    return None
+
+
+def update_edge(
+    db: StandardDatabase | None = None,
+    *,
+    edge_key: str,
+    data: dict[str, Any],
+    created_by: str = "workspace",
+    change_summary: str = "",
+) -> dict[str, Any]:
+    """Update an ontology edge (temporal version bump)."""
+    if db is None:
+        db = get_db()
+
+    resolved = resolve_ontology_edge(db, edge_key=edge_key)
+    if resolved is None:
+        raise ValueError(f"No current edge found with _key={edge_key!r}")
+
+    collection_name, _doc = resolved
+
+    return update_entity(
+        db,
+        collection=collection_name,
+        key=edge_key,
+        new_data=data,
+        created_by=created_by,
+        change_type="edit",
+        change_summary=change_summary or f"Updated edge {edge_key}",
+        edge_collections=None,
+    )

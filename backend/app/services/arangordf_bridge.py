@@ -513,6 +513,45 @@ def _detect_format(filename: str) -> str:
     return fmt
 
 
+def _human_title_from_filename(filename: str) -> str:
+    stem = PurePosixPath(filename).stem
+    if not stem:
+        return ""
+    return stem.replace("-", " ").replace("_", " ").strip().title()
+
+
+def _owl_ontology_label_from_graph(g: RDFGraph) -> str | None:
+    """First non-empty ``rdfs:label`` on any ``owl:Ontology`` resource, if present."""
+    try:
+        for _ont in g.subjects(RDF.type, OWL.Ontology):
+            for label in g.objects(_ont, RDFS.label):
+                s = str(label).strip()
+                if s:
+                    return s
+    except Exception:
+        log.debug("owl ontology label extraction failed", exc_info=True)
+    return None
+
+
+def _registry_display_name_for_file_import(
+    *,
+    filename: str,
+    ontology_id: str,
+    ontology_label: str | None,
+    rdf_graph: RDFGraph,
+) -> str:
+    """Resolve a human-readable ontology name for the registry (matches extraction-style naming)."""
+    if ontology_label and str(ontology_label).strip():
+        return str(ontology_label).strip()
+    from_graph = _owl_ontology_label_from_graph(rdf_graph)
+    if from_graph:
+        return from_graph
+    titled = _human_title_from_filename(filename)
+    if titled:
+        return titled
+    return ontology_id
+
+
 # ---------------------------------------------------------------------------
 # File / URL import (Week 20)
 # ---------------------------------------------------------------------------
@@ -561,10 +600,20 @@ def import_from_file(
         ontology_uri_prefix=ontology_uri_prefix,
     )
 
+    display_name = _registry_display_name_for_file_import(
+        filename=filename,
+        ontology_id=ontology_id,
+        ontology_label=ontology_label,
+        rdf_graph=rdf_graph,
+    )
+
     registry_entry = create_registry_entry(
         {
             "_key": ontology_id,
-            "label": ontology_label or ontology_id,
+            "name": display_name,
+            "label": display_name,
+            "description": f"Imported from {filename}",
+            "tier": "local",
             "source": "file_import",
             "source_filename": filename,
             "format": fmt,

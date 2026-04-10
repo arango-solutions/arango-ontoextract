@@ -22,6 +22,8 @@ export interface OntologyClass {
   ontology_id: string;
   created: string;
   expired: string | null;
+  /** Domain vs local tier — used by workspace "Source type" lens when present */
+  tier?: string;
 }
 
 export interface OntologyProperty {
@@ -112,8 +114,10 @@ export interface StagingVsProductionDiff {
 
 export interface OntologyRegistryEntry {
   _key: string;
-  name: string;
-  description: string;
+  /** Display name; file-import entries may only have ``label`` until normalized server-side. */
+  name?: string;
+  label?: string;
+  description?: string;
   tier: "domain" | "local";
   class_count: number;
   property_count: number;
@@ -230,80 +234,3 @@ export interface ClassScore {
   semantic_validity_score: number | null;
 }
 
-/* ── RAG Comparison Dashboard Types ─────────────────── */
-
-export interface RagEvalDataset {
-  id: string;
-  name: string;
-  description: string;
-  query_count: number;
-  created_at: string;
-}
-
-export interface RagMetricSummary {
-  answer_faithfulness: number;
-  answer_relevance: number;
-  context_precision: number;
-  context_recall: number;
-  avg_latency_ms: number;
-  avg_tokens_used: number;
-  avg_cost_per_query: number;
-}
-
-export type RagQueryType =
-  | "multi_hop"
-  | "factual"
-  | "aggregation"
-  | "comparison"
-  | "temporal";
-
-export interface RagQuerySideResult {
-  answer: string;
-  context_snippets: string[];
-  faithfulness: number;
-  relevance: number;
-  context_precision: number;
-  context_recall: number;
-  latency_ms: number;
-  tokens_used: number;
-}
-
-export interface RagQueryResult {
-  id: string;
-  query: string;
-  query_type: RagQueryType;
-  graph_rag: RagQuerySideResult;
-  vector_rag: RagQuerySideResult;
-  winner: "graph" | "vector" | "tie";
-  ground_truth: string;
-}
-
-export interface RagQueryTypeBreakdown {
-  query_type: string;
-  graph_avg_score: number;
-  vector_avg_score: number;
-  count: number;
-}
-
-export interface RagIndexBuildCost {
-  time_s: number;
-  cost_usd: number;
-  storage_mb: number;
-}
-
-export interface RagComparisonData {
-  dataset: RagEvalDataset;
-  graph_rag_summary: RagMetricSummary;
-  vector_rag_summary: RagMetricSummary;
-  query_type_breakdown: RagQueryTypeBreakdown[];
-  win_loss: {
-    graph_wins: number;
-    vector_wins: number;
-    ties: number;
-  };
-  queries: RagQueryResult[];
-  index_build_cost: {
-    graph_rag: RagIndexBuildCost;
-    vector_rag: RagIndexBuildCost;
-  };
-}

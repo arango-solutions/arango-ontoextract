@@ -5,7 +5,7 @@ import { useEffect, useRef, useCallback, useState } from "react";
 export interface ContextMenuItem {
   label: string;
   icon?: string;
-  onClick?: () => void;
+  onClick?: () => void | Promise<void>;
   danger?: boolean;
   disabled?: boolean;
   separator?: boolean;
@@ -65,8 +65,9 @@ function MenuItemRow({
         onClick={() => {
           if (item.disabled) return;
           if (hasSubmenu) return;
-          item.onClick?.();
-          onClose();
+          void Promise.resolve(item.onClick?.()).finally(() => {
+            onClose();
+          });
         }}
         className={`w-full text-left px-3 py-1.5 text-[13px] flex items-center gap-2 transition-colors rounded-sm
           ${item.disabled ? "text-gray-600 cursor-not-allowed" : ""}

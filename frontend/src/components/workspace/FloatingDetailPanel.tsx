@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { api, ApiError } from "@/lib/api-client";
+import { useDraggablePanel } from "@/hooks/useDraggablePanel";
+import PanelDragGrip from "@/components/workspace/PanelDragGrip";
 
 interface FloatingDetailPanelProps {
   entityType: "class" | "edge" | "property";
@@ -42,12 +44,19 @@ function formatCreated(val: number | string | undefined): string {
   return isNaN(d.getTime()) ? String(val) : d.toLocaleString();
 }
 
+const DETAIL_PANEL_WIDTH = 380;
+
 export default function FloatingDetailPanel({
   entityType,
   entityKey,
   ontologyId,
   onClose,
 }: FloatingDetailPanelProps) {
+  const { panelRef, panelStyle, dragHandleProps } = useDraggablePanel(DETAIL_PANEL_WIDTH, {
+    placement: "viewportTopRight",
+  });
+  const { className: dragHandleClassName, ...dragHandleEvents } = dragHandleProps;
+
   const [entity, setEntity] = useState<ClassDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -106,13 +115,19 @@ export default function FloatingDetailPanel({
 
   return (
     <div
-      className="absolute top-4 right-4 w-[380px] max-h-[80vh] bg-white rounded-xl border border-gray-200 shadow-xl overflow-hidden flex flex-col z-50"
+      ref={panelRef}
+      style={panelStyle}
+      className="max-h-[80vh] bg-white rounded-xl border border-gray-200 shadow-xl overflow-hidden flex flex-col"
       role="dialog"
       aria-label={`${typeLabel} detail panel`}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 flex-shrink-0">
+      {/* Header — drag handle */}
+      <div
+        className={`flex items-center justify-between px-4 py-3 border-b border-gray-100 flex-shrink-0 ${dragHandleClassName}`}
+        {...dragHandleEvents}
+      >
         <div className="flex items-center gap-2 min-w-0">
+          <PanelDragGrip />
           <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 font-medium flex-shrink-0">
             {typeLabel}
           </span>
@@ -121,8 +136,10 @@ export default function FloatingDetailPanel({
           </span>
         </div>
         <button
+          type="button"
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={onClose}
-          className="text-gray-400 hover:text-gray-600 text-lg leading-none ml-2 flex-shrink-0"
+          className="text-gray-400 hover:text-gray-600 text-lg leading-none ml-2 flex-shrink-0 cursor-pointer"
           aria-label="Close detail panel"
         >
           &times;
@@ -201,6 +218,14 @@ export default function FloatingDetailPanel({
                 </dt>
                 <dd className="text-xs text-gray-600">{formatCreated(entity.created)}</dd>
               </div>
+            )}
+
+            {entityType === "class" && !hasProperties && (
+              <p className="text-xs text-gray-500 border-t border-gray-100 pt-3">
+                No datatype attributes or object relationships are linked to this class yet.
+                They appear when the ontology uses PGT-aligned properties (rdfs:domain edges) or
+                legacy <code className="text-[10px]">has_property</code> links from extraction.
+              </p>
             )}
 
             {/* ── Properties Section ──────────────── */}
