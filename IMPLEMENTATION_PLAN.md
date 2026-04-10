@@ -409,21 +409,23 @@ Each gap is classified by severity:
 
 ### Sprint A: Critical Bugs & Wiring Fixes (1 week)
 
-**Goal:** Fix runtime errors and connect implemented but unwired components.
+**Status: COMPLETE** (verified in repo, April 2026). The table below is the original audit list, kept for traceability; each item is **done** as described in the verification column.
 
-| # | Gap | Severity | Files | Fix |
-|---|-----|----------|-------|-----|
-| A.1 | Schema extraction status endpoint broken | BUG | `backend/app/api/ontology.py` | `GET /schema/extract/{run_id}` calls `get_extraction_status()` which is not imported. Import it from `schema_extraction` or implement inline. |
-| A.2 | `expired` field inconsistency in existing DB data | BUG | `backend/app/services/extraction.py`, DB data | Existing documents written with `expired: null` (before sentinel fix) will not match `expired == NEVER_EXPIRES` queries. Write a data migration script to backfill: `UPDATE doc WITH { expired: 9223372036854775807 } IN ontology_classes FILTER doc.expired == null`. Same for `ontology_properties` and all edge collections. |
-| A.3 | WebSocket extraction events never published | UNWIRED | `backend/app/services/extraction.py`, `backend/app/api/ws_extraction.py` | `publish_event()` exists in `ws_extraction.py` but is never called from the extraction pipeline. Add calls to `publish_event(run_id, event)` at each LangGraph node callback in `extraction.py` / `pipeline.py`. |
-| A.4 | Rate limit middleware not registered | UNWIRED | `backend/app/main.py`, `backend/app/api/rate_limit.py` | `RateLimitMiddleware` is implemented but not added to the FastAPI app in `main.py`. Add conditional registration when `settings.rate_limit_enabled` is True. |
-| A.5 | VCR Timeline scrubber doesn't update the graph | UNWIRED | `frontend/src/app/curation/[runId]/page.tsx`, `frontend/src/components/timeline/VCRTimeline.tsx` | VCR slider fires events but curation page does not pass `onTimestampChange` handler. Wire it to call `GET /ontology/{id}/snapshot?at={ts}` and replace graph data. |
-| A.6 | EntityHistory component not mounted | UNWIRED | `frontend/src/app/curation/[runId]/page.tsx`, `frontend/src/components/timeline/EntityHistory.tsx` | Curation page wires history button as `() => {}`. Import `EntityHistory` and wire `onShowHistory` to render it in the side panel. |
-| A.7 | DiffOverlay component not imported anywhere | UNWIRED | `frontend/src/components/graph/DiffOverlay.tsx` | Component exists but no page imports it. Wire into curation page's diff view mode to overlay temporal diff on the graph. |
-| A.8 | Frontend auth cookie vs localStorage mismatch | BUG | `frontend/src/middleware.ts`, `frontend/src/lib/auth.ts` | Middleware checks cookie `aoe_auth_token`; `auth.ts` stores in `localStorage`. Sync by setting cookie from `localStorage` on login, or read from both. |
-| A.9 | Login page missing | MISSING | `frontend/src/app/login/page.tsx` | Middleware redirects to `/login` but no page exists. Create login page (or redirect to OIDC provider). |
+**Goal (historical):** Fix runtime errors and connect implemented but unwired components.
 
-**Sprint A exit:** No runtime errors. WebSocket shows real-time pipeline progress. VCR timeline drives graph state. Auth flow works end-to-end in production mode.
+| # | Gap | Was | Files | Status | Verification |
+|---|-----|-----|-------|--------|--------------|
+| A.1 | Schema extraction status endpoint broken | BUG | `backend/app/api/ontology.py` | **DONE** | `get_extraction_status` is imported from `schema_extraction`; `GET /schema/extract/{run_id}` delegates to it. |
+| A.2 | `expired` field inconsistency in existing DB data | BUG | Migrations + temporal collections | **DONE** | `019_backfill_expired_sentinel.py` backfills `expired == null` (and related) to `NEVER_EXPIRES` across versioned vertices and edges; see also Addendum L (L.23). Sprint C.1 intent absorbed here. |
+| A.3 | WebSocket extraction events never published | UNWIRED | `backend/app/services/extraction.py`, `backend/app/api/ws_extraction.py` | **DONE** | `execute_run` defaults `event_callback` to `publish_event` from `ws_extraction` (see `tests/unit/test_pipeline_events.py`). |
+| A.4 | Rate limit middleware not registered | UNWIRED | `backend/app/main.py`, `backend/app/api/rate_limit.py` | **DONE** | `RateLimitMiddleware` is added when `settings.rate_limit_enabled` is True. |
+| A.5 | VCR Timeline scrubber doesn't update the graph | UNWIRED | `frontend/src/app/curation/[runId]/page.tsx`, `VCRTimeline.tsx` | **DONE** | Curation page passes `onTimestampChange` / snapshot handling so the scrubber drives graph data. |
+| A.6 | EntityHistory component not mounted | UNWIRED | `frontend/src/app/curation/[runId]/page.tsx`, `EntityHistory.tsx` | **DONE** | `EntityHistory` is imported and rendered with real handlers (no empty `onShowHistory`). |
+| A.7 | DiffOverlay component not imported anywhere | UNWIRED | `frontend/src/components/graph/DiffOverlay.tsx` | **DONE** | Curation page loads `DiffOverlay` (dynamic import) and uses it in diff view mode. |
+| A.8 | Frontend auth cookie vs localStorage mismatch | BUG | `frontend/src/middleware.ts`, `frontend/src/lib/auth.ts` | **DONE** | `setToken` writes **both** `localStorage` and cookie `aoe_auth_token` (same name as middleware); `getToken` reads either. |
+| A.9 | Login page missing | MISSING | `frontend/src/app/login/page.tsx` | **DONE** | `/login` route exists; middleware allows it in `PUBLIC_PATHS`. |
+
+**Sprint A exit (met):** No remaining A-list runtime gaps. WebSocket pipeline events are published. VCR timeline, history, and diff overlay are wired on curation. Auth cookie + login align with production-mode middleware.
 
 ---
 
@@ -629,7 +631,7 @@ Each gap is classified by severity:
 **Goal:** Provide a full ontology graph editor accessible from the library — not just the per-extraction-run staging curation page. This is the core PRD §6.4 feature that allows ongoing ontology management, manual class creation, and visual editing outside of extraction workflows.
 
 **Current State:**
-- `/curation/[runId]` exists with `GraphCanvas`, `NodeDetail`, `NodeActions`, `EdgeActions`, `BatchActions`, `ProvenancePanel`, `DiffView`, `PromotePanel`, `VCRTimeline` — all implemented but some components unwired (covered in Sprint A)
+- `/curation/[runId]` exists with `GraphCanvas`, `NodeDetail`, `NodeActions`, `EdgeActions`, `BatchActions`, `ProvenancePanel`, `DiffView`, `PromotePanel`, `VCRTimeline`, `EntityHistory`, `DiffOverlay` — Sprint A wiring complete; see Sprint A verification table.
 - **There is no way to open an ontology graph editor from the library page.** The library shows a class hierarchy tree with inline detail, but no interactive graph view or editing capability outside of extraction run staging.
 - The PRD explicitly says the curation dashboard should work in both "Staging mode" (per run) and "Ontology mode" (per ontology) — the latter does not exist.
 
@@ -654,41 +656,41 @@ Each gap is classified by severity:
 
 ### Remediation Summary
 
+Original phased backlog (historical sizing). **Current completion** matches the **Remaining Work Priority (Updated March 31, 2026)** table later in this document — A, C, K, B, G, J are **done**; F is **mostly done**; primary open tracks are **PGT**, H, ER, quality history, I, S, D, E, V.
+
 | Sprint | Duration | Tasks | Priority |
 |--------|----------|-------|----------|
-| A: Critical Bugs & Wiring | 1 week | 9 | **P0** — blocks demo & basic workflows |
-| B: Backend Stubs | 1 week | 8 | **P1** — completes feature parity with PRD |
-| C: Data Integrity & Reindex | 3 days | 4 | **P0** — temporal queries return wrong results without this |
+| ~~A: Critical Bugs & Wiring~~ | ~~1 week~~ | ~~9~~ | **DONE** — see Sprint A verification table |
+| ~~B: Backend Stubs~~ | ~~1 week~~ | ~~8~~ | **DONE** |
+| ~~C: Data Integrity & Reindex~~ | ~~3 days~~ | ~~4~~ | **DONE** (backfill: `019`; MDI: `005` / L.25; residual: C.4 lineage if needed) |
 | D: Test Coverage & CI | 1 week | 5 | **P2** — quality gate before release |
 | E: Production Polish | 1 week | 5 | **P2** — required for v1.0.0 |
-| F: Ontology Quality Metrics | 1.5 weeks | 18 | **P1** — PRD §3.2 success metrics entirely unimplemented |
-| G: Multi-Document & Incremental Extraction | 1.5 weeks | 8 | **P1** — core ontology management gap |
+| F: Ontology Quality Metrics | 1.5 weeks | 18 | **MOSTLY DONE** — dashboard + live per-ontology radar; history / recall pending |
+| ~~G: Multi-Document & Incremental Extraction~~ | ~~1.5 weeks~~ | ~~8~~ | **DONE** |
 | H: Ontology Imports & Dependencies | 1.5 weeks | 9 | **P1** — `owl:imports`, standard ontology catalog |
 | I: Constraints (OWL + SHACL) | 1 week | 9 | **P2** — formal constraints support |
-| J: Full CRUD, Search & Library Organization | 1 week | 9 | **P1** — lifecycle management and discoverability |
-| K: Standalone Ontology Graph Editor | 1.5 weeks | 12 | **P0** — core PRD §6.4 feature, blocks ontology management |
-| **Total** | **~12 weeks** | **96 tasks** | |
+| ~~J: Full CRUD, Search & Library Organization~~ | ~~1 week~~ | ~~9~~ | **DONE** |
+| ~~K: Standalone Ontology Graph Editor~~ | ~~1.5 weeks~~ | ~~12~~ | **DONE** |
+| **Total (original plan)** | **~12 weeks** | **96 tasks** | |
 
 ### Recommended Execution Order
 
 ```
 Sprint C (data integrity)  ─┐
-                             ├─→ Sprint A (bugs & wiring) ─┬─→ Sprint K (ontology editor)
-                             │                              │
-                             └─ C.1–C.3 parallel with A    └─→ Sprint B (stubs) ─┬─→ Sprint G (multi-doc) ─→ Sprint H (imports) ─→ Sprint I (constraints)
+                             ├─→ ~~Sprint A~~ (complete) ─┬─→ ~~Sprint K~~ (ontology editor — done)
+                             │                            │
+                             └─ C.1–C.3 parallel with A  └─→ ~~Sprint B~~ (stubs — largely done) ─┬─→ ~~Sprint G~~ (multi-doc — done) ─→ Sprint H (imports) ─→ Sprint I (constraints)
                                                                                   │
                                                                                   ├─→ Sprint F (quality metrics)
                                                                                   │
                                                                                   └─→ Sprint J (CRUD, search) ─→ Sprint D (tests) ─→ Sprint E (polish)
 ```
 
-- Sprint K (ontology editor) is **P0** and should follow Sprint A (wiring fixes), since it reuses the same `GraphCanvas`, `VCRTimeline`, and curation components that A wires up. Once A makes those components functional, K can build the standalone editor page on top of them.
-- Sprint C should start first or in parallel with Sprint A, since the `expired` field backfill (C.1) and MDI reindex (C.2) affect whether any temporal query returns correct results.
-- Sprint G (multi-doc) should follow B, as it extends extraction APIs that need to work properly first.
-- Sprint H (imports) depends on G, since import resolution needs the catalog and multi-ontology context injection.
+- Sprint A and K are **complete** in the current codebase; new work should branch from **`object-centric-ux` / Sprint PGT** (schema alignment) unless you are picking up imports (H), ER, or quality history.
+- Sprint C backfill/reindex items are **largely done** (migration `019`, MDI fixes in `005` per Addendum L); treat C.4 (`has_chunk` / `produced_by` lineage) and visualizer redeploy as the remaining C-class follow-ups if still open.
+- Sprint H (imports) builds on multi-doc and library behavior already shipped (**G** / **J** done); catalog + `owl:imports` graph remain the gap.
 - Sprint I (constraints) can follow H, leveraging the import pipeline for OWL restriction parsing.
-- Sprint J (CRUD, search) can run in parallel with F, both depending only on B.
-- Sprint D (tests) and E (polish) are final gates.
+- Sprint D (tests) and E (polish) remain final gates before a tagged release.
 
 ---
 
@@ -765,7 +767,7 @@ All PRD §6 features are tracked in the implementation plan:
 | §6.2 FR-2.7–2.11 | Materialization, graphs, visualizer | Phase 2 + L.18–L.22 | **IMPLEMENTED** |
 | §6.2 FR-2.12–2.13 | Incremental + multi-doc extraction | Sprint G | **IMPLEMENTED** |
 | §6.3 FR-3.1–3.5 | Tier 2 local extensions | Sprint B | **IMPLEMENTED** |
-| §6.4 FR-4.1–4.9 | Visual curation dashboard | Phase 3 + Sprint A | **IMPLEMENTED** (VCR, EntityHistory, DiffOverlay wired) |
+| §6.4 FR-4.1–4.9 | Visual curation dashboard | Phase 3 + Sprint A (complete) | **IMPLEMENTED** (VCR, EntityHistory, DiffOverlay, WS pipeline events, schema extract status — see Sprint A verification) |
 | §6.4 FR-4.10–4.13 | Standalone ontology editor | Sprint K | **IMPLEMENTED** |
 | §6.5 FR-5.1–5.11 | Temporal time travel + VCR | Phase 3 + fixes | **IMPLEMENTED** (snapshot, timeline, VCR slider working) |
 | §6.6 FR-6.1–6.12 | ArangoDB Visualizer customization | Phase 3 + L.20 + Sprint C | **IMPLEMENTED** |
