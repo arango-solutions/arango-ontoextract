@@ -23,7 +23,10 @@ _DEFAULT_SCORE = 0.8
 
 _SYSTEM_PROMPT = (
     "You are an OWL ontology validator. Review the following extracted ontology "
-    "classes and their properties for logical consistency issues.\n\n"
+    "classes. Each class lists **attributes** (owl:DatatypeProperty, scalar ranges) "
+    "and **relationships** (owl:ObjectProperty, target class URIs). "
+    "Legacy extractions may only show a flat `properties` list with "
+    "`property_type` and `range`.\n\n"
     "Check each class for:\n"
     "1. Domain/range mismatches: Does any property have a semantically "
     "nonsensical range for its domain class?\n"
@@ -37,24 +40,53 @@ _SYSTEM_PROMPT = (
 )
 
 
+def _class_fields_for_validation(c: ExtractedClass) -> dict[str, list[dict[str, str]]]:
+    """Normalize PGT attributes/relationships (or legacy properties) for the LLM."""
+    attributes: list[dict[str, str]] = []
+    relationships: list[dict[str, str]] = []
+
+    if c.attributes or c.relationships:
+        for a in c.attributes:
+            attributes.append({
+                "uri": a.uri,
+                "label": a.label,
+                "range_datatype": a.range_datatype,
+            })
+        for r in c.relationships:
+            relationships.append({
+                "uri": r.uri,
+                "label": r.label,
+                "target_class_uri": r.target_class_uri,
+            })
+        return {"attributes": attributes, "relationships": relationships}
+
+    for p in c.properties:
+        if p.property_type == "object":
+            relationships.append({
+                "uri": p.uri,
+                "label": p.label,
+                "target_class_uri": p.range,
+            })
+        else:
+            attributes.append({
+                "uri": p.uri,
+                "label": p.label,
+                "range_datatype": p.range,
+            })
+    return {"attributes": attributes, "relationships": relationships}
+
+
 def _build_user_prompt(classes: list[ExtractedClass]) -> str:
     class_list = []
     for c in classes:
-        props = [
-            {
-                "uri": p.uri,
-                "label": p.label,
-                "property_type": p.property_type,
-                "range": p.range,
-            }
-            for p in c.properties
-        ]
+        shapes = _class_fields_for_validation(c)
         class_list.append({
             "uri": c.uri,
             "label": c.label,
             "description": c.description,
             "parent_uri": c.parent_uri,
-            "properties": props,
+            "attributes": shapes["attributes"],
+            "relationships": shapes["relationships"],
         })
 
     return (

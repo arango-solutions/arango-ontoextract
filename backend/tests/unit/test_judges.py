@@ -36,7 +36,13 @@ from app.extraction.judges.semantic_validator import (
     validate_semantics,
 )
 from app.extraction.state import ExtractionPipelineState
-from app.models.ontology import ExtractedClass, ExtractedProperty, ExtractionResult
+from app.models.ontology import (
+    ExtractedAttribute,
+    ExtractedClass,
+    ExtractedProperty,
+    ExtractedRelationship,
+    ExtractionResult,
+)
 
 
 def _cls(uri: str = "http://ex.org#A", label: str = "A", desc: str = "desc") -> ExtractedClass:
@@ -197,6 +203,39 @@ class TestSemanticBuildPrompt:
         prompt = sem_build_prompt(classes)
         assert "prop1" in prompt
         assert "xsd:string" in prompt
+        assert "attributes" in prompt
+        assert "relationships" in prompt
+
+    def test_includes_pgt_attributes_and_relationships(self):
+        classes = [
+            ExtractedClass(
+                uri="http://ex.org#Customer",
+                label="Customer",
+                description="A customer",
+                confidence=0.9,
+                attributes=[
+                    ExtractedAttribute(
+                        uri="http://ex.org#name",
+                        label="customerName",
+                        range_datatype="xsd:string",
+                        confidence=0.85,
+                    )
+                ],
+                relationships=[
+                    ExtractedRelationship(
+                        uri="http://ex.org#hasAccount",
+                        label="has account",
+                        target_class_uri="http://ex.org#Account",
+                        confidence=0.8,
+                    )
+                ],
+            )
+        ]
+        prompt = sem_build_prompt(classes)
+        assert "customerName" in prompt
+        assert "xsd:string" in prompt
+        assert "has account" in prompt
+        assert "http://ex.org#Account" in prompt
 
 
 # ---------------------------------------------------------------------------

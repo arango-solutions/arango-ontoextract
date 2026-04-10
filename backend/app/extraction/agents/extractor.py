@@ -81,6 +81,10 @@ def _parse_llm_response(raw_text: str, pass_number: int, model_name: str) -> Ext
     for cls in data.get("classes", []):
         if "properties" not in cls:
             cls["properties"] = []
+        if "attributes" not in cls:
+            cls["attributes"] = []
+        if "relationships" not in cls:
+            cls["relationships"] = []
         if "confidence" in cls:
             cls["confidence"] = max(0.0, min(1.0, float(cls["confidence"])))
         for prop in cls.get("properties", []):

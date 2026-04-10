@@ -22,12 +22,31 @@ def _mock_db(
     classes: list[dict] | None = None,
     edges: list[dict] | None = None,
     properties: list[dict] | None = None,
+    rdfs_domain_rows: list[dict] | None = None,
     registry_name: str | None = None,
     org_ontologies: list[str] | None = None,
 ):
-    """Create a mock ArangoDB database with configurable query results."""
+    """Create a mock ArangoDB database with configurable query results.
+
+    ``has_collection`` reflects which collections exist: by default registry,
+    classes, subclass_of, and ontology_properties (no ``rdfs_domain``).
+    Pass ``rdfs_domain_rows`` to simulate PGT: adds ``rdfs_domain`` and an
+    extra AQL result row after subclass edges.
+    """
     db = MagicMock()
-    db.has_collection.return_value = True
+
+    present_cols = {
+        "ontology_registry",
+        "ontology_classes",
+        "subclass_of",
+        "ontology_properties",
+    }
+    if rdfs_domain_rows is not None:
+        present_cols.add("rdfs_domain")
+    if properties is None and rdfs_domain_rows is not None:
+        present_cols.discard("ontology_properties")
+
+    db.has_collection.side_effect = lambda name: name in present_cols
 
     call_count = {"n": 0}
     query_results = []
@@ -47,9 +66,12 @@ def _mock_db(
     else:
         query_results.append(iter([]))
 
+    if rdfs_domain_rows is not None:
+        query_results.append(iter(rdfs_domain_rows))
+
     if properties is not None:
         query_results.append(iter(properties))
-    else:
+    elif rdfs_domain_rows is None:
         query_results.append(iter([]))
 
     def execute_side_effect(query, bind_vars=None):
@@ -138,6 +160,31 @@ class TestSerializeDomainContext:
         db = _mock_db(classes=classes, properties=properties)
         result = serialize_domain_context(db, ontology_id="test")
         assert "Person" in result
+        assert "props:" in result
+
+    def test_pgt_property_labels_via_rdfs_domain(self):
+        classes = [
+            {
+                "_id": "ontology_classes/1",
+                "_key": "1",
+                "uri": "http://ex.org#Person",
+                "label": "Person",
+                "ontology_id": "test",
+            }
+        ]
+        rdfs_rows = [
+            {"class_id": "ontology_classes/1", "label": "fullName"},
+            {"class_id": "ontology_classes/1", "label": "age"},
+        ]
+        db = _mock_db(
+            classes=classes,
+            edges=[],
+            rdfs_domain_rows=rdfs_rows,
+        )
+        result = serialize_domain_context(db, ontology_id="test")
+        assert "Person" in result
+        assert "fullName" in result
+        assert "age" in result
         assert "props:" in result
 
 

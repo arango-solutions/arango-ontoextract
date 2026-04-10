@@ -156,11 +156,26 @@ async def _map_single_batch(
     batch_index: int,
 ) -> list[str]:
     """Run the map phase for a single chunk batch."""
+    def _labels_for_class(cls: ExtractedClass) -> dict[str, list[str]]:
+        if cls.attributes or cls.relationships:
+            return {
+                "attributes": [a.label for a in cls.attributes],
+                "relationships": [r.label for r in cls.relationships],
+            }
+        return {
+            "attributes": [
+                p.label for p in cls.properties if p.property_type != "object"
+            ],
+            "relationships": [
+                p.label for p in cls.properties if p.property_type == "object"
+            ],
+        }
+
     class_summaries = [
         {
             "label": cls.label,
             "description": cls.description or "",
-            "properties": [p.label for p in cls.properties],
+            **_labels_for_class(cls),
         }
         for cls in batch_classes
     ]

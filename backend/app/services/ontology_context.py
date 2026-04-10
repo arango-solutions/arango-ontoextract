@@ -43,12 +43,12 @@ def serialize_domain_context(
     ontology_name = _get_ontology_name(db, ontology_id)
     classes = _get_current_classes(db, ontology_id)
     hierarchy = _get_subclass_edges(db, ontology_id)
-    properties = _get_class_properties(db, ontology_id)
 
     if not classes:
         return f"Domain: {ontology_name}\nClasses: (none)"
 
     class_by_id: dict[str, dict[str, Any]] = {c["_id"]: c for c in classes}
+    class_ids = list(class_by_id.keys())
     children_map: dict[str, list[str]] = {}
     child_ids: set[str] = set()
 
@@ -59,11 +59,31 @@ def serialize_domain_context(
             children_map.setdefault(parent_id, []).append(child_id)
             child_ids.add(child_id)
 
+    rdfs_labels = (
+        _property_labels_from_rdfs_domain(db, ontology_id, class_ids)
+        if class_ids and db.has_collection("rdfs_domain")
+        else {}
+    )
+    legacy_labels: dict[str, list[str]] = {}
+    if db.has_collection("ontology_properties"):
+        legacy_labels = _legacy_property_labels_by_class(
+            _get_class_properties(db, ontology_id),
+            class_by_id,
+        )
+
     props_map: dict[str, list[str]] = {}
-    for prop in properties:
-        domain_id = prop.get("domain_class_id", "")
-        if domain_id in class_by_id:
-            props_map.setdefault(domain_id, []).append(prop.get("label", prop.get("uri", "")))
+    for cid in class_ids:
+        merged: list[str] = []
+        merged.extend(rdfs_labels.get(cid, []))
+        merged.extend(legacy_labels.get(cid, []))
+        seen: set[str] = set()
+        uniq: list[str] = []
+        for label in merged:
+            if label and label not in seen:
+                seen.add(label)
+                uniq.append(label)
+        if uniq:
+            props_map[cid] = uniq
 
     root_ids = [cid for cid in class_by_id if cid not in child_ids]
     root_ids.sort(key=lambda cid: class_by_id[cid].get("label", ""))
@@ -255,3 +275,57 @@ FOR prop IN ontology_properties
             bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
         )
     )
+
+
+def _property_labels_from_rdfs_domain(
+    db: StandardDatabase,
+    ontology_id: str,
+    class_ids: list[str],
+) -> dict[str, list[str]]:
+    """Map class document id → property labels via PGT ``rdfs_domain`` edges (ADR-006)."""
+    if not class_ids:
+        return {}
+
+    rows = list(
+        run_aql(
+            db,
+            """\
+FOR e IN rdfs_domain
+  FILTER e.ontology_id == @oid AND e.expired == @never
+  FILTER e._to IN @cids
+  LET prop = DOCUMENT(e._from)
+  FILTER prop != null AND prop.expired == @never AND prop.ontology_id == @oid
+  RETURN { "class_id": e._to, "label": prop.label }""",
+            bind_vars={
+                "oid": ontology_id,
+                "never": NEVER_EXPIRES,
+                "cids": class_ids,
+            },
+        )
+    )
+    out: dict[str, list[str]] = {}
+    for row in rows:
+        cid = row.get("class_id")
+        label = row.get("label")
+        if cid and label:
+            out.setdefault(cid, []).append(label)
+    return out
+
+
+def _legacy_property_labels_by_class(
+    properties: list[dict[str, Any]],
+    class_by_id: dict[str, dict[str, Any]],
+) -> dict[str, list[str]]:
+    """Build class_id → labels from legacy ``ontology_properties`` documents."""
+    out: dict[str, list[str]] = {}
+    for prop in properties:
+        domain_id = prop.get("domain_class_id")
+        if not domain_id and prop.get("domain_class"):
+            frag = str(prop["domain_class"]).split("#")[-1].split("/")[-1]
+            domain_id = f"ontology_classes/{frag}"
+        if not domain_id or domain_id not in class_by_id:
+            continue
+        label = prop.get("label") or prop.get("uri") or ""
+        if label:
+            out.setdefault(domain_id, []).append(label)
+    return out
