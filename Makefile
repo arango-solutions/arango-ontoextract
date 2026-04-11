@@ -1,5 +1,11 @@
 .PHONY: help setup infra backend frontend test test-unit test-integration test-all test-infra-up test-infra-down lint format typecheck type-check clean migrate docker-build docker-up docker-down
 
+# Optional repo-root .env (BACKEND_PORT, etc.). Safe if missing.
+-include .env
+
+# Override on the CLI: `make backend BACKEND_PORT=8010`
+BACKEND_PORT ?= 8000
+
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
@@ -32,8 +38,8 @@ infra-reset: ## Stop infrastructure and delete volumes
 # Backend
 # ---------------------------------------------------------------------------
 
-backend: ## Run backend dev server
-	cd backend && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+backend: ## Run backend dev server (port from BACKEND_PORT, default 8000; set in .env or CLI)
+	cd backend && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port $(BACKEND_PORT)
 
 migrate: ## Apply pending database migrations
 	cd backend && .venv/bin/python -m migrations.runner
