@@ -8,7 +8,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-const PUBLIC_PATHS = new Set(["/login", "/logout", "/health", "/_next", "/favicon.ico"]);
+const PUBLIC_PATHS = new Set([
+  "/login",
+  "/logout",
+  "/health",
+  "/ready",
+  "/_next",
+  "/favicon.ico",
+]);
 
 function isPublicPath(pathname: string): boolean {
   if (PUBLIC_PATHS.has(pathname)) return true;

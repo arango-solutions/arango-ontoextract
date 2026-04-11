@@ -15,6 +15,14 @@ const nextConfig = {
         destination: "/favicon.svg",
       },
       {
+        source: "/ready",
+        destination: `${backendTarget}/ready`,
+      },
+      {
+        source: "/health",
+        destination: `${backendTarget}/health`,
+      },
+      {
         source: "/api/:path*",
         destination: `${backendTarget}/api/:path*`,
       },

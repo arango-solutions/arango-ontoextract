@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, ApiError, getApiBaseUrl } from "@/lib/api-client";
+import { api, ApiError } from "@/lib/api-client";
 
 interface HealthStatus {
   status: string;
@@ -21,10 +21,14 @@ export default function Home() {
   const [statsError, setStatsError] = useState(false);
 
   useEffect(() => {
-    const backendRoot = getApiBaseUrl();
-
-    fetch(`${backendRoot}/ready`)
-      .then((r) => r.json())
+    // Same-origin `/ready` → Next rewrites to FastAPI (avoids cross-origin / CORS to :8010).
+    fetch("/ready")
+      .then(async (r) => {
+        if (!r.ok) {
+          throw new Error(`HTTP ${r.status}`);
+        }
+        return r.json() as Promise<HealthStatus>;
+      })
       .then((data: HealthStatus) => {
         setHealth(data.status === "ready" ? "connected" : "error");
         setHealthDetail(data.database ?? data.status);
