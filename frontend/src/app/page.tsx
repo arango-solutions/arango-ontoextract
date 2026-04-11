@@ -21,13 +21,18 @@ export default function Home() {
   const [statsError, setStatsError] = useState(false);
 
   useEffect(() => {
-    // Same-origin `/ready` → Next rewrites to FastAPI (avoids cross-origin / CORS to :8010).
+    // Same-origin `/ready` → `app/ready/route.ts` proxies to FastAPI (avoids CORS).
     fetch("/ready")
       .then(async (r) => {
+        const data = (await r.json().catch(() => ({}))) as HealthStatus & {
+          detail?: string;
+        };
         if (!r.ok) {
-          throw new Error(`HTTP ${r.status}`);
+          const hint =
+            typeof data.detail === "string" ? data.detail : `HTTP ${r.status}`;
+          throw new Error(hint);
         }
-        return r.json() as Promise<HealthStatus>;
+        return data;
       })
       .then((data: HealthStatus) => {
         setHealth(data.status === "ready" ? "connected" : "error");
