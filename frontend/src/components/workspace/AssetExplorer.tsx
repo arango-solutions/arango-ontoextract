@@ -38,7 +38,7 @@ interface DocumentEntry {
 interface AssetExplorerProps {
   onSelectOntology: (ontologyId: string) => void;
   onSelectDocument: (docId: string) => void;
-  onSelectRun: (runId: string) => void;
+  onSelectRun: (runId: string, ontologyId?: string) => void;
   selectedOntologyId: string | null;
   onContextMenu: (e: React.MouseEvent, type: string, data: unknown) => void;
   /** Increment (e.g. after ontology rename) to refetch documents + library lists. */
@@ -401,7 +401,7 @@ export default function AssetExplorer({
           {filteredRuns.map((run) => (
             <button
               key={run._key}
-              onClick={() => onSelectRun(run._key)}
+              onClick={() => onSelectRun(run._key, run.ontology_id)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 onContextMenu(e, "run", run);

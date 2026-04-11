@@ -19,6 +19,7 @@ export interface ExtractionRun {
   _key: string;
   document_id: string;
   document_name: string;
+  ontology_id?: string;
   status: RunStatus;
   created_at: string;
   updated_at: string;

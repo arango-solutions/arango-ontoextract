@@ -144,6 +144,11 @@ function WorkspacePageInner() {
         const res = await fetch(`${getApiBaseUrl()}/api/v1/extraction/runs/${pipelineRunId}`);
         if (!res.ok || cancelled) return;
         const run = await res.json();
+
+        if (run.ontology_id && !cancelled) {
+          setSelectedOntologyId((prev) => prev ?? run.ontology_id);
+        }
+
         const stepLogs: { step: string; status: string; started_at?: number; completed_at?: number; error?: string | null; metadata?: Record<string, unknown> }[] =
           run?.stats?.step_logs ?? [];
 
@@ -365,11 +370,14 @@ function WorkspacePageInner() {
     }
   }, []);
 
-  const handleSelectRun = useCallback((runId: string) => {
+  const handleSelectRun = useCallback((runId: string, ontologyId?: string) => {
     setPipelineRunId(runId);
     setVcrTimestamp(null);
     setInfoPanelItem(null);
-  }, []);
+    if (ontologyId && ontologyId !== selectedOntologyId) {
+      setSelectedOntologyId(ontologyId);
+    }
+  }, [selectedOntologyId]);
 
   const handleAssetContextMenu = useCallback(
     (e: React.MouseEvent, type: string, data: unknown) => {
