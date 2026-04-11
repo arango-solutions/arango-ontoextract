@@ -39,6 +39,13 @@ export class ApiError extends Error {
 
 // --- Client ---------------------------------------------------------------
 
+/**
+ * When `NEXT_PUBLIC_API_URL` is unset in the browser, the client uses same-origin
+ * `/api/*` paths; `next.config.js` rewrites those to this FastAPI origin.
+ * Port 8010 avoids common conflicts with other services on :8000.
+ */
+export const DEFAULT_BACKEND_ORIGIN = "http://127.0.0.1:8010";
+
 function resolveApiBaseUrl(baseUrl: string): string {
   if (typeof window === "undefined") {
     return baseUrl;
@@ -75,9 +82,13 @@ class ApiClient {
   private readonly baseUrl: string;
 
   constructor(baseUrl?: string) {
-    this.baseUrl = resolveApiBaseUrl(
-      baseUrl ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000",
-    );
+    const envUrl = baseUrl ?? process.env.NEXT_PUBLIC_API_URL;
+    const inBrowser = typeof window !== "undefined";
+    if (inBrowser && (envUrl === undefined || envUrl === "")) {
+      this.baseUrl = "";
+    } else {
+      this.baseUrl = resolveApiBaseUrl(envUrl ?? DEFAULT_BACKEND_ORIGIN);
+    }
   }
 
   private getHeaders(): Record<string, string> {
@@ -148,6 +159,6 @@ export const api = new ApiClient();
 /** Resolve the backend API base URL (no trailing slash). */
 export function getApiBaseUrl(): string {
   return resolveApiBaseUrl(
-    process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000",
+    process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_BACKEND_ORIGIN,
   );
 }

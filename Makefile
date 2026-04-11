@@ -3,8 +3,9 @@
 # Optional repo-root .env (BACKEND_PORT, etc.). Safe if missing.
 -include .env
 
-# Override on the CLI: `make backend BACKEND_PORT=8010`
-BACKEND_PORT ?= 8000
+# Default 8010 so port 8000 can stay free for other tools (e.g. Arango Cypher Transpiler).
+# Override: `make backend BACKEND_PORT=8000`
+BACKEND_PORT ?= 8010
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -38,7 +39,7 @@ infra-reset: ## Stop infrastructure and delete volumes
 # Backend
 # ---------------------------------------------------------------------------
 
-backend: ## Run backend dev server (port from BACKEND_PORT, default 8000; set in .env or CLI)
+backend: ## Run backend dev server (port from BACKEND_PORT, default 8010; set in .env or CLI)
 	cd backend && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port $(BACKEND_PORT)
 
 migrate: ## Apply pending database migrations
