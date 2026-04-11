@@ -9,6 +9,7 @@ import RunList from "@/components/pipeline/RunList";
 import RunMetrics from "@/components/pipeline/RunMetrics";
 import ErrorLog from "@/components/pipeline/ErrorLog";
 import RunTimeline from "@/components/pipeline/RunTimeline";
+import PipelineHistorySlider from "@/components/pipeline/PipelineHistorySlider";
 import { useExtractionSocket } from "@/lib/use-websocket";
 
 const AgentDAG = dynamic(() => import("@/components/pipeline/AgentDAG"), {
@@ -173,6 +174,15 @@ function PipelineMonitorInner() {
 
         {/* Main content area */}
         <div className="flex-1 flex flex-col min-h-[calc(100vh-73px)]">
+          {/* Pipeline history slider — always visible */}
+          <PipelineHistorySlider
+            onSelectRun={(id) => {
+              setSelectedRunId(id);
+              setSidebarOpen(false);
+            }}
+            selectedRunId={selectedRunId}
+          />
+
           {!selectedRunId ? (
             <div className="flex-1 flex items-center justify-center p-8">
               <div className="text-center">

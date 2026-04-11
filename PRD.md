@@ -1881,6 +1881,7 @@ The dashboard subscribes to WebSocket events per active run:
 | FR-12.8 | Paused pipeline notification | When pipeline reaches human-in-the-loop breakpoint, dashboard shows prominent call-to-action linking to curation dashboard for the staging graph |
 | FR-12.9 | Cost tracking | Aggregate LLM cost per run (tokens × price-per-token by model); cumulative cost per organization visible to admins |
 | FR-12.10 | ER and schema extraction monitoring | Same visual pattern applied to entity resolution runs and schema extraction runs (different agent DAGs, same status/metrics panels) |
+| FR-12.11 | Pipeline history timeline slider | A VCR-style slider across the top of the pipeline main content area that lets users scrub through extraction runs over time. Each tick represents an extraction run, ordered by `started_at`. Scrubbing selects the run and updates the DAG, metrics, and error panels. Play/pause auto-advances through runs chronologically. Users can observe how pipeline behavior (success/failure, duration, cost, entity counts) evolved over time. Reuses VCR visual language from §6.5 for consistency. Data source: `GET /api/v1/extraction/runs` (all runs, sorted by date). |
 
 **Graph Rendering:**
 

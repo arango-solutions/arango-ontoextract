@@ -17,6 +17,7 @@ import {
   formatOntologyHealthSummary,
 } from "@/lib/qualityReportDisplay";
 import type { StepStatus } from "@/types/pipeline";
+import { filterStepsByTimestamp } from "@/lib/filterStepsByTimestamp";
 import { getApiBaseUrl } from "@/lib/api-client";
 import type {
   OntologyRegistryEntry,
@@ -116,6 +117,7 @@ function WorkspacePageInner() {
 
   const [pipelineRunId, setPipelineRunId] = useState<string | null>(null);
   const [pipelineSteps, setPipelineSteps] = useState<Map<string, StepStatus>>(new Map());
+  const [vcrTimestamp, setVcrTimestamp] = useState<number | null>(null);
 
   useEffect(() => {
     if (!pipelineRunId) {
@@ -365,6 +367,7 @@ function WorkspacePageInner() {
 
   const handleSelectRun = useCallback((runId: string) => {
     setPipelineRunId(runId);
+    setVcrTimestamp(null);
     setInfoPanelItem(null);
   }, []);
 
@@ -845,7 +848,7 @@ function WorkspacePageInner() {
                 </div>
                 {/* DAG + Metrics with draggable vertical divider */}
                 <PipelineSplitPane
-                  top={<AgentDAG steps={pipelineSteps} />}
+                  top={<AgentDAG steps={filterStepsByTimestamp(pipelineSteps, vcrTimestamp)} />}
                   bottom={<RunMetrics runId={pipelineRunId} />}
                 />
               </div>
@@ -935,6 +938,7 @@ function WorkspacePageInner() {
             <div className="h-auto min-h-[56px] border-t border-gray-800 bg-[#16162a] px-4 py-2 flex-shrink-0">
               <VCRTimeline
                 ontologyId={selectedOntologyId}
+                onTimestampChange={setVcrTimestamp}
                 onVisibleEntitiesChange={setTimelineVisibleKeys}
               />
             </div>

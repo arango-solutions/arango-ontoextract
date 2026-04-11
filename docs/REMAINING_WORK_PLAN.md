@@ -12,7 +12,7 @@
 The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline, ontology editor, pipeline monitor, quality metrics, and multi-document support. This document details the remaining work required to achieve full PRD compliance and production readiness.
 
 **Completed:** ~78% of PRD requirements (§6.1–6.6, §6.10–6.13 incl. quality dashboard, most of §6.8, §7.2.1)
-**Remaining:** ~22% across 7 work streams, estimated 7–8 weeks total
+**Remaining:** ~22% across 7 work streams + 2 future streams, estimated 7–8 weeks (core) + TBD (Streams 8–9)
 
 **Recent completions (since v1.0 of this document):**
 - Multi-signal confidence scoring with 7 signals incl. LLM-as-Judge faithfulness + semantic validator
@@ -227,6 +227,32 @@ See `docs/adr/006-pgt-aligned-property-collections.md` for full design rationale
 
 ---
 
+### Stream 4b: Pipeline History Timeline Slider
+**PRD:** §6.12 FR-12.11
+**Duration:** 1 day
+**Priority:** P1 — extends existing pipeline monitor with temporal navigation
+**Dependencies:** None (pipeline monitor already complete)
+**Team Size:** 1 developer
+
+#### Objectives
+- Add a VCR-style timeline slider to the pipeline monitor that lets users scrub through extraction runs chronologically
+- Selecting a position on the slider auto-selects the corresponding run, updating the DAG, metrics, and error panels
+- Play/pause auto-advances through runs so users can watch pipeline evolution over time
+- Reuses visual language from the ontology VCR timeline (§6.5) for consistency
+
+#### Tasks
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| PH.1 | `PipelineHistorySlider` component | Frontend | 4h | VCR-style slider with play/pause/rewind/ff, speed control. Each tick = one extraction run ordered by `started_at`. Selecting a tick fires `onSelectRun(runId)`. Shows run status color, document name, and relative timestamp for the current position. |
+| PH.2 | Wire into pipeline page | Frontend | 1h | Mount `PipelineHistorySlider` above the DAG area in `/pipeline`. Slider `onSelectRun` syncs with the existing `selectedRunId` state. Sidebar `RunList` selection and slider selection stay in sync bidirectionally. |
+| PH.3 | Run summary strip | Frontend | 2h | Below the slider, show a compact summary of the selected run: status badge, duration, entity count, cost — so users get context without switching to the Metrics tab. |
+| PH.4 | Unit tests | Frontend | 2h | Tests for `PipelineHistorySlider`: renders runs as ticks, play/pause advances index, slider change fires callback, empty state, loading state. |
+
+**Exit Criteria:** Users can scrub through all extraction runs via a slider on the pipeline page. Play mode auto-advances through runs. Selecting a run on the slider updates the DAG/metrics/errors panels. Tests pass.
+
+---
+
 ### Stream 5: Schema Extraction from ArangoDB
 **PRD:** §6.9 FR-9.1–9.7
 **Duration:** 1 week
@@ -337,6 +363,54 @@ See `docs/adr/006-pgt-aligned-property-collections.md` for full design rationale
 | V.11 | Migrate editor page to Sigma.js | Frontend | 4h | Replace `GraphCanvas` usage in `/ontology/[id]/edit` with `SigmaGraphCanvas`. |
 
 **Exit Criteria:** All graph visualization uses Sigma.js/graphology. TopBraid-class editor panels available. Graphs with 1000+ nodes render smoothly.
+
+---
+
+### Stream 9: Unified Ontology Storage (Architecture Rethink)
+**PRD:** §5.1 (data model), §6.8 (import/export), §6.15 (imports & dependencies)
+**Duration:** TBD (needs analysis spike first)
+**Priority:** P1 (architectural — blocks multi-ontology querying, cross-ontology ER, and namespace management)
+**Dependencies:** Stream 0 (PGT alignment) should be complete first
+**Team Size:** 1 backend developer
+
+#### Problem Statement
+Currently each ontology is stored in its own named graph backed by **dedicated collections** (e.g. `ontology_import_abc123_classes`, `ontology_import_abc123_edges`). This leads to:
+- **Collection proliferation:** Every import/extraction creates new ArangoDB collections, hitting cluster limits in production.
+- **Cross-ontology queries require UNION over N collections** instead of a single filtered scan.
+- **No shared namespace/URI index:** Duplicate URIs across ontologies are invisible until ER runs.
+- **Import graph (§6.15) is hard to implement:** dependency edges between ontologies span collection boundaries.
+- **Backup/restore complexity:** Hundreds of small collections instead of a few large ones.
+
+#### Proposed Direction
+Move to a **fixed set of shared collections** (e.g. `ontology_classes`, `ontology_edges`, `ontology_properties`) where each document carries:
+- `ontology_id` — which ontology it belongs to
+- `namespace` — the URI namespace for grouping/filtering
+- Existing temporal fields (`created`, `expired`) for time-travel
+
+Ontology isolation switches from "separate collection" to "filter by `ontology_id`" (with a persistent index on that field). Named graphs can still be defined as filtered views over the shared collections if needed for ArangoDB Graph API compatibility.
+
+#### Analysis Tasks (Spike)
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| U.0 | Inventory current collection-per-ontology usage | Backend | 4h | Catalog every place that creates/references per-ontology collections (repos, migrations, graph definitions, AQL queries). |
+| U.1 | Design shared collection schema | Backend | 4h | Define the unified document schema with `ontology_id`, `namespace`, indexes. Write ADR. |
+| U.2 | Migration strategy | Backend | 4h | Plan data migration from N collection pairs → shared collections. Must be reversible. |
+| U.3 | Performance benchmarking | Backend | 4h | Compare query performance: current (small dedicated collections) vs. proposed (large shared collection + `ontology_id` index) at 10, 50, 100 ontologies. |
+| U.4 | Impact on temporal queries | Backend | 2h | Verify that time-travel queries still perform well with the extra `ontology_id` filter dimension. |
+
+#### Implementation Tasks (Post-Spike, if approved)
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| U.5 | Create shared collections + migration | Backend | 8h | New migration creating `ontology_classes`, `ontology_edges`, `ontology_properties` with composite indexes. Data migration script. |
+| U.6 | Update repositories | Backend | 8h | Rewrite class/edge/property repos to use shared collections with `ontology_id` filter instead of dynamic collection names. |
+| U.7 | Update extraction pipeline | Backend | 4h | Pipeline writes to shared collections with correct `ontology_id`. |
+| U.8 | Update import/export | Backend | 4h | OWL/Turtle import targets shared collections. Export filters by `ontology_id`. |
+| U.9 | Namespace index + cross-ontology queries | Backend | 4h | ArangoSearch view or persistent index on `namespace` + `uri` for cross-ontology dedup and browsing. |
+| U.10 | Update tests | Backend | 4h | All affected tests updated for shared-collection access pattern. |
+
+**Exit Criteria:** All ontology data lives in shared collections. Cross-ontology queries use simple filters. Collection count is O(1) not O(N). All existing tests pass.
 
 ---
 
