@@ -480,8 +480,11 @@ interface OntologyClassEntry {
 
 interface OntologyEdgeEntry {
   _key: string;
+  _from?: string;
+  _to?: string;
   label?: string;
   uri?: string;
+  edge_type?: string;
   source_label?: string;
   target_label?: string;
 }
@@ -540,18 +543,43 @@ function OntologyItem({
     if (!edgesOpen || edges.length > 0) return;
     let cancelled = false;
     setEdgesLoading(true);
-    api
-      .get<{ data: OntologyEdgeEntry[] }>(`/api/v1/ontology/${ont._key}/edges`)
-      .then((res) => {
-        if (!cancelled) {
-          const list = Array.isArray(res) ? res : res.data;
-          setEdges(Array.isArray(list) ? list : []);
+
+    const classesPromise = classes.length > 0
+      ? Promise.resolve(classes)
+      : api.get<{ data: OntologyClassEntry[] }>(`/api/v1/ontology/${ont._key}/classes`)
+          .then((res) => {
+            const list = Array.isArray(res) ? res : res.data;
+            const arr = Array.isArray(list) ? list : [];
+            if (!cancelled && classes.length === 0) setClasses(arr);
+            return arr;
+          });
+
+    Promise.all([
+      classesPromise,
+      api.get<{ data: OntologyEdgeEntry[] }>(`/api/v1/ontology/${ont._key}/edges`),
+    ])
+      .then(([clsList, edgeRes]) => {
+        if (cancelled) return;
+        const rawEdges = Array.isArray(edgeRes) ? edgeRes : edgeRes.data;
+        const edgeList = Array.isArray(rawEdges) ? rawEdges : [];
+
+        const classById = new Map<string, string>();
+        for (const c of clsList) {
+          classById.set(`ontology_classes/${c._key}`, c.label ?? c._key);
+          if (c.uri) classById.set(c.uri, c.label ?? c._key);
         }
+
+        const enriched = edgeList.map((e) => ({
+          ...e,
+          source_label: e.source_label ?? (e._from ? classById.get(e._from) : undefined),
+          target_label: e.target_label ?? (e._to ? classById.get(e._to) : undefined),
+        }));
+        setEdges(enriched);
       })
       .catch(() => {})
       .finally(() => { if (!cancelled) setEdgesLoading(false); });
     return () => { cancelled = true; };
-  }, [edgesOpen, edges.length, ont._key]);
+  }, [edgesOpen, edges.length, ont._key, classes]);
 
   return (
     <div>
@@ -639,27 +667,42 @@ function OntologyItem({
               {!edgesLoading && edges.length === 0 && (
                 <p className="pl-16 pr-3 py-1 text-[10px] text-gray-400 italic">No relations</p>
               )}
-              {edges.map((edge) => (
-                <div
-                  key={edge._key}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    onContextMenu(e, "edge", edge);
-                  }}
-                  className="w-full text-left pl-14 pr-3 py-1 text-[10px] flex items-center gap-1.5 hover:bg-gray-50 transition-colors cursor-default"
-                  title={edge.uri}
-                >
-                  <span className="text-purple-400 flex-shrink-0">↔</span>
-                  <span className="truncate text-gray-700">
-                    {edge.label ?? edge._key}
-                  </span>
-                  {edge.source_label && edge.target_label && (
-                    <span className="text-gray-400 truncate ml-auto text-[9px]">
-                      {edge.source_label} → {edge.target_label}
+              {edges.map((edge) => {
+                const edgeTypeLabels: Record<string, string> = {
+                  subclass_of: "subclass of",
+                  rdfs_domain: "domain",
+                  rdfs_range_class: "range",
+                  equivalent_class: "equivalent",
+                  has_property: "has property",
+                  related_to: "related to",
+                };
+                const typeLabel = edgeTypeLabels[edge.edge_type ?? ""] ?? edge.edge_type?.replace(/_/g, " ") ?? "";
+                const src = edge.source_label ?? edge._from?.split("/").pop()?.replace(/_/g, " ") ?? "";
+                const tgt = edge.target_label ?? edge._to?.split("/").pop()?.replace(/_/g, " ") ?? "";
+                const displayLabel = edge.label || (src && tgt ? `${src} → ${tgt}` : edge._key);
+
+                return (
+                  <div
+                    key={edge._key}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      onContextMenu(e, "edge", edge);
+                    }}
+                    className="w-full text-left pl-14 pr-3 py-1 text-[10px] flex items-center gap-1.5 hover:bg-gray-50 transition-colors cursor-default"
+                    title={`${typeLabel}: ${src} → ${tgt}`}
+                  >
+                    <span className="text-purple-400 flex-shrink-0">↔</span>
+                    <span className="truncate text-gray-700 flex-1">
+                      {displayLabel}
                     </span>
-                  )}
-                </div>
-              ))}
+                    {typeLabel && (
+                      <span className="text-gray-400 flex-shrink-0 text-[8px]">
+                        {typeLabel}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

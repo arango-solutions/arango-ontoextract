@@ -555,6 +555,8 @@ export default function SigmaCanvas({
       typeof ResizeObserver !== "undefined"
         ? new ResizeObserver(() => {
             if (killed) return;
+            const el = containerRef.current;
+            if (!el || el.offsetWidth === 0 || el.offsetHeight === 0) return;
             renderer.resize();
             renderer.refresh();
             fitCameraToGraph(renderer);
