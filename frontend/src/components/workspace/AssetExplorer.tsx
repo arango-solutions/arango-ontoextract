@@ -351,38 +351,14 @@ export default function AssetExplorer({
             <EmptyRow label="No ontologies" />
           )}
           {filteredOnt.map((ont) => (
-            <button
+            <OntologyItem
               key={ont._key}
-              onClick={() => onSelectOntology(ont._key)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                onContextMenu(e, "ontology", ont);
-              }}
-              className={`w-full text-left pl-7 pr-3 py-1.5 text-xs flex items-center gap-2 transition-colors group
-                ${selectedOntologyId === ont._key ? "bg-blue-50 text-blue-800" : "hover:bg-gray-50"}
-              `}
-            >
-              <StatusDot status={ont.status} />
-              <span className="truncate flex-1 font-medium group-hover:text-gray-900">
-                {ontologyDisplayName(ont)}
-              </span>
-              {ont.current_release_version ? (
-                <span
-                  className="text-[10px] text-emerald-700 font-medium flex-shrink-0"
-                  title={
-                    ont.current_release_at
-                      ? `Released ${ont.current_release_at}`
-                      : "Released version"
-                  }
-                >
-                  v{ont.current_release_version}
-                </span>
-              ) : null}
-              <span className="text-[10px] text-gray-400 flex-shrink-0">
-                {ont.class_count}c
-              </span>
-              <HealthBadge score={ont.health_score} />
-            </button>
+              ont={ont}
+              displayName={ontologyDisplayName(ont)}
+              isSelected={selectedOntologyId === ont._key}
+              onSelect={() => onSelectOntology(ont._key)}
+              onContextMenu={onContextMenu}
+            />
           ))}
         </Section>
 
@@ -489,6 +465,299 @@ function ErrorRow({ message, onRetry }: { message: string; onRetry: () => void }
 function EmptyRow({ label }: { label: string }) {
   return (
     <p className="px-3 py-2 text-xs text-gray-400 italic">{label}</p>
+  );
+}
+
+/* ── Ontology tree ──────────────────────────────────── */
+
+interface OntologyClassEntry {
+  _key: string;
+  label?: string;
+  uri?: string;
+  status?: string;
+  confidence?: number;
+}
+
+interface OntologyEdgeEntry {
+  _key: string;
+  label?: string;
+  uri?: string;
+  source_label?: string;
+  target_label?: string;
+}
+
+interface ClassPropertyEntry {
+  _key: string;
+  label?: string;
+  range?: string;
+  range_datatype?: string;
+  target_class?: { label?: string };
+  status?: string;
+  confidence?: number;
+}
+
+function OntologyItem({
+  ont,
+  displayName,
+  isSelected,
+  onSelect,
+  onContextMenu,
+}: {
+  ont: OntologyRegistryEntry;
+  displayName: string;
+  isSelected: boolean;
+  onSelect: () => void;
+  onContextMenu: (e: React.MouseEvent, type: string, data: unknown) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [classesOpen, setClassesOpen] = useState(false);
+  const [edgesOpen, setEdgesOpen] = useState(false);
+
+  const [classes, setClasses] = useState<OntologyClassEntry[]>([]);
+  const [classesLoading, setClassesLoading] = useState(false);
+
+  const [edges, setEdges] = useState<OntologyEdgeEntry[]>([]);
+  const [edgesLoading, setEdgesLoading] = useState(false);
+
+  useEffect(() => {
+    if (!classesOpen || classes.length > 0) return;
+    let cancelled = false;
+    setClassesLoading(true);
+    api
+      .get<{ data: OntologyClassEntry[] }>(`/api/v1/ontology/${ont._key}/classes`)
+      .then((res) => {
+        if (!cancelled) {
+          const list = Array.isArray(res) ? res : res.data;
+          setClasses(Array.isArray(list) ? list : []);
+        }
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setClassesLoading(false); });
+    return () => { cancelled = true; };
+  }, [classesOpen, classes.length, ont._key]);
+
+  useEffect(() => {
+    if (!edgesOpen || edges.length > 0) return;
+    let cancelled = false;
+    setEdgesLoading(true);
+    api
+      .get<{ data: OntologyEdgeEntry[] }>(`/api/v1/ontology/${ont._key}/edges`)
+      .then((res) => {
+        if (!cancelled) {
+          const list = Array.isArray(res) ? res : res.data;
+          setEdges(Array.isArray(list) ? list : []);
+        }
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setEdgesLoading(false); });
+    return () => { cancelled = true; };
+  }, [edgesOpen, edges.length, ont._key]);
+
+  return (
+    <div>
+      {/* Ontology row */}
+      <button
+        onClick={() => {
+          setExpanded((v) => !v);
+          onSelect();
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onContextMenu(e, "ontology", ont);
+        }}
+        className={`w-full text-left pl-5 pr-3 py-1.5 text-xs flex items-center gap-1.5 transition-colors group
+          ${isSelected ? "bg-blue-50 text-blue-800" : "hover:bg-gray-50"}
+        `}
+      >
+        <span className="text-[10px] text-gray-400 w-3 text-center flex-shrink-0">
+          {expanded ? "▼" : "▶"}
+        </span>
+        <StatusDot status={ont.status} />
+        <span className="truncate flex-1 font-medium group-hover:text-gray-900">
+          {displayName}
+        </span>
+        {ont.current_release_version ? (
+          <span className="text-[10px] text-emerald-700 font-medium flex-shrink-0">
+            v{ont.current_release_version}
+          </span>
+        ) : null}
+        <span className="text-[10px] text-gray-400 flex-shrink-0">
+          {ont.class_count}c
+        </span>
+        <HealthBadge score={ont.health_score} />
+      </button>
+
+      {/* Expanded: Classes + Relations sub-sections */}
+      {expanded && (
+        <div>
+          {/* Classes sub-section */}
+          <button
+            onClick={() => setClassesOpen((v) => !v)}
+            className="w-full text-left pl-10 pr-3 py-1 text-[11px] flex items-center gap-1.5 text-gray-500 hover:bg-gray-50 transition-colors font-medium"
+          >
+            <span className="text-[9px] text-gray-400 w-3 text-center">
+              {classesOpen ? "▼" : "▶"}
+            </span>
+            <span>Classes</span>
+            <span className="text-gray-400 ml-auto">{ont.class_count}</span>
+          </button>
+          {classesOpen && (
+            <div>
+              {classesLoading && (
+                <p className="pl-16 pr-3 py-1 text-[10px] text-gray-400 animate-pulse">Loading…</p>
+              )}
+              {!classesLoading && classes.length === 0 && (
+                <p className="pl-16 pr-3 py-1 text-[10px] text-gray-400 italic">No classes</p>
+              )}
+              {classes.map((cls) => (
+                <ClassItem
+                  key={cls._key}
+                  cls={cls}
+                  ontologyId={ont._key}
+                  onContextMenu={onContextMenu}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Relations sub-section */}
+          <button
+            onClick={() => setEdgesOpen((v) => !v)}
+            className="w-full text-left pl-10 pr-3 py-1 text-[11px] flex items-center gap-1.5 text-gray-500 hover:bg-gray-50 transition-colors font-medium"
+          >
+            <span className="text-[9px] text-gray-400 w-3 text-center">
+              {edgesOpen ? "▼" : "▶"}
+            </span>
+            <span>Relations</span>
+            <span className="text-gray-400 ml-auto">{ont.edge_count}</span>
+          </button>
+          {edgesOpen && (
+            <div>
+              {edgesLoading && (
+                <p className="pl-16 pr-3 py-1 text-[10px] text-gray-400 animate-pulse">Loading…</p>
+              )}
+              {!edgesLoading && edges.length === 0 && (
+                <p className="pl-16 pr-3 py-1 text-[10px] text-gray-400 italic">No relations</p>
+              )}
+              {edges.map((edge) => (
+                <div
+                  key={edge._key}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    onContextMenu(e, "edge", edge);
+                  }}
+                  className="w-full text-left pl-14 pr-3 py-1 text-[10px] flex items-center gap-1.5 hover:bg-gray-50 transition-colors cursor-default"
+                  title={edge.uri}
+                >
+                  <span className="text-purple-400 flex-shrink-0">↔</span>
+                  <span className="truncate text-gray-700">
+                    {edge.label ?? edge._key}
+                  </span>
+                  {edge.source_label && edge.target_label && (
+                    <span className="text-gray-400 truncate ml-auto text-[9px]">
+                      {edge.source_label} → {edge.target_label}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClassItem({
+  cls,
+  ontologyId,
+  onContextMenu,
+}: {
+  cls: OntologyClassEntry;
+  ontologyId: string;
+  onContextMenu: (e: React.MouseEvent, type: string, data: unknown) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [properties, setProperties] = useState<ClassPropertyEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!expanded || properties.length > 0) return;
+    let cancelled = false;
+    setLoading(true);
+    api
+      .get<Record<string, unknown>>(`/api/v1/ontology/${ontologyId}/classes/${cls._key}`)
+      .then((res) => {
+        if (cancelled) return;
+        const attrs = (res.attributes ?? []) as ClassPropertyEntry[];
+        const rels = (res.relationships ?? []) as ClassPropertyEntry[];
+        const legacy = (res.legacy_properties ?? []) as ClassPropertyEntry[];
+        setProperties([...attrs, ...rels, ...legacy]);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [expanded, properties.length, ontologyId, cls._key]);
+
+  const statusColor: Record<string, string> = {
+    approved: "text-green-600",
+    rejected: "text-red-500",
+    pending: "text-amber-500",
+  };
+
+  return (
+    <div>
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onContextMenu(e, "class", { ...cls, ontology_id: ontologyId });
+        }}
+        className="w-full text-left pl-14 pr-3 py-1 text-[10px] flex items-center gap-1.5 hover:bg-gray-50 transition-colors group"
+      >
+        <span className="text-[9px] text-gray-400 w-3 text-center flex-shrink-0">
+          {expanded ? "▼" : "▶"}
+        </span>
+        <span className={`font-medium truncate flex-1 ${statusColor[cls.status ?? ""] ?? "text-gray-700"} group-hover:text-gray-900`}>
+          {cls.label ?? cls._key}
+        </span>
+        {cls.confidence != null && (
+          <span className="text-[9px] text-gray-400 flex-shrink-0">
+            {Math.round(cls.confidence * 100)}%
+          </span>
+        )}
+      </button>
+
+      {expanded && (
+        <div>
+          {loading && (
+            <p className="pl-20 pr-3 py-0.5 text-[9px] text-gray-400 animate-pulse">Loading…</p>
+          )}
+          {!loading && properties.length === 0 && (
+            <p className="pl-20 pr-3 py-0.5 text-[9px] text-gray-400 italic">No properties</p>
+          )}
+          {properties.map((prop, idx) => (
+            <div
+              key={prop._key ?? idx}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                onContextMenu(e, "property", { ...prop, ontology_id: ontologyId, class_key: cls._key });
+              }}
+              className="w-full text-left pl-20 pr-3 py-0.5 text-[9px] flex items-center gap-1.5 hover:bg-gray-50 transition-colors cursor-default group"
+              title={prop.range_datatype ?? prop.range ?? prop.target_class?.label}
+            >
+              <span className="text-gray-400 flex-shrink-0">·</span>
+              <span className="truncate text-gray-600 group-hover:text-gray-800">
+                {prop.label ?? prop._key}
+              </span>
+              <span className="text-gray-400 truncate ml-auto text-[8px] max-w-[80px]">
+                {prop.target_class?.label ?? prop.range_datatype?.replace(/.*#/, "") ?? prop.range?.replace(/.*#/, "") ?? ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
