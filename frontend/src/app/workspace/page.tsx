@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, Suspense } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import LensToolbar, { type LensType } from "@/components/workspace/LensToolbar";
@@ -18,6 +18,7 @@ import {
 } from "@/lib/qualityReportDisplay";
 import type { StepStatus } from "@/types/pipeline";
 import { filterStepsByTimestamp } from "@/lib/filterStepsByTimestamp";
+import { buildStepTimelineEvents } from "@/lib/buildStepTimelineEvents";
 import { getApiBaseUrl } from "@/lib/api-client";
 import type {
   OntologyRegistryEntry,
@@ -118,6 +119,11 @@ function WorkspacePageInner() {
   const [pipelineRunId, setPipelineRunId] = useState<string | null>(null);
   const [pipelineSteps, setPipelineSteps] = useState<Map<string, StepStatus>>(new Map());
   const [vcrTimestamp, setVcrTimestamp] = useState<number | null>(null);
+
+  const stepTimelineEvents = useMemo(
+    () => (pipelineRunId ? buildStepTimelineEvents(pipelineSteps) : []),
+    [pipelineRunId, pipelineSteps],
+  );
 
   useEffect(() => {
     if (!pipelineRunId) {
@@ -949,6 +955,7 @@ function WorkspacePageInner() {
                 ontologyId={selectedOntologyId}
                 onTimestampChange={setVcrTimestamp}
                 onVisibleEntitiesChange={setTimelineVisibleKeys}
+                injectedEvents={stepTimelineEvents}
               />
             </div>
           )}

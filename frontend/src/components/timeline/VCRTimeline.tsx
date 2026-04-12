@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { api, ApiError } from "@/lib/api-client";
 import type { TimelineEvent } from "@/types/timeline";
 
@@ -8,6 +8,8 @@ interface VCRTimelineProps {
   ontologyId: string;
   onTimestampChange?: (timestamp: number) => void;
   onVisibleEntitiesChange?: (entityKeys: Set<string>) => void;
+  /** Extra events (e.g. pipeline step boundaries) merged into the timeline. */
+  injectedEvents?: TimelineEvent[];
 }
 
 const PLAYBACK_SPEEDS = [0.5, 1, 2, 4];
@@ -30,8 +32,9 @@ export default function VCRTimeline({
   ontologyId,
   onTimestampChange,
   onVisibleEntitiesChange,
+  injectedEvents,
 }: VCRTimelineProps) {
-  const [events, setEvents] = useState<TimelineEvent[]>([]);
+  const [fetchedEvents, setFetchedEvents] = useState<TimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,6 +45,19 @@ export default function VCRTimeline({
 
   const speed = PLAYBACK_SPEEDS[speedIdx];
 
+  const sortByTimestamp = useCallback((list: TimelineEvent[]): TimelineEvent[] => {
+    return [...list].sort((a, b) => {
+      const ta = typeof a.timestamp === "number" ? a.timestamp : new Date(a.timestamp).getTime() / 1000;
+      const tb = typeof b.timestamp === "number" ? b.timestamp : new Date(b.timestamp).getTime() / 1000;
+      return ta - tb;
+    });
+  }, []);
+
+  const events = useMemo(() => {
+    if (!injectedEvents || injectedEvents.length === 0) return fetchedEvents;
+    return sortByTimestamp([...fetchedEvents, ...injectedEvents]);
+  }, [fetchedEvents, injectedEvents, sortByTimestamp]);
+
   const fetchTimeline = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -50,17 +66,7 @@ export default function VCRTimeline({
         `/api/v1/ontology/${ontologyId}/timeline`,
       );
       const raw: TimelineEvent[] = Array.isArray(res) ? res : (res.data ?? []);
-      const sorted = raw.sort(
-        (a, b) => {
-          const ta = typeof a.timestamp === "number" ? a.timestamp : new Date(a.timestamp).getTime() / 1000;
-          const tb = typeof b.timestamp === "number" ? b.timestamp : new Date(b.timestamp).getTime() / 1000;
-          return ta - tb;
-        },
-      );
-      setEvents(sorted);
-      if (sorted.length > 0) {
-        setCurrentIndex(sorted.length - 1);
-      }
+      setFetchedEvents(sortByTimestamp(raw));
     } catch (err) {
       setError(
         err instanceof ApiError
@@ -70,11 +76,22 @@ export default function VCRTimeline({
     } finally {
       setLoading(false);
     }
-  }, [ontologyId]);
+  }, [ontologyId, sortByTimestamp]);
 
   useEffect(() => {
     fetchTimeline();
   }, [fetchTimeline]);
+
+  const prevEventsLenRef = useRef(0);
+  useEffect(() => {
+    if (events.length > 0 && prevEventsLenRef.current === 0) {
+      setCurrentIndex(events.length - 1);
+    }
+    if (currentIndex >= events.length && events.length > 0) {
+      setCurrentIndex(events.length - 1);
+    }
+    prevEventsLenRef.current = events.length;
+  }, [events.length, currentIndex]);
 
   useEffect(() => {
     if (events.length > 0 && events[currentIndex]) {

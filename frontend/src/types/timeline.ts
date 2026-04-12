@@ -7,7 +7,9 @@ export type TimelineEventType =
   | "rejected"
   | "promoted"
   | "merged"
-  | "reverted";
+  | "reverted"
+  | "step_started"
+  | "step_completed";
 
 export interface TimelineEvent {
   timestamp: number;
