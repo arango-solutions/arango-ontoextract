@@ -15,8 +15,19 @@ import "reactflow/dist/style.css";
 import type { StepStatus, StepStatusValue } from "@/types/pipeline";
 import { PIPELINE_STEPS, STEP_LABELS, type PipelineStep } from "@/types/pipeline";
 
+export interface AgentDAGApi {
+  fitView: () => void;
+  centerView: () => void;
+}
+
 interface AgentDAGProps {
   steps: Map<string, StepStatus>;
+  onContextMenu?: (
+    e: React.MouseEvent,
+    type: "step" | "pipeline_canvas",
+    data?: Record<string, unknown>,
+  ) => void;
+  onApi?: (api: AgentDAGApi | null) => void;
 }
 
 const STATUS_COLORS: Record<StepStatusValue, string> = {
@@ -134,7 +145,7 @@ const PIPELINE_EDGES: [PipelineStep, PipelineStep][] = [
   ["entity_resolution_agent", "pre_curation_filter"],
 ];
 
-export default function AgentDAG({ steps }: AgentDAGProps) {
+export default function AgentDAG({ steps, onContextMenu, onApi }: AgentDAGProps) {
   const { nodes, edges } = useMemo(() => {
     const flowNodes: Node<AgentNodeData>[] = PIPELINE_TOPOLOGY.map((pos) => {
       const stepStatus = steps.get(pos.id) ?? { status: "pending" as const };
@@ -169,7 +180,31 @@ export default function AgentDAG({ steps }: AgentDAGProps) {
   const onInit = useCallback((instance: ReactFlowInstance) => {
     rfInstance.current = instance;
     setTimeout(() => instance.fitView({ padding: 0.15 }), 50);
-  }, []);
+    onApi?.({
+      fitView: () => instance.fitView({ padding: 0.15 }),
+      centerView: () => instance.fitView({ padding: 0.3 }),
+    });
+  }, [onApi]);
+
+  const handleNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: Node<AgentNodeData>) => {
+      event.preventDefault();
+      onContextMenu?.(event, "step", {
+        stepKey: node.data.stepKey,
+        label: node.data.label,
+        ...node.data.stepStatus,
+      });
+    },
+    [onContextMenu],
+  );
+
+  const handlePaneContextMenu = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault();
+      onContextMenu?.(event, "pipeline_canvas", {});
+    },
+    [onContextMenu],
+  );
 
   useEffect(() => {
     if (rfInstance.current) {
@@ -184,6 +219,8 @@ export default function AgentDAG({ steps }: AgentDAGProps) {
         edges={edges}
         nodeTypes={nodeTypes}
         onInit={onInit}
+        onNodeContextMenu={handleNodeContextMenu}
+        onPaneContextMenu={handlePaneContextMenu}
         fitView
         fitViewOptions={{ padding: 0.15 }}
         panOnDrag

@@ -17,6 +17,7 @@ import {
   formatOntologyHealthSummary,
 } from "@/lib/qualityReportDisplay";
 import type { StepStatus } from "@/types/pipeline";
+import type { AgentDAGApi } from "@/components/pipeline/AgentDAG";
 import { filterStepsByTimestamp } from "@/lib/filterStepsByTimestamp";
 import { buildStepTimelineEvents } from "@/lib/buildStepTimelineEvents";
 import { getApiBaseUrl } from "@/lib/api-client";
@@ -197,6 +198,7 @@ function WorkspacePageInner() {
   const startXRef = useRef(0);
   const startWidthRef = useRef(DEFAULT_PANEL_WIDTH);
   const viewportApiRef = useRef<SigmaViewportApi | null>(null);
+  const dagApiRef = useRef<AgentDAGApi | null>(null);
   const didReadUrlParam = useRef(false);
 
   useEffect(() => {
@@ -400,6 +402,28 @@ function WorkspacePageInner() {
     },
     [],
   );
+
+  const handleDagContextMenu = useCallback(
+    (e: React.MouseEvent, type: "step" | "pipeline_canvas", data?: Record<string, unknown>) => {
+      setContextMenu({ x: e.clientX, y: e.clientY, type, data: data ?? {} });
+    },
+    [],
+  );
+
+  const handleDagApi = useCallback((a: AgentDAGApi | null) => {
+    dagApiRef.current = a;
+  }, []);
+
+  const deleteRun = useCallback(async (key: string) => {
+    try {
+      await api.del(`/api/v1/extraction/runs/${key}`);
+      if (pipelineRunId === key) {
+        setPipelineRunId(null);
+      }
+    } catch (err) {
+      console.error("Failed to delete run", err);
+    }
+  }, [pipelineRunId]);
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
@@ -799,6 +823,159 @@ function WorkspacePageInner() {
             },
           },
         ];
+      case "step": {
+        const stepKey = data.stepKey as string;
+        const stepLabel = data.label as string;
+        const stepStatus = data.status as string;
+        const stepError = data.error as string | undefined;
+        const stepStartedAt = data.startedAt as string | undefined;
+        const stepCompletedAt = data.completedAt as string | undefined;
+        const stepData = data.data as Record<string, unknown> | undefined;
+        const durationMs = stepData?.duration_ms as number | undefined;
+
+        const items: ContextMenuItem[] = [
+          {
+            label: "View Step Details", icon: "🔍",
+            onClick: () => {
+              setInfoPanelItem({
+                type: "run",
+                data: {
+                  _key: `step:${stepKey}`,
+                  name: stepLabel,
+                  status: stepStatus,
+                  started_at: stepStartedAt,
+                  completed_at: stepCompletedAt,
+                  duration_ms: durationMs,
+                  ...stepData,
+                },
+              });
+            },
+          },
+        ];
+
+        if (stepError) {
+          items.push({
+            label: "Copy Error", icon: "📋",
+            onClick: () => {
+              navigator.clipboard.writeText(stepError).catch(() => {});
+            },
+          });
+        }
+
+        items.push({ label: "sep0", separator: true });
+
+        if (pipelineRunId) {
+          items.push({
+            label: "View Run Results", icon: "📊",
+            onClick: async () => {
+              try {
+                const results = await api.get<Record<string, unknown>>(
+                  `/api/v1/extraction/runs/${pipelineRunId}/results`,
+                );
+                setInfoPanelItem({
+                  type: "run",
+                  data: {
+                    _key: pipelineRunId,
+                    name: `Results — ${stepLabel}`,
+                    ...results,
+                  },
+                });
+              } catch (err) {
+                console.error("Failed to load run results", err);
+              }
+            },
+          });
+
+          items.push({ label: "sep1", separator: true });
+
+          items.push({
+            label: "Retry Run", icon: "🔄",
+            disabled: stepStatus !== "failed",
+            onClick: () => { if (pipelineRunId) retryRun(pipelineRunId); },
+          });
+        }
+
+        return items;
+      }
+
+      case "pipeline_canvas": {
+        const items: ContextMenuItem[] = [
+          {
+            label: "Fit All Nodes", icon: "⬜",
+            onClick: () => {
+              closeContextMenu();
+              dagApiRef.current?.fitView();
+            },
+          },
+          {
+            label: "Center View", icon: "🎯",
+            onClick: () => {
+              closeContextMenu();
+              dagApiRef.current?.centerView();
+            },
+          },
+        ];
+
+        if (pipelineRunId) {
+          items.push({ label: "sep0", separator: true });
+          items.push({
+            label: "Copy Run ID", icon: "📋",
+            onClick: () => {
+              if (pipelineRunId) {
+                navigator.clipboard.writeText(pipelineRunId).catch(() => {});
+              }
+            },
+          });
+          items.push({
+            label: "View Run Info", icon: "ℹ️",
+            onClick: async () => {
+              try {
+                const res = await fetch(`${getApiBaseUrl()}/api/v1/extraction/runs/${pipelineRunId}`);
+                if (res.ok) {
+                  const run = await res.json();
+                  setInfoPanelItem({ type: "run", data: run });
+                }
+              } catch (err) {
+                console.error("Failed to load run info", err);
+              }
+            },
+          });
+          items.push({
+            label: "View Extracted Entities", icon: "📊",
+            onClick: async () => {
+              try {
+                const results = await api.get<Record<string, unknown>>(
+                  `/api/v1/extraction/runs/${pipelineRunId}/results`,
+                );
+                setInfoPanelItem({
+                  type: "run",
+                  data: { _key: pipelineRunId, name: "Extracted Entities", ...results },
+                });
+              } catch (err) {
+                console.error("Failed to load run results", err);
+              }
+            },
+          });
+
+          items.push({ label: "sep1", separator: true });
+
+          items.push({
+            label: "Retry Run", icon: "🔄",
+            onClick: () => { if (pipelineRunId) retryRun(pipelineRunId); },
+          });
+          items.push({
+            label: "Delete Run", icon: "🗑️", danger: true,
+            onClick: () => {
+              if (pipelineRunId && confirm(`Delete run ${pipelineRunId}? This cannot be undone.`)) {
+                deleteRun(pipelineRunId);
+              }
+            },
+          });
+        }
+
+        return items;
+      }
+
       default:
         return [];
     }
@@ -863,7 +1040,13 @@ function WorkspacePageInner() {
                 </div>
                 {/* DAG + Metrics with draggable vertical divider */}
                 <PipelineSplitPane
-                  top={<AgentDAG steps={filterStepsByTimestamp(pipelineSteps, vcrTimestamp)} />}
+                  top={
+                    <AgentDAG
+                      steps={filterStepsByTimestamp(pipelineSteps, vcrTimestamp)}
+                      onContextMenu={handleDagContextMenu}
+                      onApi={handleDagApi}
+                    />
+                  }
                   bottom={<RunMetrics runId={pipelineRunId} />}
                 />
               </div>
