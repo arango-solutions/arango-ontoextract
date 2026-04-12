@@ -189,9 +189,9 @@ export default function VCRTimeline({
     );
   }
 
-  const currentEvent = events[currentIndex];
-  const minTs = events[0].timestamp;
-  const maxTs = events[events.length - 1].timestamp;
+  const safeIndex = Math.min(currentIndex, events.length - 1);
+  const currentEvent = events[safeIndex];
+  if (!currentEvent) return null;
 
   return (
     <div className="space-y-3" data-testid="vcr-timeline">
@@ -232,7 +232,7 @@ export default function VCRTimeline({
             type="range"
             min={0}
             max={events.length - 1}
-            value={currentIndex}
+            value={safeIndex}
             onChange={handleSliderChange}
             className="w-full h-2 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-600"
             data-testid="timeline-slider"
@@ -243,7 +243,7 @@ export default function VCRTimeline({
               events.map((_, i) => (
                 <span
                   key={i}
-                  className={`inline-block w-0.5 h-1.5 rounded-full ${i === currentIndex ? "bg-blue-600" : "bg-gray-300"}`}
+                  className={`inline-block w-0.5 h-1.5 rounded-full ${i === safeIndex ? "bg-blue-600" : "bg-gray-300"}`}
                 />
               ))}
           </div>
@@ -275,7 +275,7 @@ export default function VCRTimeline({
         <span>{currentEvent.event_type.replace(/_/g, " ")}</span>
         <span className="text-gray-400">in {currentEvent.collection}</span>
         <span className="ml-auto text-gray-400">
-          {currentIndex + 1} / {events.length}
+          {safeIndex + 1} / {events.length}
         </span>
       </div>
     </div>

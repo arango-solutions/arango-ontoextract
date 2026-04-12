@@ -1210,6 +1210,14 @@ function AssetInfoPanel({
   });
   const { className: dragHandleClassName, ...dragHandleEvents } = dragHandleProps;
 
+  const extractedClasses = Array.isArray(data.classes) ? (data.classes as Record<string, unknown>[]) : [];
+  const extractedProperties = Array.isArray(data.properties) ? (data.properties as Record<string, unknown>[]) : [];
+  const hasExtractedEntities = extractedClasses.length > 0 || extractedProperties.length > 0;
+
+  const [activeTab, setActiveTab] = useState<"info" | "entities">(
+    hasExtractedEntities ? "entities" : "info",
+  );
+
   const titleMap: Record<string, string> = {
     document: "Document",
     ontology: "Ontology",
@@ -1256,8 +1264,8 @@ function AssetInfoPanel({
       { label: "Status", value: data.status as string },
       { label: "Model", value: data.model as string },
       { label: "Duration", value: duration },
-      { label: "Classes Extracted", value: data.classes_extracted as number ?? stats.classes_extracted as number },
-      { label: "Properties Extracted", value: data.properties_extracted as number ?? stats.properties_extracted as number },
+      { label: "Classes Extracted", value: extractedClasses.length || (data.classes_extracted as number ?? stats.classes_extracted as number) },
+      { label: "Properties Extracted", value: extractedProperties.length || (data.properties_extracted as number ?? stats.properties_extracted as number) },
       { label: "Total Tokens", value: totalTokens },
       { label: "Estimated Cost", value: stats.estimated_cost != null ? `$${(stats.estimated_cost as number).toFixed(4)}` : undefined },
       { label: "Agreement Rate", value: stats.pass_agreement_rate != null ? `${((stats.pass_agreement_rate as number) * 100).toFixed(1)}%` : undefined },
@@ -1298,7 +1306,38 @@ function AssetInfoPanel({
         </button>
       </div>
 
+      {/* Tab bar for run panels with extracted entities */}
+      {type === "run" && hasExtractedEntities && (
+        <div className="flex border-b border-gray-100 px-4 flex-shrink-0">
+          <button
+            onClick={() => setActiveTab("info")}
+            className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+              activeTab === "info"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            Run Info
+          </button>
+          <button
+            onClick={() => setActiveTab("entities")}
+            className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+              activeTab === "entities"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            Extracted Entities ({extractedClasses.length + extractedProperties.length})
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {/* Entities tab */}
+        {activeTab === "entities" && hasExtractedEntities ? (
+          <ExtractedEntitiesView classes={extractedClasses} properties={extractedProperties} />
+        ) : (
+          <>
         {filteredRows.map((row) => (
           <div key={row.label}>
             <dt className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-0.5">
@@ -1364,6 +1403,8 @@ function AssetInfoPanel({
             </div>
           </div>
         )}
+          </>
+        )}
       </div>
 
       {type === "ontology" && typeof data._key === "string" && (
@@ -1391,6 +1432,91 @@ function AssetInfoPanel({
       {type === "document" && typeof data._key === "string" && (
         <DocumentContentSection docKey={data._key as string} />
       )}
+    </div>
+  );
+}
+
+function ExtractedEntitiesView({
+  classes,
+  properties,
+}: {
+  classes: Record<string, unknown>[];
+  properties: Record<string, unknown>[];
+}) {
+  const [expandedClass, setExpandedClass] = useState<string | null>(null);
+
+  const propsByClass = useMemo(() => {
+    const map = new Map<string, Record<string, unknown>[]>();
+    for (const prop of properties) {
+      const domain = (prop.domain ?? prop.class_name ?? "Unknown") as string;
+      if (!map.has(domain)) map.set(domain, []);
+      map.get(domain)!.push(prop);
+    }
+    return map;
+  }, [properties]);
+
+  if (classes.length === 0 && properties.length === 0) {
+    return <p className="text-sm text-gray-400">No entities extracted.</p>;
+  }
+
+  return (
+    <div className="space-y-1">
+      <div className="text-xs text-gray-500 mb-2">
+        {classes.length} classes, {properties.length} properties
+      </div>
+      {classes.map((cls) => {
+        const name = (cls.label ?? cls.name ?? cls._key ?? "Unnamed") as string;
+        const key = (cls._key ?? cls.name ?? name) as string;
+        const isExpanded = expandedClass === key;
+        const classProps = propsByClass.get(name) ?? [];
+        const confidence = cls.confidence as number | undefined;
+        const description = (cls.description ?? cls.rdfs_comment) as string | undefined;
+
+        return (
+          <div key={key} className="border border-gray-100 rounded-lg overflow-hidden">
+            <button
+              onClick={() => setExpandedClass(isExpanded ? null : key)}
+              className="w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-gray-50 transition-colors"
+            >
+              <span className="text-xs text-gray-400">{isExpanded ? "▾" : "▸"}</span>
+              <span className="text-sm font-medium text-gray-800 flex-1 truncate">{name}</span>
+              {classProps.length > 0 && (
+                <span className="text-[10px] text-gray-400">{classProps.length} props</span>
+              )}
+              {confidence != null && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                  confidence >= 0.8 ? "bg-green-50 text-green-700" :
+                  confidence >= 0.5 ? "bg-yellow-50 text-yellow-700" :
+                  "bg-red-50 text-red-700"
+                }`}>
+                  {(confidence * 100).toFixed(0)}%
+                </span>
+              )}
+            </button>
+            {isExpanded && (
+              <div className="px-3 pb-2 space-y-1.5 border-t border-gray-50">
+                {description && (
+                  <p className="text-xs text-gray-500 mt-1.5 italic">{description}</p>
+                )}
+                {classProps.length > 0 ? (
+                  classProps.map((prop, idx) => {
+                    const propName = (prop.label ?? prop.name ?? prop._key) as string;
+                    const propRange = (prop.range ?? prop.datatype ?? prop.type) as string | undefined;
+                    return (
+                      <div key={idx} className="flex items-baseline gap-2 text-xs bg-gray-50 rounded px-2 py-1">
+                        <span className="font-mono text-gray-700">{propName}</span>
+                        {propRange && <span className="text-gray-400 ml-auto">{propRange}</span>}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="text-[11px] text-gray-400 mt-1">No properties</p>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -123,10 +123,10 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
       }
     };
 
-    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("mousedown", handleClickOutside, true);
     document.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("mousedown", handleClickOutside, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [onClose, handleKeyDown]);
