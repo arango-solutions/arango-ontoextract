@@ -146,8 +146,6 @@ const PIPELINE_EDGES: [PipelineStep, PipelineStep][] = [
 ];
 
 export default function AgentDAG({ steps, onContextMenu, onApi }: AgentDAGProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-
   const { nodes, edges } = useMemo(() => {
     const flowNodes: Node<AgentNodeData>[] = PIPELINE_TOPOLOGY.map((pos) => {
       const stepStatus = steps.get(pos.id) ?? { status: "pending" as const };
@@ -160,6 +158,7 @@ export default function AgentDAG({ steps, onContextMenu, onApi }: AgentDAGProps)
           stepStatus,
           stepKey: pos.id,
         },
+        style: { pointerEvents: "all" as const },
         draggable: false,
       };
     });
@@ -188,51 +187,26 @@ export default function AgentDAG({ steps, onContextMenu, onApi }: AgentDAGProps)
     });
   }, [onApi]);
 
-  // Native capture-phase contextmenu listener that fires before ReactFlow.
-  // Walks the DOM from the click target to find a dag-node data-testid,
-  // and dispatches the correct "step" or "pipeline_canvas" type.
-  const onContextMenuRef = useRef(onContextMenu);
-  onContextMenuRef.current = onContextMenu;
-  const stepsRef = useRef(steps);
-  stepsRef.current = steps;
+  const handleNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: Node<AgentNodeData>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onContextMenu?.(event, "step", {
+        stepKey: node.data.stepKey,
+        label: node.data.label,
+        ...node.data.stepStatus,
+      });
+    },
+    [onContextMenu],
+  );
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-
-    function handler(e: MouseEvent) {
-      e.preventDefault();
-      e.stopPropagation();
-
-      // pointer-events:none on ReactFlow node wrappers means e.target is
-      // always the pane, never the node content. Use elementsFromPoint to
-      // find ALL elements at the cursor including those behind pointer-events:none.
-      let stepKey: string | null = null;
-      const hits = document.elementsFromPoint(e.clientX, e.clientY);
-      for (const hit of hits) {
-        const testId = hit.getAttribute("data-testid");
-        if (testId?.startsWith("dag-node-")) {
-          stepKey = testId.replace("dag-node-", "");
-          break;
-        }
-      }
-
-      const syntheticEvent = { clientX: e.clientX, clientY: e.clientY } as unknown as React.MouseEvent;
-      if (stepKey) {
-        const st = stepsRef.current.get(stepKey) ?? { status: "pending" as const };
-        onContextMenuRef.current?.(syntheticEvent, "step", {
-          stepKey,
-          label: STEP_LABELS[stepKey as PipelineStep] ?? stepKey,
-          ...st,
-        });
-      } else {
-        onContextMenuRef.current?.(syntheticEvent, "pipeline_canvas", {});
-      }
-    }
-
-    el.addEventListener("contextmenu", handler, true);
-    return () => el.removeEventListener("contextmenu", handler, true);
-  }, []);
+  const handlePaneContextMenu = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault();
+      onContextMenu?.(event, "pipeline_canvas", {});
+    },
+    [onContextMenu],
+  );
 
   useEffect(() => {
     if (rfInstance.current) {
@@ -241,12 +215,14 @@ export default function AgentDAG({ steps, onContextMenu, onApi }: AgentDAGProps)
   }, [nodes]);
 
   return (
-    <div ref={containerRef} className="w-full h-[580px] [&_.react-flow__pane]:!cursor-default [&_.react-flow__node]:!cursor-default" data-testid="agent-dag">
+    <div className="w-full h-[580px] [&_.react-flow__pane]:!cursor-default [&_.react-flow__node]:!cursor-default" data-testid="agent-dag">
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
         onInit={onInit}
+        onNodeContextMenu={handleNodeContextMenu}
+        onPaneContextMenu={handlePaneContextMenu}
         fitView
         fitViewOptions={{ padding: 0.15 }}
         panOnDrag
