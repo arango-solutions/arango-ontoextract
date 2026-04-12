@@ -1601,6 +1601,7 @@ Ontology in the AOE Library
 | FR-9.5 | Schema extraction results land in staging | Same human-in-the-loop curation as document-extracted ontologies |
 | FR-9.6 | Provenance tracks source database | Extracted classes link back to source database URL + collection name, not document chunks |
 | FR-9.7 | Validate against tool contract v1 | Uses arango-schema-mapper's structured JSON request/response contract for integration |
+| FR-9.8 | Graph-schema extraction distinct from document pipeline | API request includes `extraction_source` defaulting to `arango_graph_schema` (live DB introspection vs document → chunk extraction elsewhere). Successful responses include `provenance` with `physical_schema_fingerprint` and optional `schema_analyzer_metadata` when `arangodb-schema-analyzer` is installed |
 
 **Use Cases:**
 

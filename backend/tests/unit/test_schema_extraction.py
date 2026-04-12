@@ -106,6 +106,7 @@ class TestExtractSchema:
         assert result["status"] == "completed"
         assert "run_id" in result
         assert result["ontology_id"].startswith("schema_test_db_")
+        assert result["provenance"]["mode"] == "stub"
         mock_stub.assert_called_once_with(config)
         mock_import.assert_called_once()
 
