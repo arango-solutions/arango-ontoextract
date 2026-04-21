@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -1676,7 +1677,11 @@ async def import_ontology_endpoint(
 
     try:
         content = await file.read()
-        result = import_from_file(
+        # Offload the synchronous import (RDF parse + many per-triple Arango writes)
+        # to a worker thread so this request does not block the event loop and
+        # starve concurrent traffic on other endpoints (documents, library, etc.).
+        result = await asyncio.to_thread(
+            import_from_file,
             file_content=content,
             filename=file.filename,
             ontology_id=ontology_id,

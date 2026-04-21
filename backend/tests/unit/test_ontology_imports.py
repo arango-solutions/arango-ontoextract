@@ -261,3 +261,94 @@ class TestRemoveImport:
         resp = client.delete("/api/v1/ontology/src/imports/tgt")
 
         assert resp.status_code == 404
+
+
+# ── POST /import (file upload) ──
+
+
+class TestImportOntologyEndpoint:
+    """Regression coverage for POST /api/v1/ontology/import.
+
+    The handler wraps the synchronous ``import_from_file`` in
+    ``asyncio.to_thread`` so a slow import (many Arango writes per triple)
+    does not starve the event loop. These tests pin that behavior.
+    """
+
+    def test_import_success_returns_bridge_result(self, client):
+        fake_result = {
+            "source": "file_import",
+            "filename": "schema.ttl",
+            "format": "turtle",
+            "registry_key": "my_onto",
+            "imports_sync": {"created": 0, "skipped": 0, "warnings": []},
+            "triple_count": 3,
+        }
+
+        with patch(
+            "app.api.ontology.import_from_file", return_value=fake_result
+        ) as mock_import:
+            resp = client.post(
+                "/api/v1/ontology/import",
+                params={"ontology_id": "my_onto", "ontology_label": "My"},
+                files={"file": ("schema.ttl", b"@prefix : <http://x/> .\n", "text/turtle")},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["registry_key"] == "my_onto"
+        mock_import.assert_called_once()
+        kwargs = mock_import.call_args.kwargs
+        assert kwargs["ontology_id"] == "my_onto"
+        assert kwargs["ontology_label"] == "My"
+        assert kwargs["filename"] == "schema.ttl"
+
+    def test_import_runs_off_event_loop(self, client):
+        """Verify the handler dispatches import_from_file via asyncio.to_thread
+        (the whole point of this fix — otherwise concurrent requests starve)."""
+
+        captured = {}
+
+        async def fake_to_thread(func, /, *args, **kwargs):
+            captured["func"] = func
+            captured["kwargs"] = kwargs
+            return {
+                "source": "file_import",
+                "filename": kwargs.get("filename"),
+                "format": "turtle",
+                "registry_key": kwargs.get("ontology_id"),
+                "imports_sync": {"created": 0, "skipped": 0, "warnings": []},
+                "triple_count": 0,
+            }
+
+        with patch("app.api.ontology.import_from_file"), patch(
+            "app.api.ontology.asyncio.to_thread", side_effect=fake_to_thread
+        ):
+            resp = client.post(
+                "/api/v1/ontology/import",
+                params={"ontology_id": "x"},
+                files={"file": ("a.ttl", b"data", "text/turtle")},
+            )
+
+        assert resp.status_code == 200
+        assert "func" in captured, "handler should have called asyncio.to_thread"
+        # Confirm the thread-pool dispatcher received the bridge call with the
+        # correct kwargs. The func object itself is a MagicMock (because the
+        # handler resolved the module-level symbol while it was patched).
+        assert captured["func"] is not None
+        assert captured["kwargs"]["ontology_id"] == "x"
+        assert captured["kwargs"]["filename"] == "a.ttl"
+
+    def test_import_value_error_maps_to_400(self, client):
+        with patch(
+            "app.api.ontology.import_from_file",
+            side_effect=ValueError("Unsupported file extension"),
+        ):
+            resp = client.post(
+                "/api/v1/ontology/import",
+                params={"ontology_id": "x"},
+                files={"file": ("bad.xyz", b"data", "application/octet-stream")},
+            )
+        assert resp.status_code == 400
+        # Body format is whatever FastAPI/our handlers produce; just confirm
+        # the error message surfaces somewhere in the response.
+        assert "Unsupported" in resp.text
