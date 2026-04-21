@@ -89,6 +89,27 @@ type-check: ## Type-check backend + frontend
 	cd backend && .venv/bin/mypy app/ --ignore-missing-imports && cd ../frontend && npx tsc --noEmit
 
 # ---------------------------------------------------------------------------
+# Benchmarks (Ontology Extraction)
+# ---------------------------------------------------------------------------
+
+benchmark-tests: ## Run unit tests for the benchmark harness (no corpora needed)
+	backend/.venv/bin/pytest benchmarks/ontology_extraction/tests/ -v
+
+fetch-corpora: ## Download minimal benchmark corpora into samples/corpora/external/
+	./scripts/fetch-corpora.sh
+
+fetch-corpora-full: ## Download full benchmark corpora (several GB)
+	./scripts/fetch-corpora.sh --full
+
+benchmark: ## Run Re-DocRED benchmark with the mock adapter (CI-friendly, requires fetch-corpora)
+	backend/.venv/bin/python -m benchmarks.ontology_extraction.run_benchmark \
+		--dataset redocred --adapter mock --limit 20
+
+benchmark-full: ## Run WebNLG benchmark with the real AOE adapter (requires backend + infra + LLM keys)
+	backend/.venv/bin/python -m benchmarks.ontology_extraction.run_benchmark \
+		--dataset webnlg --adapter aoe --limit 100
+
+# ---------------------------------------------------------------------------
 # Docker (Production)
 # ---------------------------------------------------------------------------
 
