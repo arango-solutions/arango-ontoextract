@@ -473,6 +473,36 @@ class TestImportFromFile:
     @patch("app.services.arangordf_bridge.sync_owl_imports_edges")
     @patch("app.services.arangordf_bridge.create_registry_entry")
     @patch("app.services.arangordf_bridge.import_owl_to_graph")
+    def test_import_does_not_collide_with_reserved_logrecord_keys(
+        self, mock_import, mock_registry, mock_sync_imports, caplog,
+    ):
+        """Regression: passing a reserved attribute name (e.g. 'filename') inside
+        ``log.<level>(..., extra={...})`` raises ``KeyError: Attempt to overwrite
+        'filename' in LogRecord`` and surfaces as a 500 at the API layer even
+        though the import itself succeeded."""
+        import logging
+
+        db = MagicMock()
+        mock_import.return_value = {"imported": True, "ontology_id": "x", "graph_name": "x"}
+        mock_registry.return_value = {"_key": "x"}
+        mock_sync_imports.return_value = {"created": 0, "skipped": 0, "warnings": []}
+
+        ttl = (
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+            "<http://example.org/Person> a owl:Class .\n"
+        )
+
+        with caplog.at_level(logging.INFO, logger="app.services.arangordf_bridge"):
+            import_from_file(
+                file_content=ttl.encode("utf-8"),
+                filename="schema.ttl",
+                ontology_id="x",
+                db=db,
+            )
+
+    @patch("app.services.arangordf_bridge.sync_owl_imports_edges")
+    @patch("app.services.arangordf_bridge.create_registry_entry")
+    @patch("app.services.arangordf_bridge.import_owl_to_graph")
     def test_import_uses_owl_ontology_rdfs_label_when_no_param_label(
         self, mock_import, mock_registry, mock_sync_imports,
     ):

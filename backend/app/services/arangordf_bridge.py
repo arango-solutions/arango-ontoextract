@@ -630,7 +630,7 @@ def import_from_file(
         "file import completed",
         extra={
             "ontology_id": ontology_id,
-            "filename": filename,
+            "source_filename": filename,
             "format": fmt,
             "triple_count": triple_count,
             "registry_key": registry_entry["_key"],
