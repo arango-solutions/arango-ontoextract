@@ -1664,36 +1664,130 @@ async def export_ontology_endpoint(
 _IMPORT_FILE = File(..., description="OWL/TTL/RDF-XML/JSON-LD file")
 
 
-@router.post("/import")
+# In-process registry of ontology import jobs.
+# Keyed by ontology_id. Each value: {ontology_id, status, filename, started_at,
+# finished_at?, result?, error?, error_kind?}.
+# NOTE: This is per-worker state. With --reload / multi-worker uvicorn, jobs
+# won't be visible across workers. The status endpoint falls back to reading
+# the registry entry so completed imports remain discoverable.
+_import_jobs: dict[str, dict[str, Any]] = {}
+
+
+async def _run_import_job(
+    *,
+    ontology_id: str,
+    content: bytes,
+    filename: str,
+    ontology_label: str | None,
+    ontology_uri_prefix: str | None,
+) -> None:
+    """Execute the synchronous import in a worker thread and record the result."""
+    job = _import_jobs.get(ontology_id)
+    if job is None:
+        return
+    try:
+        result = await asyncio.to_thread(
+            import_from_file,
+            file_content=content,
+            filename=filename,
+            ontology_id=ontology_id,
+            ontology_label=ontology_label,
+            ontology_uri_prefix=ontology_uri_prefix,
+        )
+        job["status"] = "completed"
+        job["result"] = result
+        job["finished_at"] = time.time()
+    except ValueError as exc:
+        log.warning("Import job %s rejected: %s", ontology_id, exc)
+        job["status"] = "failed"
+        job["error_kind"] = "validation"
+        job["error"] = str(exc)
+        job["finished_at"] = time.time()
+    except Exception as exc:  # pragma: no cover - defensive
+        log.exception("Import job %s failed", ontology_id)
+        job["status"] = "failed"
+        job["error_kind"] = "internal"
+        job["error"] = str(exc)
+        job["finished_at"] = time.time()
+
+
+@router.post("/import", status_code=202)
 async def import_ontology_endpoint(
     file: UploadFile = _IMPORT_FILE,
     ontology_id: str = Query(..., description="Unique ID for this ontology"),
     ontology_label: str | None = Query(None, description="Human-readable label"),
     ontology_uri_prefix: str | None = Query(None, description="URI prefix for entity filtering"),
 ) -> dict:
-    """Import an ontology file (OWL/TTL/RDF-XML/JSON-LD) into the platform."""
+    """Kick off an asynchronous ontology import.
+
+    Returns 202 Accepted immediately with a ``job_status_url`` the client can
+    poll. A real import can take minutes (per-triple Arango writes against a
+    remote cluster), which exceeds the HTTP proxy timeout — so we decouple the
+    work from the request.
+    """
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required for format detection")
 
-    try:
-        content = await file.read()
-        # Offload the synchronous import (RDF parse + many per-triple Arango writes)
-        # to a worker thread so this request does not block the event loop and
-        # starve concurrent traffic on other endpoints (documents, library, etc.).
-        result = await asyncio.to_thread(
-            import_from_file,
-            file_content=content,
-            filename=file.filename,
+    existing = _import_jobs.get(ontology_id)
+    if existing is not None and existing.get("status") == "running":
+        raise HTTPException(
+            status_code=409, detail=f"Import already in progress for ontology_id '{ontology_id}'"
+        )
+    if registry_repo.get_registry_entry(ontology_id) is not None:
+        raise HTTPException(
+            status_code=409, detail=f"Ontology '{ontology_id}' already exists in the registry"
+        )
+
+    content = await file.read()
+    _import_jobs[ontology_id] = {
+        "ontology_id": ontology_id,
+        "status": "running",
+        "filename": file.filename,
+        "ontology_label": ontology_label,
+        "started_at": time.time(),
+    }
+    asyncio.create_task(
+        _run_import_job(
             ontology_id=ontology_id,
+            content=content,
+            filename=file.filename,
             ontology_label=ontology_label,
             ontology_uri_prefix=ontology_uri_prefix,
         )
-        return result
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        log.exception("Import failed")
-        raise HTTPException(status_code=500, detail="Internal server error") from exc
+    )
+    return {
+        "ontology_id": ontology_id,
+        "status": "running",
+        "filename": file.filename,
+        "job_status_url": f"/api/v1/ontology/import/{ontology_id}/status",
+    }
+
+
+@router.get("/import/{ontology_id}/status")
+async def import_status_endpoint(ontology_id: str) -> dict:
+    """Return the state of an ongoing or recently finished import job.
+
+    If the job isn't in memory (e.g. process restarted) but the ontology exists
+    in the registry, reports ``completed`` so the client can recover.
+    """
+    job = _import_jobs.get(ontology_id)
+    if job is not None:
+        return job
+
+    entry = registry_repo.get_registry_entry(ontology_id)
+    if entry is not None:
+        return {
+            "ontology_id": ontology_id,
+            "status": "completed",
+            "result": {
+                "registry_key": entry.get("_key", ontology_id),
+                "filename": entry.get("source_filename"),
+                "triple_count": entry.get("triple_count"),
+            },
+        }
+    raise HTTPException(
+        status_code=404, detail=f"No import job found for ontology_id '{ontology_id}'"
+    )
 
 
 # ---------------------------------------------------------------------------

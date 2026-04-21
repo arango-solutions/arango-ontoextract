@@ -52,7 +52,9 @@ export default function UploadPage() {
   const [targetOntologyId, setTargetOntologyId] = useState<string>("");
   const [docOntologies, setDocOntologies] = useState<Record<string, { _key: string; name: string }[]>>({});
   const [mode, setMode] = useState<"extract" | "import">("extract");
-  const [importState, setImportState] = useState<"idle" | "uploading" | "success" | "error">("idle");
+  const [importState, setImportState] = useState<
+    "idle" | "uploading" | "processing" | "success" | "error"
+  >("idle");
   const [importName, setImportName] = useState("");
   const [importResult, setImportResult] = useState<ImportResultData | null>(null);
   const [importError, setImportError] = useState("");
@@ -148,14 +150,60 @@ export default function UploadPage() {
         const errBody = await res.json().catch(() => ({}));
         throw new Error(errBody.detail || errBody.message || `Import failed (${res.status})`);
       }
-      const data = await res.json();
-      setImportResult(data);
+
+      // New contract (202): backend runs the import asynchronously and we poll
+      // /import/{id}/status until it reports completed or failed. Large OWL
+      // files can take minutes (per-triple writes against a remote cluster),
+      // so a single synchronous HTTP request would exceed the proxy timeout.
+      setImportState("processing");
+      const accepted = await res.json();
+      const ontologyId = accepted.ontology_id || id;
+
+      const finalResult = await pollImportStatus(baseUrl, ontologyId);
+      setImportResult(finalResult);
       setImportState("success");
       loadDocuments();
     } catch (err) {
       setImportError(err instanceof Error ? err.message : String(err));
       setImportState("error");
     }
+  };
+
+  const pollImportStatus = async (
+    baseUrl: string,
+    ontologyId: string,
+    {
+      intervalMs = 2000,
+      timeoutMs = 15 * 60 * 1000,
+    }: { intervalMs?: number; timeoutMs?: number } = {},
+  ): Promise<ImportResultData> => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      const statusRes = await fetch(
+        `${baseUrl}/api/v1/ontology/import/${encodeURIComponent(ontologyId)}/status`,
+      );
+      if (!statusRes.ok) {
+        if (statusRes.status === 404) continue;
+        const errBody = await statusRes.json().catch(() => ({}));
+        throw new Error(
+          errBody.detail || errBody.message || `Status check failed (${statusRes.status})`,
+        );
+      }
+      const job = await statusRes.json();
+      if (job.status === "completed") {
+        const result = (job.result ?? {}) as Record<string, unknown>;
+        return {
+          ontology_id: (result.registry_key as string) ?? ontologyId,
+          name: result.name as string | undefined,
+          class_count: result.class_count as number | undefined,
+        };
+      }
+      if (job.status === "failed") {
+        throw new Error(job.error || "Import failed on the server");
+      }
+    }
+    throw new Error("Import timed out waiting for the server to finish");
   };
 
   const extractDocument = async (docId: string) => {
@@ -348,7 +396,16 @@ export default function UploadPage() {
             {importState === "uploading" && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-3">
                 <div className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                <p className="text-blue-700 font-medium">Importing ontology via ArangoRDF...</p>
+                <p className="text-blue-700 font-medium">Uploading file...</p>
+              </div>
+            )}
+
+            {importState === "processing" && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-3">
+                <div className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                <p className="text-blue-700 font-medium">
+                  Importing ontology via ArangoRDF... this can take a few minutes for large files.
+                </p>
               </div>
             )}
 
