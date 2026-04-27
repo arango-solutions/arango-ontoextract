@@ -2863,7 +2863,7 @@ The `effective_arango_host` property resolves the correct endpoint:
 | **Local dev** | Docker Compose (ArangoDB, Redis); FastAPI via `uvicorn --reload`; Next.js `next dev` | `TEST_DEPLOYMENT_MODE=local_docker`; single `make dev` starts everything |
 | **CI** | Docker Compose test profile (ephemeral ArangoDB + Redis); GitHub Actions or equivalent | `TEST_DEPLOYMENT_MODE=local_docker`; disposable databases per test run |
 | **Staging** | Docker Compose or Kubernetes (single-node); shared ArangoDB instance | `TEST_DEPLOYMENT_MODE=self_managed_platform`; mirrors production config; used for E2E and integration testing |
-| **Production** | Kubernetes (recommended) or Docker Compose on a VM | `TEST_DEPLOYMENT_MODE=self_managed_platform` (or `managed_platform` post-4.0); ArangoDB cluster (replication factor ≥ 2); Redis Sentinel; TLS termination |
+| **Production** | Kubernetes (recommended) or Docker Compose on a VM | `TEST_DEPLOYMENT_MODE=self_managed_platform` (or `managed_platform` post-4.0); ArangoDB cluster (replication factor ≥ 2); Redis with platform-appropriate HA; TLS termination |
 
 **Container Images:**
 

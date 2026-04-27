@@ -350,6 +350,21 @@ make frontend   # Next.js dev server
 docker compose -f docker-compose.prod.yml up -d
 ```
 
+The production Compose profile runs Caddy as the edge reverse proxy/TLS terminator,
+with backend, frontend, ArangoDB, Redis, and the optional MCP server behind it.
+
+### Bring Your Own Container
+
+The application containers run without a separate web-server sidecar or
+in-container reverse proxy. Build `backend/Dockerfile` for the FastAPI API and
+`frontend/Dockerfile` for the Next.js standalone server. Redis is used by the
+backend for rate limiting and best-effort notification Pub/Sub; ArangoDB remains
+the primary persistence layer.
+
+Kubernetes manifests under `k8s/` are deployment examples. Set
+`ingressClassName` and any controller-specific ingress annotations in your
+target platform rather than treating them as application dependencies.
+
 ### Container Images
 
 | Image | Base | Size Target |

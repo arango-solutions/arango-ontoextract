@@ -65,7 +65,7 @@ This document describes the system architecture of the Arango-OntoExtract (AOE) 
 │  └──────────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────────┘
           ┌──────────┐
-          │  Redis   │  Task queue, WebSocket pub/sub, caching
+          │  Redis   │  Rate limiting, notification pub/sub
           └──────────┘
 ```
 
@@ -125,11 +125,15 @@ Multi-model database serving as the single persistence layer for documents, grap
 
 ### Redis
 
-Used for three purposes:
+Implemented uses:
 
-1. **Task queue** — async document processing pipeline (Celery/ARQ)
-2. **WebSocket pub/sub** — extraction progress events and curation collaboration
-3. **Snapshot cache** — materialized temporal snapshots for frequently-accessed timestamps
+1. **Rate limiting** — sliding-window API limits stored in Redis sorted sets
+2. **Notification Pub/Sub** — best-effort notification events after persistence in ArangoDB
+
+Planned uses include async task queueing, broader WebSocket fanout, and materialized
+snapshot caching. The backend degrades gracefully for the implemented Redis paths:
+rate limiting passes through if Redis is unavailable, and notifications are still
+persisted in ArangoDB even if Pub/Sub publish fails.
 
 ### MCP Server
 
@@ -225,7 +229,7 @@ This enables point-in-time snapshots via AQL range filters on `[created, expired
 | Entity resolution | arango-entity-resolution | ArangoDB-native ER with blocking, scoring, and WCC clustering; supports GAE backend |
 | Temporal indexing | MDI-prefixed indexes | ArangoDB's multi-dimensional indexes optimized for interval range queries on `[created, expired]` |
 | MCP server | FastMCP (mcp Python SDK) | Standard MCP protocol for AI agent interoperability |
-| Task queue | Celery + Redis | Battle-tested async task processing for document ingestion pipeline |
+| Async work | Celery + Redis (planned) | Battle-tested async task processing for document ingestion pipeline |
 | Embeddings | OpenAI text-embedding-3-small | High-quality vector embeddings for RAG and ER similarity scoring |
 
 ---
