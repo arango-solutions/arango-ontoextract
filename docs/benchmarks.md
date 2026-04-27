@@ -82,7 +82,7 @@ Performance targets and measurement methodology for the AOE platform. Derived fr
 | ArangoDB cluster | 8 GB RAM per node, 100 GB SSD, replication factor ≥ 2 |
 | Redis Sentinel | 1 GB RAM, 3-node sentinel |
 | Backend (per replica) | 2 GB RAM, 2 vCPU |
-| Frontend (nginx) | 256 MB RAM |
+| Frontend (Next.js standalone) | 256 MB RAM |
 | MCP server | 1 GB RAM |
 
 ---

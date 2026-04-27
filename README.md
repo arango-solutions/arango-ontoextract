@@ -355,7 +355,7 @@ docker compose -f docker-compose.prod.yml up -d
 | Image | Base | Size Target |
 |-------|------|-------------|
 | `aoe-backend` | `python:3.11-slim` | < 500 MB |
-| `aoe-frontend` | `node:20-alpine` + `nginx:alpine` | < 100 MB |
+| `aoe-frontend` | `node:20-alpine` (Next.js standalone) | < 100 MB |
 | `aoe-mcp-server` | `python:3.11-slim` | < 400 MB |
 
 ## Documentation

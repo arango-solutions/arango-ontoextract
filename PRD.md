@@ -2870,7 +2870,7 @@ The `effective_arango_host` property resolves the correct endpoint:
 | Image | Base | Size Target |
 |-------|------|-------------|
 | `aoe-backend` | `python:3.11-slim` | < 500 MB |
-| `aoe-frontend` | `node:20-alpine` (build) + `nginx:alpine` (serve) | < 100 MB |
+| `aoe-frontend` | `node:20-alpine` (Next.js standalone) | < 100 MB |
 | `aoe-mcp-server` | `python:3.11-slim` | < 400 MB |
 
 **CI/CD Pipeline:**
