@@ -26,9 +26,7 @@ from pathlib import Path
 from benchmarks.ontology_extraction import metrics
 from benchmarks.ontology_extraction.adapters.base import ExtractionAdapter
 from benchmarks.ontology_extraction.adapters.mock import MockAdapter
-from benchmarks.ontology_extraction.datasets import GoldDocument
-from benchmarks.ontology_extraction.datasets import redocred, webnlg
-
+from benchmarks.ontology_extraction.datasets import GoldDocument, redocred, webnlg
 
 log = logging.getLogger("benchmark")
 
@@ -47,20 +45,33 @@ def _build_adapter(name: str) -> ExtractionAdapter:
         return MockAdapter()
     if name == "aoe":
         # Lazy import — the AOE adapter pulls in the backend package.
-        from benchmarks.ontology_extraction.adapters.aoe import AOEAdapter  # noqa: PLC0415
+        from benchmarks.ontology_extraction.adapters.aoe import AOEAdapter
 
         return AOEAdapter()
     raise SystemExit(f"unknown adapter: {name!r}. Known: mock, aoe.")
 
 
 def score_document(
-    doc: GoldDocument, adapter: ExtractionAdapter
+    doc: GoldDocument,
+    adapter: ExtractionAdapter,
+    *,
+    label_aliases: dict[str, str] | None = None,
+    relation_aliases: dict[str, str] | None = None,
 ) -> metrics.DocumentScore:
     result = adapter.extract(doc.id, doc.text)
     return metrics.DocumentScore(
         document_id=doc.id,
-        classes=metrics.score_sets(result.classes, doc.gold_classes),
-        relations=metrics.score_sets(result.relations, doc.gold_relations),
+        classes=metrics.score_sets(
+            result.classes,
+            doc.gold_classes,
+            label_aliases=label_aliases,
+        ),
+        relations=metrics.score_sets(
+            result.relations,
+            doc.gold_relations,
+            label_aliases=label_aliases,
+            relation_aliases=relation_aliases,
+        ),
     )
 
 
@@ -69,6 +80,8 @@ def run(
     adapter_name: str,
     limit: int | None = None,
     corpus_root: Path | None = None,
+    label_aliases: dict[str, str] | None = None,
+    relation_aliases: dict[str, str] | None = None,
 ) -> metrics.AggregateReport:
     if dataset not in DATASETS:
         raise SystemExit(f"unknown dataset: {dataset!r}. Known: {', '.join(DATASETS)}.")
@@ -86,8 +99,15 @@ def run(
             log.warning("skipping empty document %s", doc.id)
             continue
         try:
-            document_scores.append(score_document(doc, adapter))
-        except Exception as exc:  # noqa: BLE001
+            document_scores.append(
+                score_document(
+                    doc,
+                    adapter,
+                    label_aliases=label_aliases,
+                    relation_aliases=relation_aliases,
+                )
+            )
+        except Exception as exc:
             log.error("document %s failed: %s", doc.id, exc)
 
     report = metrics.aggregate(document_scores)
@@ -120,9 +140,33 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--dataset", required=True, choices=sorted(DATASETS))
     parser.add_argument("--adapter", required=True, choices=["mock", "aoe"])
-    parser.add_argument("--limit", type=int, default=None, help="Maximum number of documents to score.")
-    parser.add_argument("--corpus-root", type=Path, default=None, help="Override dataset directory.")
-    parser.add_argument("--out", type=Path, default=None, help="Write JSON report to this path.")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum number of documents to score.",
+    )
+    parser.add_argument(
+        "--corpus-root",
+        type=Path,
+        default=None,
+        help="Override dataset directory.",
+    )
+    parser.add_argument(
+        "--alias-file",
+        type=Path,
+        default=None,
+        help=(
+            "Optional JSON file with 'labels' and/or 'relations' alias groups: "
+            "{\"canonical\": [\"alias\"]}."
+        ),
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Write JSON report to this path.",
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args(argv)
 
@@ -131,11 +175,15 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
+    label_aliases, relation_aliases = _load_aliases(args.alias_file)
+
     report = run(
         dataset=args.dataset,
         adapter_name=args.adapter,
         limit=args.limit,
         corpus_root=args.corpus_root,
+        label_aliases=label_aliases,
+        relation_aliases=relation_aliases,
     )
     _print_summary(report)
 
@@ -146,6 +194,17 @@ def main(argv: list[str] | None = None) -> int:
         log.info("wrote %s", args.out)
 
     return 0
+
+
+def _load_aliases(path: Path | None) -> tuple[dict[str, str], dict[str, str]]:
+    if path is None:
+        return {}, {}
+    with path.open(encoding="utf-8") as fh:
+        data = json.load(fh)
+    return (
+        metrics.expand_aliases(data.get("labels", {})),
+        metrics.expand_aliases(data.get("relations", {})),
+    )
 
 
 if __name__ == "__main__":

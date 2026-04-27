@@ -2110,6 +2110,45 @@ These metrics are intentionally observational. They do not automatically change 
 | FR-13.18 | Assertion-level evidence coverage | Quality API returns `assertion_metrics` with total, evidenced, unsupported, and coverage values overall and by type (`classes`, `attributes`, `relationships`, `subclass_links`). Metrics are computed from current graph documents and edges carrying `evidence`. |
 | FR-13.19 | Confidence calibration from HITL decisions | Quality API returns `confidence_calibration` with confidence decile buckets, acceptance/edit/rejection rates, calibration error per bucket, and expected calibration error. These metrics are computed from `curation_decisions` joined to current class confidence values. |
 | FR-13.20 | HITL learning data captured but not auto-applied | Curation decisions preserve `issue_reasons` and `edit_diff` so feedback can become prompt examples, regression fixtures, or calibration data. The system must not automatically mutate prompts, thresholds, or model routing without an explicitly versioned learning-loop rollout. |
+| FR-13.21 | Gated feedback learning artifacts | The backend can derive reviewable learning artifacts from HITL feedback: prompt-guidance examples, regression candidates, action counts, and issue-reason summaries. These artifacts carry `auto_apply: false` and are safe for offline review, benchmark generation, or manually approved prompt updates. |
+| FR-13.22 | Alias-aware benchmark matching | Ontology extraction benchmarks support exact matching by default and optional alias-aware canonicalization via a JSON alias file. Alias groups can normalize class/entity labels and relation names before precision/recall/F1 computation, reducing false mismatches from harmless terminology differences. |
+
+#### 6.13.2b Gated HITL Learning Artifacts
+
+The first learning-loop implementation is intentionally **extractive**, not adaptive. It reads `curation_decisions` and produces artifacts that humans or offline evaluation jobs can review:
+
+| Artifact | Source | Use |
+|----------|--------|-----|
+| Prompt guidance examples | `edit_diff`, `issue_reasons`, curator notes | Candidate few-shot guidance for future prompt versions |
+| Regression candidates | Rejects and high-risk issue reasons (`missing_evidence`, `hallucinated`, `wrong_parent`, `wrong_relationship`, `domain_mismatch`) | Test cases to ensure future extraction does not repeat the same error |
+| Feedback summary | Action counts and issue-reason counts | Prioritization signal for prompt, validator, or model improvements |
+
+The service must preserve the following invariant:
+
+```json
+{
+  "auto_apply": false
+}
+```
+
+No artifact may change production extraction behavior until it is attached to a versioned prompt/config update and evaluated against the benchmark suite.
+
+#### 6.13.2c Alias-Aware Benchmark Matching
+
+Benchmark scoring remains exact by default: normalized predicted classes/relations are compared to normalized gold classes/relations. For domain benchmarks where equivalent terms are common, the harness accepts an optional alias file:
+
+```json
+{
+  "labels": {
+    "customer account": ["client account", "acct"]
+  },
+  "relations": {
+    "works at": ["employed by", "is employed by"]
+  }
+}
+```
+
+The matcher expands each canonical term and alias into normalized alias → canonical mappings before computing class and relation precision/recall/F1. This is an evaluation-only feature and does not affect extraction output.
 
 #### 6.13.3 Ontology Quality Dashboard
 

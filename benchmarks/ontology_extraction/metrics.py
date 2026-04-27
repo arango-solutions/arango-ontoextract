@@ -13,9 +13,8 @@ whitespace-collapsed) before comparison; downstream code can override
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable
-
 
 _WS = re.compile(r"\s+")
 
@@ -32,6 +31,28 @@ def normalize(text: str) -> str:
     return _WS.sub(" ", text.strip()).lower()
 
 
+def expand_aliases(groups: dict[str, list[str] | str] | None) -> dict[str, str]:
+    """Expand canonical→aliases config into normalized alias→canonical mapping."""
+    if not groups:
+        return {}
+    alias_map: dict[str, str] = {}
+    for canonical, aliases in groups.items():
+        canonical_norm = normalize(canonical)
+        alias_map[canonical_norm] = canonical_norm
+        alias_values = [aliases] if isinstance(aliases, str) else aliases
+        for alias in alias_values:
+            alias_map[normalize(alias)] = canonical_norm
+    return alias_map
+
+
+def canonicalize(text: str, aliases: dict[str, str] | None = None) -> str:
+    """Normalize text and map known aliases to their canonical form."""
+    normalized = normalize(text)
+    if not aliases:
+        return normalized
+    return aliases.get(normalized, normalized)
+
+
 @dataclass(frozen=True)
 class Triple:
     """A typed relation triple ``(head, relation, tail)`` with normalized fields."""
@@ -41,8 +62,20 @@ class Triple:
     tail: str
 
     @classmethod
-    def of(cls, head: str, relation: str, tail: str) -> "Triple":
+    def of(cls, head: str, relation: str, tail: str) -> Triple:
         return cls(normalize(head), normalize(relation), normalize(tail))
+
+    def canonicalized(
+        self,
+        *,
+        label_aliases: dict[str, str] | None = None,
+        relation_aliases: dict[str, str] | None = None,
+    ) -> Triple:
+        return Triple(
+            head=canonicalize(self.head, label_aliases),
+            relation=canonicalize(self.relation, relation_aliases),
+            tail=canonicalize(self.tail, label_aliases),
+        )
 
 
 @dataclass(frozen=True)
@@ -53,8 +86,18 @@ class ClassMention:
     type_: str = ""
 
     @classmethod
-    def of(cls, label: str, type_: str = "") -> "ClassMention":
+    def of(cls, label: str, type_: str = "") -> ClassMention:
         return cls(normalize(label), normalize(type_))
+
+    def canonicalized(
+        self,
+        *,
+        label_aliases: dict[str, str] | None = None,
+    ) -> ClassMention:
+        return ClassMention(
+            label=canonicalize(self.label, label_aliases),
+            type_=self.type_,
+        )
 
 
 @dataclass(frozen=True)
@@ -86,15 +129,53 @@ def _prf(tp: int, fp: int, fn: int) -> PRF:
     return PRF(precision=precision, recall=recall, f1=f1, tp=tp, fp=fp, fn=fn)
 
 
-def score_sets(predicted: Iterable, gold: Iterable) -> PRF:
+def _canonicalize_item(
+    item,
+    *,
+    label_aliases: dict[str, str] | None = None,
+    relation_aliases: dict[str, str] | None = None,
+):
+    if isinstance(item, ClassMention):
+        return item.canonicalized(label_aliases=label_aliases)
+    if isinstance(item, Triple):
+        return item.canonicalized(
+            label_aliases=label_aliases,
+            relation_aliases=relation_aliases,
+        )
+    if isinstance(item, str):
+        return canonicalize(item, label_aliases)
+    return item
+
+
+def score_sets(
+    predicted: Iterable,
+    gold: Iterable,
+    *,
+    label_aliases: dict[str, str] | None = None,
+    relation_aliases: dict[str, str] | None = None,
+) -> PRF:
     """Compute set-overlap precision/recall/F1.
 
     Both inputs are materialized to sets — duplicates collapse. Empty gold *and*
     empty predicted yields a zero score (not 1.0) to avoid silently rewarding
     empty-extraction baselines.
     """
-    pred_set = set(predicted)
-    gold_set = set(gold)
+    pred_set = {
+        _canonicalize_item(
+            item,
+            label_aliases=label_aliases,
+            relation_aliases=relation_aliases,
+        )
+        for item in predicted
+    }
+    gold_set = {
+        _canonicalize_item(
+            item,
+            label_aliases=label_aliases,
+            relation_aliases=relation_aliases,
+        )
+        for item in gold
+    }
     tp = len(pred_set & gold_set)
     fp = len(pred_set - gold_set)
     fn = len(gold_set - pred_set)
@@ -160,7 +241,11 @@ def aggregate(document_scores: list[DocumentScore]) -> AggregateReport:
     micro_fn_r = sum(d.relations.fn for d in document_scores)
 
     def _macro(getter) -> PRF:
-        non_empty = [getter(d) for d in document_scores if getter(d).tp + getter(d).fp + getter(d).fn]
+        non_empty = [
+            getter(d)
+            for d in document_scores
+            if getter(d).tp + getter(d).fp + getter(d).fn
+        ]
         if not non_empty:
             return _prf(0, 0, 0)
         precision = sum(p.precision for p in non_empty) / len(non_empty)

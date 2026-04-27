@@ -8,7 +8,6 @@ import pytest
 
 from benchmarks.ontology_extraction import run_benchmark
 
-
 WEBNLG_FIXTURE_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <benchmark>
   <entries>
@@ -89,3 +88,29 @@ class TestRunBenchmark:
         payload = json.loads(out.read_text(encoding="utf-8"))
         assert payload["documents"] == 1
         assert "micro" in payload and "macro" in payload
+
+    def test_cli_accepts_alias_file(self, tmp_path: Path):
+        corpus = _write_fixture(tmp_path)
+        aliases = tmp_path / "aliases.json"
+        aliases.write_text(
+            json.dumps({
+                "labels": {"alice": ["alice person"]},
+                "relations": {"knows": ["is acquainted with"]},
+            }),
+            encoding="utf-8",
+        )
+
+        exit_code = run_benchmark.main(
+            [
+                "--dataset",
+                "webnlg",
+                "--adapter",
+                "mock",
+                "--corpus-root",
+                str(corpus),
+                "--alias-file",
+                str(aliases),
+            ]
+        )
+
+        assert exit_code == 0

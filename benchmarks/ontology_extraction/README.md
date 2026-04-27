@@ -12,7 +12,9 @@ Given a corpus of documents each annotated with gold **classes** (entities with 
    - **Relations** — does the extractor recover the gold triple set?
 3. Aggregates across documents and reports micro and macro averages.
 
-All matching is exact (case-insensitive, whitespace-normalized) by default. Matcher strictness is configurable via `metrics.normalize`.
+All matching is exact (case-insensitive, whitespace-normalized) by default.
+For domain evaluations where harmless terminology differences are expected, pass
+`--alias-file` to canonicalize known label and relation aliases before scoring.
 
 ## Datasets supported
 
@@ -38,6 +40,25 @@ python -m benchmarks.ontology_extraction.run_benchmark \
     --adapter aoe \
     --limit 50 \
     --out reports/webnlg-$(date +%Y%m%d).json
+
+# Alias-aware scoring — still exact after canonicalization.
+python -m benchmarks.ontology_extraction.run_benchmark \
+    --dataset webnlg \
+    --adapter aoe \
+    --alias-file benchmarks/ontology_extraction/aliases/domain.json
+```
+
+Alias files use canonical term → aliases groups:
+
+```json
+{
+  "labels": {
+    "customer account": ["client account", "acct"]
+  },
+  "relations": {
+    "works at": ["employed by", "is employed by"]
+  }
+}
 ```
 
 Make target:

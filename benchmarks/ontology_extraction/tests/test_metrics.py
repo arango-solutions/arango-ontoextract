@@ -9,6 +9,7 @@ from benchmarks.ontology_extraction.metrics import (
     DocumentScore,
     Triple,
     aggregate,
+    expand_aliases,
     normalize,
     score_sets,
 )
@@ -24,6 +25,14 @@ class TestNormalize:
     def test_none_raises_type_error(self):
         with pytest.raises(TypeError):
             normalize(None)  # type: ignore[arg-type]
+
+
+class TestAliases:
+    def test_expand_aliases_normalizes_canonical_and_alias_values(self):
+        aliases = expand_aliases({"Customer Account": ["Client Account", "Acct"]})
+        assert aliases["customer account"] == "customer account"
+        assert aliases["client account"] == "customer account"
+        assert aliases["acct"] == "customer account"
 
 
 class TestTriple:
@@ -91,6 +100,30 @@ class TestScoreSets:
         t2 = Triple.of("A", "r", "C")
         prf = score_sets({t1}, {t1, t2})
         assert prf.tp == 1 and prf.fn == 1
+
+    def test_alias_aware_class_matching(self):
+        aliases = expand_aliases({"customer account": ["client account"]})
+        prf = score_sets(
+            {ClassMention.of("Client Account", "entity")},
+            {ClassMention.of("Customer Account", "entity")},
+            label_aliases=aliases,
+        )
+        assert prf.tp == 1
+        assert prf.fp == 0
+        assert prf.fn == 0
+
+    def test_alias_aware_relation_matching(self):
+        label_aliases = expand_aliases({"acme": ["acme corp"]})
+        relation_aliases = expand_aliases({"works at": ["employed by"]})
+        prf = score_sets(
+            {Triple.of("Alice", "employed by", "Acme Corp")},
+            {Triple.of("Alice", "works at", "Acme")},
+            label_aliases=label_aliases,
+            relation_aliases=relation_aliases,
+        )
+        assert prf.tp == 1
+        assert prf.fp == 0
+        assert prf.fn == 0
 
 
 def _ds(doc_id: str, cls: tuple[int, int, int], rel: tuple[int, int, int]) -> DocumentScore:
