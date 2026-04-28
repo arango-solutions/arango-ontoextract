@@ -20,10 +20,13 @@ For domain evaluations where harmless terminology differences are expected, pass
 
 | Dataset | Loader | What it tests |
 | --- | --- | --- |
+| **HITL Regression** | `datasets.hitl_regression` | Curator-derived regression fixtures exported from `GET /api/v1/admin/feedback-learning`. |
 | **Re-DocRED** | `datasets.redocred` | Multi-sentence relation extraction over Wikipedia articles. 96 relation types. |
 | **WebNLG 2020** | `datasets.webnlg` | Structured RDF triples (DBpedia) ↔ text. |
 
-Both loaders consume the files fetched by `scripts/fetch-corpora.sh` into `samples/corpora/external/`.
+Public corpus loaders consume the files fetched by `scripts/fetch-corpora.sh`
+into `samples/corpora/external/`. HITL regression fixtures are generated from
+curation feedback and can be stored under `samples/corpora/hitl-regression/`.
 
 ## Running
 
@@ -46,6 +49,12 @@ python -m benchmarks.ontology_extraction.run_benchmark \
     --dataset webnlg \
     --adapter aoe \
     --alias-file benchmarks/ontology_extraction/aliases/domain.json
+
+# HITL regression fixture exported from the admin feedback-learning endpoint.
+python -m benchmarks.ontology_extraction.run_benchmark \
+    --dataset hitl-regression \
+    --adapter aoe \
+    --corpus-root samples/corpora/hitl-regression/hitl_regression.json
 ```
 
 Alias files use canonical term → aliases groups:
@@ -60,6 +69,12 @@ Alias files use canonical term → aliases groups:
   }
 }
 ```
+
+HITL regression fixtures use the `hitl-regression-v1` schema emitted in the
+`benchmark_fixture` field of `GET /api/v1/admin/feedback-learning`. Positive
+gold classes/relations are scored immediately; negative classes/relations from
+reject decisions are retained in `source_meta` for review and future
+negative-example scoring.
 
 Make target:
 
@@ -84,6 +99,7 @@ benchmarks/ontology_extraction/
 ├── datasets/
 │   ├── __init__.py
 │   ├── base.py                    (GoldDocument type + shared loader helpers)
+│   ├── hitl_regression.py
 │   ├── redocred.py
 │   └── webnlg.py
 └── tests/

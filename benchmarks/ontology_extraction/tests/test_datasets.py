@@ -10,9 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from benchmarks.ontology_extraction.datasets import redocred, webnlg
+from benchmarks.ontology_extraction.datasets import hitl_regression, redocred, webnlg
 from benchmarks.ontology_extraction.metrics import ClassMention, Triple
-
 
 # ─────────────────────────── Re-DocRED ────────────────────────────
 
@@ -143,3 +142,62 @@ class TestWebnlgLoader:
         empty.mkdir()
         with pytest.raises(FileNotFoundError):
             list(webnlg.load(empty))
+
+
+# ─────────────────────── HITL Regression ────────────────────────
+
+
+HITL_FIXTURE = {
+    "schema_version": "hitl-regression-v1",
+    "ontology_id": "onto_1",
+    "generated_from": "curation_decisions",
+    "documents": [
+        {
+            "id": "hitl-d1-Customer",
+            "text": "A customer opens an account.",
+            "gold_classes": [{"label": "Customer", "type": "DomainClass"}],
+            "gold_relations": [
+                {"head": "Customer", "relation": "opens", "tail": "Account"}
+            ],
+            "negative_classes": [{"label": "Ghost", "type": ""}],
+            "negative_relations": [],
+            "source_meta": {
+                "decision_key": "d1",
+                "issue_reasons": ["bad_label"],
+            },
+        }
+    ],
+}
+
+
+class TestHitlRegressionLoader:
+    def test_loads_hitl_regression_fixture(self, tmp_path: Path):
+        root = tmp_path / "hitl"
+        root.mkdir()
+        (root / "hitl_regression.json").write_text(
+            json.dumps(HITL_FIXTURE),
+            encoding="utf-8",
+        )
+
+        docs = list(hitl_regression.load(root))
+
+        assert len(docs) == 1
+        doc = docs[0]
+        assert doc.id == "hitl-d1-Customer"
+        assert ClassMention.of("Customer", "DomainClass") in doc.gold_classes
+        assert Triple.of("Customer", "opens", "Account") in doc.gold_relations
+        assert doc.source_meta["negative_classes"] == [{"label": "Ghost", "type": ""}]
+        assert doc.source_meta["decision_key"] == "d1"
+
+    def test_accepts_direct_fixture_file_path(self, tmp_path: Path):
+        fixture = tmp_path / "fixture.json"
+        fixture.write_text(json.dumps(HITL_FIXTURE), encoding="utf-8")
+
+        assert len(list(hitl_regression.load(fixture, limit=1))) == 1
+
+    def test_rejects_wrong_schema_version(self, tmp_path: Path):
+        fixture = tmp_path / "hitl_regression.json"
+        fixture.write_text(json.dumps({"schema_version": "nope"}), encoding="utf-8")
+
+        with pytest.raises(ValueError):
+            list(hitl_regression.load(fixture))

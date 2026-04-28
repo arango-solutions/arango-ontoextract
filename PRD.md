@@ -2113,6 +2113,7 @@ These metrics are intentionally observational. They do not automatically change 
 | FR-13.21 | Gated feedback learning artifacts | The backend can derive reviewable learning artifacts from HITL feedback via `GET /api/v1/admin/feedback-learning`: prompt-guidance examples, regression candidates, action counts, and issue-reason summaries. These artifacts carry `auto_apply: false` and are safe for offline review, benchmark generation, or manually approved prompt updates. |
 | FR-13.22 | Alias-aware benchmark matching | Ontology extraction benchmarks support exact matching by default and optional alias-aware canonicalization via a JSON alias file. Alias groups can normalize class/entity labels and relation names before precision/recall/F1 computation, reducing false mismatches from harmless terminology differences. |
 | FR-13.23 | Benchmark runtime reporting | Ontology extraction benchmark reports include per-document `duration_ms` plus aggregate `runtime.total_duration_ms` and `runtime.avg_duration_ms`, enabling quality-per-minute comparisons across adapters, models, and prompt versions. |
+| FR-13.24 | HITL regression benchmark fixtures | Feedback-learning responses include a `benchmark_fixture` payload using schema `hitl-regression-v1`. The benchmark harness supports `--dataset hitl-regression` to load these fixtures, score positive gold assertions, and retain rejected negative assertions in source metadata for review/future negative-example metrics. |
 
 #### 6.13.2b Gated HITL Learning Artifacts
 
@@ -2122,6 +2123,7 @@ The first learning-loop implementation is intentionally **extractive**, not adap
 |----------|--------|-----|
 | Prompt guidance examples | `edit_diff`, `issue_reasons`, curator notes | Candidate few-shot guidance for future prompt versions |
 | Regression candidates | Rejects and high-risk issue reasons (`missing_evidence`, `hallucinated`, `wrong_parent`, `wrong_relationship`, `domain_mismatch`) | Test cases to ensure future extraction does not repeat the same error |
+| Benchmark fixture | Regression candidates | `hitl-regression-v1` JSON consumed by `--dataset hitl-regression` |
 | Feedback summary | Action counts and issue-reason counts | Prioritization signal for prompt, validator, or model improvements |
 
 The service must preserve the following invariant:
@@ -2133,6 +2135,27 @@ The service must preserve the following invariant:
 ```
 
 No artifact may change production extraction behavior until it is attached to a versioned prompt/config update and evaluated against the benchmark suite. Admin users can inspect/export these artifacts with `GET /api/v1/admin/feedback-learning`, optionally scoped by `ontology_id` and bounded by `limit`.
+
+The generated benchmark fixture has this high-level shape:
+
+```json
+{
+  "schema_version": "hitl-regression-v1",
+  "documents": [
+    {
+      "id": "hitl-d1-Customer",
+      "text": "Source text or curator note",
+      "gold_classes": [{ "label": "Customer", "type": "DomainClass" }],
+      "gold_relations": [],
+      "negative_classes": [{ "label": "HallucinatedClass", "type": "" }],
+      "negative_relations": [],
+      "source_meta": { "decision_key": "d1", "issue_reasons": ["hallucinated"] }
+    }
+  ]
+}
+```
+
+The current benchmark scorer evaluates positive `gold_classes` and `gold_relations`. Negative assertions are retained for manual review and future negative-example scoring.
 
 #### 6.13.2c Alias-Aware Benchmark Matching
 
@@ -2498,7 +2521,7 @@ The `ontology_constraints` collection already exists in §5.1 with fields for `o
 |--------|------|-------------|
 | `POST` | `/api/v1/admin/reset` | **Development/demo only.** Purges all extracted data: truncates `ontology_classes`, `ontology_properties`, `ontology_constraints`, all edge collections (`subclass_of`, `has_property`, `extracted_from`, `extends_domain`, `related_to`, `imports`, `has_chunk`, `produced_by`, `equivalent_class`, `merge_candidate`), `extraction_runs`, `ontology_registry`, `curation_decisions`, `quality_history`. Removes all per-ontology named graphs (`ontology_*`). Preserves `documents` and `chunks` so re-extraction can be triggered without re-upload. Preserves ArangoDB Visualizer configuration assets (`_graphThemeStore`, `_editor_saved_queries`, `_canvasActions`, `_viewpoints`). Requires `ALLOW_SYSTEM_RESET=true` in environment. Returns `{ reset: true, collections_truncated: [...], graphs_removed: [...] }`. |
 | `POST` | `/api/v1/admin/reset/full` | **Development/demo only.** Full purge: same as soft reset plus documents and chunks. Removes all per-ontology named graphs. Requires `ALLOW_SYSTEM_RESET=true`. |
-| `GET` | `/api/v1/admin/feedback-learning` | Returns gated HITL learning artifacts for offline review/export. Query params: optional `ontology_id`, `limit` 1–1000. Response includes `auto_apply: false`, summary counts, prompt-guidance examples, and regression candidates. |
+| `GET` | `/api/v1/admin/feedback-learning` | Returns gated HITL learning artifacts for offline review/export. Query params: optional `ontology_id`, `limit` 1–1000. Response includes `auto_apply: false`, summary counts, prompt-guidance examples, regression candidates, and a `benchmark_fixture` payload using `hitl-regression-v1`. |
 
 **Deletion Context Summary:**
 

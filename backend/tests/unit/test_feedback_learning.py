@@ -74,6 +74,12 @@ class TestBuildFeedbackLearningExamples:
         reject_example = result["regression_candidates"][0]
         assert reject_example["decision_key"] == "d_reject"
         assert "source_chunk_id" in reject_example["prompt_guidance"]
+        fixture = result["benchmark_fixture"]
+        assert fixture["schema_version"] == "hitl-regression-v1"
+        assert fixture["summary"]["documents"] == 1
+        assert fixture["documents"][0]["negative_classes"] == [
+            {"label": "Ghost", "type": ""}
+        ]
 
     @patch("app.services.feedback_learning.run_aql", return_value=[])
     def test_clamps_limit_and_filters_by_ontology(self, mock_run_aql):
@@ -83,3 +89,47 @@ class TestBuildFeedbackLearningExamples:
 
         bind_vars = mock_run_aql.call_args.kwargs["bind_vars"]
         assert bind_vars == {"ontology_id": "onto_2", "limit": 1000}
+
+
+class TestBuildHitlRegressionFixture:
+    def test_exports_positive_edit_and_negative_reject_documents(self):
+        from app.services.feedback_learning import build_hitl_regression_fixture
+
+        result = build_hitl_regression_fixture(
+            [
+                {
+                    "decision_key": "edit1",
+                    "entity_key": "Client",
+                    "entity_type": "class",
+                    "action": "edit",
+                    "issue_reasons": ["bad_label"],
+                    "source_text": "A customer opens an account.",
+                    "after": {"label": "Customer", "type": "DomainClass"},
+                    "prompt_guidance": "Prefer Customer.",
+                },
+                {
+                    "decision_key": "reject1",
+                    "entity_key": "Ghost",
+                    "entity_type": "class",
+                    "action": "reject",
+                    "issue_reasons": ["hallucinated"],
+                    "notes": "No source support.",
+                    "prompt_guidance": "Do not extract unsupported classes.",
+                },
+            ],
+            ontology_id="onto_1",
+        )
+
+        assert result["ontology_id"] == "onto_1"
+        assert result["summary"] == {
+            "documents": 2,
+            "negative_examples": 1,
+            "positive_classes": 1,
+            "positive_relations": 0,
+        }
+        assert result["documents"][0]["gold_classes"] == [
+            {"label": "Customer", "type": "DomainClass"}
+        ]
+        assert result["documents"][1]["negative_classes"] == [
+            {"label": "Ghost", "type": ""}
+        ]

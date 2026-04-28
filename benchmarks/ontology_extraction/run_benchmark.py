@@ -27,7 +27,7 @@ from time import perf_counter
 from benchmarks.ontology_extraction import metrics
 from benchmarks.ontology_extraction.adapters.base import ExtractionAdapter
 from benchmarks.ontology_extraction.adapters.mock import MockAdapter
-from benchmarks.ontology_extraction.datasets import GoldDocument, redocred, webnlg
+from benchmarks.ontology_extraction.datasets import GoldDocument, hitl_regression, redocred, webnlg
 
 log = logging.getLogger("benchmark")
 
@@ -36,6 +36,7 @@ DatasetLoader = Callable[[Path, int | None], Iterator[GoldDocument]]
 
 
 DATASETS: dict[str, tuple[DatasetLoader, str]] = {
+    "hitl-regression": (hitl_regression.load, "samples/corpora/hitl-regression"),
     "redocred": (redocred.load, "samples/corpora/external/redocred"),
     "webnlg": (webnlg.load, "samples/corpora/external/webnlg"),
 }

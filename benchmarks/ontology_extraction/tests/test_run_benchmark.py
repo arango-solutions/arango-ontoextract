@@ -22,6 +22,24 @@ WEBNLG_FIXTURE_XML = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+HITL_FIXTURE_JSON = {
+    "schema_version": "hitl-regression-v1",
+    "documents": [
+        {
+            "id": "Hitl1",
+            "text": "Alice knows Bob.",
+            "gold_classes": [
+                {"label": "Alice", "type": ""},
+                {"label": "Bob", "type": ""},
+            ],
+            "gold_relations": [
+                {"head": "Alice", "relation": "knows", "tail": "Bob"},
+            ],
+        }
+    ],
+}
+
+
 def _write_fixture(tmp_path: Path) -> Path:
     root = tmp_path / "webnlg"
     root.mkdir()
@@ -90,6 +108,23 @@ class TestRunBenchmark:
         assert "micro" in payload and "macro" in payload
         assert payload["runtime"]["total_duration_ms"] >= 0
         assert payload["per_document"][0]["duration_ms"] >= 0
+
+    def test_runs_hitl_regression_dataset(self, tmp_path: Path):
+        root = tmp_path / "hitl"
+        root.mkdir()
+        (root / "hitl_regression.json").write_text(
+            json.dumps(HITL_FIXTURE_JSON),
+            encoding="utf-8",
+        )
+
+        report = run_benchmark.run(
+            dataset="hitl-regression",
+            adapter_name="mock",
+            corpus_root=root,
+        )
+
+        assert len(report.document_scores) == 1
+        assert report.micro_relations.tp == 1
 
     def test_cli_accepts_alias_file(self, tmp_path: Path):
         corpus = _write_fixture(tmp_path)
