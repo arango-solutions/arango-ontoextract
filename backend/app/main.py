@@ -30,6 +30,7 @@ from app.api.metrics import PrometheusMiddleware
 from app.api.rate_limit import RateLimitMiddleware
 from app.config import settings
 from app.db.client import close_db
+from app.middleware.strip_service_prefix import StripServicePrefixMiddleware
 
 logging.basicConfig(
     level=getattr(logging, settings.app_log_level.upper(), logging.INFO),
@@ -58,12 +59,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     log.info("shutdown_complete")
 
 
-app = FastAPI(
-    title="Arango-OntoExtract",
-    description="LLM-driven ontology extraction and curation platform",
-    version="0.1.0",
-    lifespan=lifespan,
-)
+_fastapi_kw: dict = {
+    "title": "Arango-OntoExtract",
+    "description": "LLM-driven ontology extraction and curation platform",
+    "version": "0.1.0",
+    "lifespan": lifespan,
+}
+if settings.service_url_path_prefix:
+    _fastapi_kw["root_path"] = settings.service_url_path_prefix
+
+app = FastAPI(**_fastapi_kw)
 
 app.add_middleware(
     CORSMiddleware,
@@ -80,6 +85,10 @@ app.add_middleware(PrometheusMiddleware)
 
 if settings.rate_limit_enabled:
     app.add_middleware(RateLimitMiddleware)
+
+if settings.service_url_path_prefix:
+    # Outermost: strip public prefix before routing (see StripServicePrefixMiddleware).
+    app.add_middleware(StripServicePrefixMiddleware, prefix=settings.service_url_path_prefix)
 
 app.include_router(auth.router)
 app.include_router(health.router)

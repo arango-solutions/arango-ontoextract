@@ -5,6 +5,8 @@ from typing import Any
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.middleware.strip_service_prefix import normalize_service_url_path_prefix
+
 
 def _resolved_env_files() -> tuple[str, ...]:
     """Paths to optional `.env` files — stable regardless of process cwd.
@@ -93,6 +95,11 @@ class Settings(BaseSettings):
     # -- CORS ---------------------------------------------------------------
     cors_origins: str = "http://localhost:3000"
 
+    # -- Public URL (reverse proxy / Container Manager) --------------------
+    #: External path prefix before routes, e.g.
+    #: ``/_service/uds/_db/ontoextract/arango-ontoextract`` — no trailing slash.
+    service_url_path_prefix: str = ""
+
     # -- Rate Limiting -----------------------------------------------------
     rate_limit_enabled: bool = True
     rate_limit_default: int = 100
@@ -117,6 +124,11 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return v.strip().lower()
         return v
+
+    @field_validator("service_url_path_prefix", mode="after")
+    @classmethod
+    def _normalize_service_url_path_prefix_setting(cls, v: str) -> str:
+        return normalize_service_url_path_prefix(v)
 
     # -- Deployment-mode-derived properties --------------------------------
 
