@@ -2114,6 +2114,7 @@ These metrics are intentionally observational. They do not automatically change 
 | FR-13.22 | Alias-aware benchmark matching | Ontology extraction benchmarks support exact matching by default and optional alias-aware canonicalization via a JSON alias file. Alias groups can normalize class/entity labels and relation names before precision/recall/F1 computation, reducing false mismatches from harmless terminology differences. |
 | FR-13.23 | Benchmark runtime reporting | Ontology extraction benchmark reports include per-document `duration_ms` plus aggregate `runtime.total_duration_ms` and `runtime.avg_duration_ms`, enabling quality-per-minute comparisons across adapters, models, and prompt versions. |
 | FR-13.24 | HITL regression benchmark fixtures | Feedback-learning responses include a `benchmark_fixture` payload using schema `hitl-regression-v1`. The benchmark harness supports `--dataset hitl-regression` to load these fixtures, score positive gold assertions, and retain rejected negative assertions in source metadata for review/future negative-example metrics. |
+| FR-13.25 | Benchmark cost and adapter metadata | Benchmark adapters can attach per-document metadata: `model`, `prompt_version`, token counts, and `estimated_cost_usd`. Aggregate reports include total tokens, total estimated cost, quality-per-dollar, and quality-per-minute when enough metadata is available. |
 
 #### 6.13.2b Gated HITL Learning Artifacts
 
@@ -2194,6 +2195,27 @@ Benchmark reports include runtime metadata alongside quality metrics:
 ```
 
 This supports quality-per-minute analysis and provides the timing foundation for future cost-per-quality reporting once adapter-level token and price metadata are available.
+
+Adapters may also attach per-document metadata:
+
+```json
+{
+  "metadata": {
+    "model": "gpt-4.1-mini",
+    "prompt_version": "tier1-standard-v3",
+    "input_tokens": 1200,
+    "output_tokens": 300,
+    "total_tokens": 1500,
+    "estimated_cost_usd": 0.0123
+  },
+  "efficiency": {
+    "quality_per_dollar": 42.0,
+    "quality_per_minute": 1.7
+  }
+}
+```
+
+When an adapter does not provide cost metadata, cost-dependent efficiency values are `null` rather than guessed.
 
 #### 6.13.3 Ontology Quality Dashboard
 

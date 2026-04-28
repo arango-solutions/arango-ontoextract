@@ -107,7 +107,10 @@ class TestRunBenchmark:
         assert payload["documents"] == 1
         assert "micro" in payload and "macro" in payload
         assert payload["runtime"]["total_duration_ms"] >= 0
+        assert payload["metadata"]["total_tokens"] == 0
+        assert payload["efficiency"]["quality_per_dollar"] is None
         assert payload["per_document"][0]["duration_ms"] >= 0
+        assert payload["per_document"][0]["metadata"]["model"] == "mock"
 
     def test_runs_hitl_regression_dataset(self, tmp_path: Path):
         root = tmp_path / "hitl"

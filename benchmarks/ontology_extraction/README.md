@@ -11,6 +11,7 @@ Given a corpus of documents each annotated with gold **classes** (entities with 
    - **Classes** — does the extractor recover the gold entity set?
    - **Relations** — does the extractor recover the gold triple set?
 3. Aggregates across documents and reports micro and macro averages.
+4. Reports runtime, token/cost metadata, and efficiency metrics when adapters provide them.
 
 All matching is exact (case-insensitive, whitespace-normalized) by default.
 For domain evaluations where harmless terminology differences are expected, pass
@@ -75,6 +76,29 @@ HITL regression fixtures use the `hitl-regression-v1` schema emitted in the
 gold classes/relations are scored immediately; negative classes/relations from
 reject decisions are retained in `source_meta` for review and future
 negative-example scoring.
+
+Benchmark reports include:
+
+```json
+{
+  "runtime": {
+    "total_duration_ms": 1200.0,
+    "avg_duration_ms": 300.0
+  },
+  "metadata": {
+    "total_estimated_cost_usd": 0.05,
+    "total_tokens": 4200
+  },
+  "efficiency": {
+    "quality_per_dollar": 14.2,
+    "quality_per_minute": 0.8
+  }
+}
+```
+
+Adapters can attach per-document metadata such as `model`, `prompt_version`,
+`input_tokens`, `output_tokens`, `total_tokens`, and `estimated_cost_usd`.
+Cost-dependent efficiency fields are `null` when no cost metadata is available.
 
 Make target:
 

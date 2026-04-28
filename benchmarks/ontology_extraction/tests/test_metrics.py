@@ -131,6 +131,7 @@ def _ds(
     cls: tuple[int, int, int],
     rel: tuple[int, int, int],
     duration_ms: float = 0.0,
+    metadata: dict | None = None,
 ) -> DocumentScore:
     from benchmarks.ontology_extraction.metrics import _prf  # type: ignore[attr-defined]
 
@@ -139,6 +140,7 @@ def _ds(
         classes=_prf(*cls),
         relations=_prf(*rel),
         duration_ms=duration_ms,
+        metadata=metadata or {},
     )
 
 
@@ -179,6 +181,35 @@ class TestAggregate:
         assert payload["runtime"]["total_duration_ms"] == pytest.approx(32.0)
         assert payload["runtime"]["avg_duration_ms"] == pytest.approx(16.0)
         assert payload["per_document"][0]["duration_ms"] == 10.5
+
+    def test_aggregate_reports_cost_and_efficiency_metrics(self):
+        scores = [
+            _ds(
+                "a",
+                cls=(1, 0, 0),
+                rel=(1, 0, 0),
+                duration_ms=30_000,
+                metadata={"estimated_cost_usd": 0.25, "total_tokens": 100},
+            ),
+            _ds(
+                "b",
+                cls=(1, 0, 0),
+                rel=(1, 0, 0),
+                duration_ms=30_000,
+                metadata={"estimated_cost_usd": 0.25, "total_tokens": 150},
+            ),
+        ]
+
+        report = aggregate(scores)
+        payload = report.as_dict()
+
+        assert report.total_estimated_cost_usd == pytest.approx(0.5)
+        assert report.total_tokens == 250
+        assert report.quality_per_dollar == pytest.approx(2.0)
+        assert report.quality_per_minute == pytest.approx(1.0)
+        assert payload["metadata"]["total_estimated_cost_usd"] == pytest.approx(0.5)
+        assert payload["metadata"]["total_tokens"] == 250
+        assert payload["per_document"][0]["metadata"]["total_tokens"] == 100
 
     def test_macro_skips_empty_documents(self):
         scores = [

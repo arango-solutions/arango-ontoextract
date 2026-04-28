@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from benchmarks.ontology_extraction.adapters.base import ExtractionAdapter, ExtractionResult
 from benchmarks.ontology_extraction.metrics import ClassMention, Triple
 
-
 _WORD = re.compile(r"\b([A-Z][a-zA-Z][a-zA-Z0-9_-]+)\b")
 _SENT = re.compile(r"[^.!?]+[.!?]")
 
@@ -41,7 +40,7 @@ class MockAdapter(ExtractionAdapter):
     )
     name: str = "mock"
 
-    def extract(self, document_id: str, text: str) -> ExtractionResult:  # noqa: ARG002
+    def extract(self, document_id: str, text: str) -> ExtractionResult:
         if not isinstance(text, str):
             raise TypeError("MockAdapter.extract(): text must be a string")
 
@@ -63,4 +62,14 @@ class MockAdapter(ExtractionAdapter):
                     if _WORD.match(head) and _WORD.match(tail):
                         relations.add(Triple.of(head, low, tail))
 
-        return ExtractionResult(classes=classes, relations=relations)
+        return ExtractionResult(
+            classes=classes,
+            relations=relations,
+            metadata={
+                "model": "mock",
+                "prompt_version": "mock-v1",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "estimated_cost_usd": 0.0,
+            },
+        )

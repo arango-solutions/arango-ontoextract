@@ -77,6 +77,7 @@ def score_document(
             relation_aliases=relation_aliases,
         ),
         duration_ms=duration_ms,
+        metadata=_normalize_result_metadata(result.metadata),
     )
 
 
@@ -134,6 +135,13 @@ def _print_summary(report: metrics.AggregateReport) -> None:
         f"total={report.total_duration_ms:.1f}ms "
         f"avg/document={report.avg_duration_ms:.1f}ms"
     )
+    print(
+        "Efficiency: "
+        f"tokens={report.total_tokens} "
+        f"cost=${report.total_estimated_cost_usd:.4f} "
+        f"quality/$={_fmt_optional(report.quality_per_dollar)} "
+        f"quality/min={_fmt_optional(report.quality_per_minute)}"
+    )
 
 
 def _print_prf(label: str, prf: metrics.PRF) -> None:
@@ -141,6 +149,32 @@ def _print_prf(label: str, prf: metrics.PRF) -> None:
         f"{label}  P={prf.precision:.3f}  R={prf.recall:.3f}  F1={prf.f1:.3f}  "
         f"(tp={prf.tp} fp={prf.fp} fn={prf.fn})"
     )
+
+
+def _fmt_optional(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.3f}"
+
+
+def _normalize_result_metadata(metadata: dict) -> dict:
+    normalized = dict(metadata or {})
+    input_tokens = _int_or_zero(normalized.get("input_tokens"))
+    output_tokens = _int_or_zero(normalized.get("output_tokens"))
+    total_tokens = _int_or_zero(normalized.get("total_tokens"))
+    if not total_tokens and (input_tokens or output_tokens):
+        total_tokens = input_tokens + output_tokens
+    normalized["input_tokens"] = input_tokens
+    normalized["output_tokens"] = output_tokens
+    normalized["total_tokens"] = total_tokens
+    normalized["estimated_cost_usd"] = _float_or_zero(normalized.get("estimated_cost_usd"))
+    return normalized
+
+
+def _int_or_zero(value) -> int:
+    return int(value) if isinstance(value, int | float) else 0
+
+
+def _float_or_zero(value) -> float:
+    return float(value) if isinstance(value, int | float) else 0.0
 
 
 def main(argv: list[str] | None = None) -> int:

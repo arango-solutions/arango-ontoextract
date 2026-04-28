@@ -190,6 +190,7 @@ class DocumentScore:
     classes: PRF
     relations: PRF
     duration_ms: float = 0.0
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -207,6 +208,10 @@ class AggregateReport:
     macro_relations: PRF = field(default_factory=lambda: _prf(0, 0, 0))
     total_duration_ms: float = 0.0
     avg_duration_ms: float = 0.0
+    total_estimated_cost_usd: float = 0.0
+    total_tokens: int = 0
+    quality_per_dollar: float | None = None
+    quality_per_minute: float | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -214,6 +219,14 @@ class AggregateReport:
             "runtime": {
                 "total_duration_ms": self.total_duration_ms,
                 "avg_duration_ms": self.avg_duration_ms,
+            },
+            "metadata": {
+                "total_estimated_cost_usd": self.total_estimated_cost_usd,
+                "total_tokens": self.total_tokens,
+            },
+            "efficiency": {
+                "quality_per_dollar": self.quality_per_dollar,
+                "quality_per_minute": self.quality_per_minute,
             },
             "micro": {
                 "classes": self.micro_classes.as_dict(),
@@ -227,6 +240,7 @@ class AggregateReport:
                 {
                     "document_id": ds.document_id,
                     "duration_ms": ds.duration_ms,
+                    "metadata": ds.metadata,
                     "classes": ds.classes.as_dict(),
                     "relations": ds.relations.as_dict(),
                 }
@@ -249,6 +263,8 @@ def aggregate(document_scores: list[DocumentScore]) -> AggregateReport:
     micro_fn_r = sum(d.relations.fn for d in document_scores)
     total_duration_ms = sum(d.duration_ms for d in document_scores)
     avg_duration_ms = total_duration_ms / len(document_scores)
+    total_estimated_cost_usd = sum(_float_meta(d, "estimated_cost_usd") for d in document_scores)
+    total_tokens = sum(_int_meta(d, "total_tokens") for d in document_scores)
 
     def _macro(getter) -> PRF:
         non_empty = [
@@ -267,12 +283,32 @@ def aggregate(document_scores: list[DocumentScore]) -> AggregateReport:
         fn = sum(p.fn for p in non_empty)
         return PRF(precision=precision, recall=recall, f1=f1, tp=tp, fp=fp, fn=fn)
 
+    micro_classes = _prf(micro_tp_c, micro_fp_c, micro_fn_c)
+    micro_relations = _prf(micro_tp_r, micro_fp_r, micro_fn_r)
+    quality_score = (micro_classes.f1 + micro_relations.f1) / 2
+    duration_minutes = total_duration_ms / 60000
     return AggregateReport(
         document_scores=document_scores,
-        micro_classes=_prf(micro_tp_c, micro_fp_c, micro_fn_c),
-        micro_relations=_prf(micro_tp_r, micro_fp_r, micro_fn_r),
+        micro_classes=micro_classes,
+        micro_relations=micro_relations,
         macro_classes=_macro(lambda d: d.classes),
         macro_relations=_macro(lambda d: d.relations),
         total_duration_ms=total_duration_ms,
         avg_duration_ms=avg_duration_ms,
+        total_estimated_cost_usd=total_estimated_cost_usd,
+        total_tokens=total_tokens,
+        quality_per_dollar=(
+            quality_score / total_estimated_cost_usd if total_estimated_cost_usd else None
+        ),
+        quality_per_minute=quality_score / duration_minutes if duration_minutes else None,
     )
+
+
+def _float_meta(score: DocumentScore, key: str) -> float:
+    value = score.metadata.get(key)
+    return float(value) if isinstance(value, int | float) else 0.0
+
+
+def _int_meta(score: DocumentScore, key: str) -> int:
+    value = score.metadata.get(key)
+    return int(value) if isinstance(value, int | float) else 0

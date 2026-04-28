@@ -13,6 +13,7 @@ class ExtractionResult:
 
     classes: set[ClassMention] = field(default_factory=set)
     relations: set[Triple] = field(default_factory=set)
+    metadata: dict = field(default_factory=dict)
 
     def is_empty(self) -> bool:
         return not self.classes and not self.relations

@@ -35,7 +35,7 @@ class AOEAdapter(ExtractionAdapter):
 
     def extract(self, document_id: str, text: str) -> ExtractionResult:
         try:
-            from backend.app.extraction.pipeline import run_pipeline  # noqa: PLC0415
+            from backend.app.extraction.pipeline import run_pipeline
         except ImportError as exc:
             raise RuntimeError(
                 "AOEAdapter requires the backend package — install backend deps "
@@ -111,4 +111,19 @@ def _pipeline_state_to_result(state: dict[str, Any]) -> ExtractionResult:
             if head and rtype and tail:
                 relations.add(Triple.of(str(head), str(rtype), str(tail)))
 
-    return ExtractionResult(classes=classes, relations=relations)
+    stats = state.get("stats") or {}
+    token_usage = stats.get("token_usage") or {}
+    return ExtractionResult(
+        classes=classes,
+        relations=relations,
+        metadata={
+            "model": stats.get("model") or state.get("model"),
+            "prompt_version": stats.get("prompt_version") or state.get("prompt_version"),
+            "input_tokens": token_usage.get("input_tokens") or token_usage.get("prompt_tokens"),
+            "output_tokens": (
+                token_usage.get("output_tokens") or token_usage.get("completion_tokens")
+            ),
+            "total_tokens": token_usage.get("total_tokens"),
+            "estimated_cost_usd": stats.get("estimated_cost_usd") or stats.get("cost_usd"),
+        },
+    )

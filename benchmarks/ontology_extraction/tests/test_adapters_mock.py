@@ -41,6 +41,8 @@ class TestMockAdapter:
         adapter = MockAdapter()
         result = adapter.extract("doc-empty", "")
         assert result.is_empty()
+        assert result.metadata["model"] == "mock"
+        assert result.metadata["estimated_cost_usd"] == 0.0
 
     def test_non_string_text_raises(self):
         adapter = MockAdapter()
