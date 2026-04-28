@@ -2,11 +2,12 @@
 
 import { useEffect } from "react";
 import { clearToken } from "@/lib/auth";
+import { withBasePath } from "@/lib/base-path";
 
 export default function LogoutPage() {
   useEffect(() => {
     clearToken();
-    window.location.href = "/login";
+    window.location.href = withBasePath("/login");
   }, []);
 
   return (

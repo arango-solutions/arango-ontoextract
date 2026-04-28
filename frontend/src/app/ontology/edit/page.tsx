@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { api, ApiError, getApiBaseUrl, type PaginatedResponse } from "@/lib/api-client";
+import { api, ApiError, backendUrl, type PaginatedResponse } from "@/lib/api-client";
 import type {
   OntologyClass,
   OntologyProperty,
@@ -203,7 +203,6 @@ function OntologyEditorPageInner() {
 
   const ontologyName = ontologyMeta?.name ?? ontologyId;
   const ontologyDescription = ontologyMeta?.description ?? "";
-  const baseUrl = getApiBaseUrl();
 
   if (!ontologyId && !loading) {
     return (
@@ -307,7 +306,7 @@ function OntologyEditorPageInner() {
                     return (
                       <a
                         key={fmt}
-                        href={`${baseUrl}/api/v1/ontology/${ontologyId}/export?format=${fmt}`}
+                        href={backendUrl(`/api/v1/ontology/${ontologyId}/export?format=${fmt}`)}
                         target="_blank"
                         rel="noopener noreferrer"
                         onMouseDown={(e) => e.preventDefault()}
@@ -418,12 +417,12 @@ function OntologyEditorPageInner() {
                     >
                       Add First Class
                     </button>
-                    <a
+                    <Link
                       href="/library"
                       className="text-sm px-4 py-2 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50"
                     >
                       Back to Library
-                    </a>
+                    </Link>
                   </div>
                 </div>
               </div>

@@ -64,7 +64,7 @@ function shouldUseSameOriginApiProxy(envUrl: string | undefined): boolean {
   }
 }
 
-/** Next.js ``basePath`` (baked at build). Same value as backend ``SERVICE_URL_PATH_PREFIX`` when bundling. */
+/** Inlined from ``SERVICE_URL_PATH_PREFIX`` (see ``frontend/next.config.js``). */
 function nextPublicBasePath(): string {
   return (process.env.NEXT_PUBLIC_BASE_PATH || "").replace(/\/$/, "");
 }
@@ -219,6 +219,15 @@ export const api = new ApiClient();
  */
 export function getApiBaseUrl(): string {
   return effectiveApiBaseUrl();
+}
+
+/**
+ * Full URL for ``fetch`` / ``<a href>`` to this FastAPI app (``/ready``, ``/health``, ``/api/v1/...``).
+ * Uses ``getApiBaseUrl()`` so paths include ``SERVICE_URL_PATH_PREFIX`` when the static bundle is deployed behind it.
+ */
+export function backendUrl(path: string): string {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return buildApiUrl(getApiBaseUrl(), p);
 }
 
 /**

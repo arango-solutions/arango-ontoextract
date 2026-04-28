@@ -2,7 +2,8 @@
 
 import { FormEvent, useState } from "react";
 import { setToken } from "@/lib/auth";
-import { getApiBaseUrl } from "@/lib/api-client";
+import { backendUrl } from "@/lib/api-client";
+import { resolvedPostLoginHref } from "@/lib/base-path";
 
 type LoginState = "idle" | "loading" | "error";
 
@@ -18,9 +19,7 @@ export default function LoginPage() {
     setErrorMsg("");
 
     try {
-      const baseUrl = getApiBaseUrl();
-
-      const res = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      const res = await fetch(backendUrl("/api/v1/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -38,7 +37,7 @@ export default function LoginPage() {
 
       const params = new URLSearchParams(window.location.search);
       const redirect = params.get("redirect") ?? "/";
-      window.location.href = redirect;
+      window.location.href = resolvedPostLoginHref(redirect);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
       setState("error");

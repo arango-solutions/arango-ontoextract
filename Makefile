@@ -146,8 +146,8 @@ docker-unified-down: ## Stop unified AOE with docker-compose
 package-arango-manual: ## Build aoe-myservice.tar.gz (flat: entrypoint + pyproject at archive root)
 	bash scripts/package-arango-manual.sh
 
-package-arango-manual-all: ## Same + Next static export (needs SERVICE_URL_PATH_PREFIX; npm on PATH)
-	PACKAGE_INCLUDE_FRONTEND=1 bash scripts/package-arango-manual.sh
+package-arango-manual-all: ## Same + Next static export (SERVICE_URL_PATH_PREFIX from repo .env via include)
+	PACKAGE_INCLUDE_FRONTEND=1 SERVICE_URL_PATH_PREFIX="$(SERVICE_URL_PATH_PREFIX)" bash scripts/package-arango-manual.sh
 
 # ---------------------------------------------------------------------------
 # Cleanup

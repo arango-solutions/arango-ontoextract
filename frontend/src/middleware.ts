@@ -8,6 +8,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
+const BASE_PATH = (process.env.NEXT_PUBLIC_BASE_PATH || "").replace(/\/$/, "");
+
 const PUBLIC_PATHS = new Set([
   "/login",
   "/logout",
@@ -43,7 +45,8 @@ export function middleware(request: NextRequest): NextResponse | undefined {
     request.headers.get("authorization")?.replace("Bearer ", "");
 
   if (!token) {
-    const loginUrl = new URL("/login", request.url);
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = BASE_PATH ? `${BASE_PATH}/login` : "/login";
     loginUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(loginUrl);
   }

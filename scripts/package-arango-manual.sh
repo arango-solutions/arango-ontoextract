@@ -54,7 +54,7 @@ if [[ "${PACKAGE_INCLUDE_FRONTEND:-0}" == "1" ]]; then
 		echo "error: PACKAGE_INCLUDE_FRONTEND=1 requires npm on PATH" >&2
 		exit 1
 	fi
-	echo "==> Building static frontend (NEXT_PUBLIC_BASE_PATH=${PREFIX})..."
+	echo "==> Building static frontend (SERVICE_URL_PATH_PREFIX=${PREFIX})..."
 	(
 		cd "${REPO_ROOT}/frontend"
 		if [[ -f package-lock.json ]]; then
@@ -63,9 +63,8 @@ if [[ "${PACKAGE_INCLUDE_FRONTEND:-0}" == "1" ]]; then
 			npm install
 		fi
 		rm -rf out .next
-		AOE_STATIC_EXPORT=1 \
-			NEXT_PUBLIC_BASE_PATH="${PREFIX}" \
-			npm run build
+		export SERVICE_URL_PATH_PREFIX="${PREFIX}"
+		AOE_STATIC_EXPORT=1 npm run build
 	)
 	mkdir -p "${STAGE}/${NAME}/frontend"
 	cp -R "${REPO_ROOT}/frontend/out" "${STAGE}/${NAME}/frontend/out"

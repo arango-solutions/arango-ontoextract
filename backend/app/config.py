@@ -96,8 +96,8 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
 
     # -- Public URL (reverse proxy / Container Manager) --------------------
-    #: External path prefix before routes, e.g.
-    #: ``/_service/uds/_db/ontoextract/arango-ontoextract`` — no trailing slash.
+    #: External path prefix before routes (env ``SERVICE_URL_PATH_PREFIX``).
+    #: Must match the frontend static bundle / Next ``basePath`` (same env in repo ``.env``).
     service_url_path_prefix: str = ""
 
     # -- Rate Limiting -----------------------------------------------------

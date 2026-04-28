@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { api } from "@/lib/api-client";
+import { withBasePath } from "@/lib/base-path";
 import RunList from "@/components/pipeline/RunList";
 import RunMetrics from "@/components/pipeline/RunMetrics";
 import ErrorLog from "@/components/pipeline/ErrorLog";
@@ -218,13 +219,13 @@ function PipelineMonitorInner() {
                         {selectedRunId}
                       </span>
                       <a
-                        href={`/workspace?ontologyId=${selectedRunId}`}
+                        href={withBasePath(`/workspace?ontologyId=${selectedRunId}`)}
                         className="text-xs px-3 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
                       >
                         Open in Workspace
                       </a>
                       <a
-                        href={`/curation?runId=${selectedRunId}`}
+                        href={withBasePath(`/curation?runId=${selectedRunId}`)}
                         className="text-xs px-3 py-1 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
                       >
                         Curate (Legacy)

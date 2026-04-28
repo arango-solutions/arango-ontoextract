@@ -8,7 +8,7 @@ import type {
   PipelineStep,
 } from "@/types/pipeline";
 import { PIPELINE_STEPS } from "@/types/pipeline";
-import { getApiBaseUrl, getApiOrigin } from "@/lib/api-client";
+import { backendUrl, getApiOrigin } from "@/lib/api-client";
 
 interface UseExtractionSocketReturn {
   steps: Map<string, StepStatus>;
@@ -45,7 +45,7 @@ async function fetchStepsFromRest(
   runId: string,
 ): Promise<Map<string, StepStatus> | null> {
   try {
-    const res = await fetch(`${getApiBaseUrl()}/api/v1/extraction/runs/${runId}`);
+    const res = await fetch(backendUrl(`/api/v1/extraction/runs/${runId}`));
     if (!res.ok) return null;
     const run = await res.json();
 

@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { api, ApiError } from "@/lib/api-client";
+import { withBasePath } from "@/lib/base-path";
 import type {
   StagingGraph,
   OntologyClass,
@@ -379,13 +380,13 @@ function CurationPageInner() {
               Promote
             </button>
             <a
-              href="/dashboard"
+              href={withBasePath("/dashboard")}
               className="text-sm text-gray-500 hover:text-gray-700"
             >
               Dashboard
             </a>
             <a
-              href="/library"
+              href={withBasePath("/library")}
               className="text-sm text-gray-500 hover:text-gray-700"
             >
               Library
@@ -468,13 +469,13 @@ function CurationPageInner() {
                   </p>
                   <div className="flex gap-3 justify-center">
                     <a
-                      href="/pipeline"
+                      href={withBasePath("/pipeline")}
                       className="text-sm px-4 py-2 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50"
                     >
                       Back to Pipeline
                     </a>
                     <a
-                      href="/library"
+                      href={withBasePath("/library")}
                       className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                     >
                       Browse Library

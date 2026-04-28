@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
-import { api, ApiError, getApiBaseUrl, type PaginatedResponse } from "@/lib/api-client";
+import { api, ApiError, backendUrl, type PaginatedResponse } from "@/lib/api-client";
+import { withBasePath } from "@/lib/base-path";
 import type {
   OntologyRegistryEntry,
   OntologyClass,
@@ -231,12 +232,10 @@ export default function LibraryPage() {
       if (!file || !selectedOntologyId) return;
       setAddingDoc(true);
       try {
-        const baseUrl =
-          getApiBaseUrl();
         const formData = new FormData();
         formData.append("file", file);
         const res = await fetch(
-          `${baseUrl}/api/v1/ontology/library/${selectedOntologyId}/add-document`,
+          backendUrl(`/api/v1/ontology/library/${selectedOntologyId}/add-document`),
           { method: "POST", body: formData },
         );
         if (!res.ok) {
@@ -245,7 +244,7 @@ export default function LibraryPage() {
             err.detail ?? err.error?.message ?? `Upload failed (${res.status})`,
           );
         }
-        window.location.href = "/pipeline";
+        window.location.href = withBasePath("/pipeline");
       } catch (err) {
         alert(err instanceof Error ? err.message : "Upload failed");
       } finally {
@@ -529,13 +528,13 @@ export default function LibraryPage() {
                   {/* Action buttons */}
                   <div className="flex gap-2 mb-3">
                     <a
-                      href={`/workspace?ontologyId=${selectedOntology._key}`}
+                      href={withBasePath(`/workspace?ontologyId=${selectedOntology._key}`)}
                       className="flex-1 text-center text-xs px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium"
                     >
                       Open in Workspace
                     </a>
                     <a
-                      href={`/ontology/edit?ontologyId=${selectedOntology._key}`}
+                      href={withBasePath(`/ontology/edit?ontologyId=${selectedOntology._key}`)}
                       className="flex-1 text-center text-xs px-3 py-2 border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-lg transition-colors font-medium"
                     >
                       Edit (Legacy)
@@ -551,13 +550,11 @@ export default function LibraryPage() {
                       {exportOpen && (
                         <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
                           {(["turtle", "jsonld", "csv"] as const).map((fmt) => {
-                            const baseUrl =
-                              getApiBaseUrl();
                             const label = fmt === "turtle" ? "OWL / Turtle" : fmt === "jsonld" ? "JSON-LD" : "CSV";
                             return (
                               <a
                                 key={fmt}
-                                href={`${baseUrl}/api/v1/ontology/${selectedOntology._key}/export?format=${fmt}`}
+                                href={backendUrl(`/api/v1/ontology/${selectedOntology._key}/export?format=${fmt}`)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onMouseDown={(e) => e.preventDefault()}
@@ -712,7 +709,7 @@ export default function LibraryPage() {
 
                     {/* Class-level actions */}
                     <a
-                      href={`/workspace?ontologyId=${selectedOntology._key}`}
+                      href={withBasePath(`/workspace?ontologyId=${selectedOntology._key}`)}
                       className="block w-full text-center text-xs px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors font-medium"
                     >
                       View in Workspace
