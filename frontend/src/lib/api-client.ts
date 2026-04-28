@@ -64,6 +64,36 @@ function shouldUseSameOriginApiProxy(envUrl: string | undefined): boolean {
   }
 }
 
+/** Next.js ``basePath`` (baked at build). Same value as backend ``SERVICE_URL_PATH_PREFIX`` when bundling. */
+function nextPublicBasePath(): string {
+  return (process.env.NEXT_PUBLIC_BASE_PATH || "").replace(/\/$/, "");
+}
+
+/**
+ * Resolved API base for HTTP ``fetch`` / relative URLs.
+ *
+ * - Local dev: same-origin ``/api`` proxy (empty string) when applicable.
+ * - Static bundle behind ``SERVICE_URL_PATH_PREFIX``: ``origin + NEXT_PUBLIC_BASE_PATH``.
+ * - Otherwise: ``NEXT_PUBLIC_API_URL`` or default dev origin.
+ */
+function effectiveApiBaseUrl(): string {
+  const envUrl = process.env.NEXT_PUBLIC_API_URL;
+  const trimmed = typeof envUrl === "string" ? envUrl.trim() : "";
+
+  if (shouldUseSameOriginApiProxy(trimmed || undefined)) {
+    return "";
+  }
+
+  const basePath = nextPublicBasePath();
+  if (!trimmed && basePath && typeof window !== "undefined") {
+    return resolveApiBaseUrl(`${window.location.origin}${basePath}`);
+  }
+
+  return resolveApiBaseUrl(
+    trimmed.length > 0 ? trimmed : DEFAULT_BACKEND_ORIGIN,
+  );
+}
+
 function resolveApiBaseUrl(baseUrl: string): string {
   if (typeof window === "undefined") {
     return baseUrl;
@@ -100,12 +130,16 @@ class ApiClient {
   private readonly baseUrl: string;
 
   constructor(baseUrl?: string) {
-    const envUrl = baseUrl ?? process.env.NEXT_PUBLIC_API_URL;
-    if (shouldUseSameOriginApiProxy(envUrl)) {
-      this.baseUrl = "";
-    } else {
-      this.baseUrl = resolveApiBaseUrl(envUrl ?? DEFAULT_BACKEND_ORIGIN);
+    if (baseUrl !== undefined) {
+      const t = baseUrl.trim();
+      if (shouldUseSameOriginApiProxy(t || undefined)) {
+        this.baseUrl = "";
+      } else {
+        this.baseUrl = resolveApiBaseUrl(t.length > 0 ? t : DEFAULT_BACKEND_ORIGIN);
+      }
+      return;
     }
+    this.baseUrl = effectiveApiBaseUrl();
   }
 
   private getHeaders(): Record<string, string> {
@@ -184,11 +218,7 @@ export const api = new ApiClient();
  * `getApiOrigin()` instead.
  */
 export function getApiBaseUrl(): string {
-  const envUrl = process.env.NEXT_PUBLIC_API_URL;
-  if (shouldUseSameOriginApiProxy(envUrl)) {
-    return "";
-  }
-  return resolveApiBaseUrl(envUrl ?? DEFAULT_BACKEND_ORIGIN);
+  return effectiveApiBaseUrl();
 }
 
 /**
@@ -199,6 +229,12 @@ export function getApiBaseUrl(): string {
  * so the Next.js rewrite handles CORS.
  */
 export function getApiOrigin(): string {
-  const envUrl = process.env.NEXT_PUBLIC_API_URL;
-  return resolveApiBaseUrl(envUrl ?? DEFAULT_BACKEND_ORIGIN);
+  const direct = effectiveApiBaseUrl();
+  if (direct !== "") {
+    return direct;
+  }
+  const envUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
+  return resolveApiBaseUrl(
+    envUrl && envUrl.length > 0 ? envUrl : DEFAULT_BACKEND_ORIGIN,
+  );
 }

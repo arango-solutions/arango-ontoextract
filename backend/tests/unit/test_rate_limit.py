@@ -141,6 +141,23 @@ class TestCheckRateLimit:
         pipe.expire.assert_called_once()
         pipe.execute.assert_called_once()
 
+    def test_passes_through_when_redis_pipeline_raises(self):
+        """Lazy Redis connects on execute — pod without Redis must not error."""
+        from app.api.rate_limit import check_rate_limit
+
+        redis_mock = MagicMock()
+        pipe = MagicMock()
+        pipe.execute.side_effect = ConnectionRefusedError(111, "Connection refused")
+        redis_mock.pipeline.return_value = pipe
+
+        allowed, remaining, limit, retry_after = check_rate_limit(
+            "org_1", "standard", redis_client=redis_mock, now=1000.0,
+        )
+
+        assert allowed is True
+        assert remaining == limit == 100
+        assert retry_after == 0.0
+
 
 class TestOrgIdExtraction:
     """Tests for _org_id_from_request helper."""

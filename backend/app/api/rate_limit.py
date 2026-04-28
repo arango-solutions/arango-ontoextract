@@ -95,28 +95,38 @@ def check_rate_limit(
 
     key = f"ratelimit:{org_id}"
 
-    pipe = r.pipeline()
-    pipe.zremrangebyscore(key, "-inf", window_start)
-    pipe.zadd(key, {f"{now}": now})
-    pipe.zcard(key)
-    pipe.expire(key, WINDOW_SECONDS + 1)
-    results = pipe.execute()
+    try:
+        pipe = r.pipeline()
+        pipe.zremrangebyscore(key, "-inf", window_start)
+        pipe.zadd(key, {f"{now}": now})
+        pipe.zcard(key)
+        pipe.expire(key, WINDOW_SECONDS + 1)
+        results = pipe.execute()
 
-    current_count: int = results[2]
-    remaining = max(0, limit - current_count)
-    allowed = current_count <= limit
+        current_count: int = results[2]
+        remaining = max(0, limit - current_count)
+        allowed = current_count <= limit
 
-    if not allowed:
-        oldest_in_window = r.zrange(key, 0, 0, withscores=True)
-        if oldest_in_window:
-            retry_after = oldest_in_window[0][1] + WINDOW_SECONDS - now
-            retry_after = max(0.0, retry_after)
+        if not allowed:
+            oldest_in_window = r.zrange(key, 0, 0, withscores=True)
+            if oldest_in_window:
+                retry_after = oldest_in_window[0][1] + WINDOW_SECONDS - now
+                retry_after = max(0.0, retry_after)
+            else:
+                retry_after = float(WINDOW_SECONDS)
         else:
-            retry_after = float(WINDOW_SECONDS)
-    else:
-        retry_after = 0.0
+            retry_after = 0.0
 
-    return allowed, remaining, limit, retry_after
+        return allowed, remaining, limit, retry_after
+    except Exception as exc:
+        # Redis connects lazily — ``from_url`` can succeed then ``execute`` fails if
+        # nothing listens on REDIS_URL (e.g. pilot pod without Redis).
+        log.warning(
+            "redis_rate_limit_unavailable_pass_through",
+            extra={"error": str(exc)},
+            exc_info=True,
+        )
+        return True, limit, limit, 0.0
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -132,7 +142,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not settings.rate_limit_enabled:
             return await call_next(request)
 
-        if request.url.path in self.EXEMPT_PATHS:
+        path = request.url.path
+        if path in self.EXEMPT_PATHS or path.startswith("/_next/") or path in (
+            "/favicon.svg",
+            "/favicon.ico",
+        ):
             return await call_next(request)
 
         org_id = _org_id_from_request(request)

@@ -8,6 +8,10 @@
 #
 # Optional: PACKAGE_USE_TOPDIR=1 reproduces `tar -czf x.tar.gz myservice/` (nested).
 #
+# Optional: PACKAGE_INCLUDE_FRONTEND=1 bundles the Next.js static export (frontend/out)
+# next to app/. Requires SERVICE_URL_PATH_PREFIX (same as backend) and Node/npm on PATH.
+# Static export disables Next.js middleware at runtime (API auth still applies).
+#
 # macOS creates tar entries with Apple-specific PAX headers (e.g.
 # LIBARCHIVE.xattr.com.apple.provenance). Linux extractors may warn or fail
 # with "stream closed: EOF". We strip xattrs and disable copyfile metadata.
@@ -37,6 +41,35 @@ chmod +x "${STAGE}/${NAME}/entrypoint"
 # Do not commit secrets; use UI env vars for production when preferred.
 if [[ -f "${REPO_ROOT}/.env" ]]; then
 	cp "${REPO_ROOT}/.env" "${STAGE}/${NAME}/.env"
+fi
+
+if [[ "${PACKAGE_INCLUDE_FRONTEND:-0}" == "1" ]]; then
+	PREFIX="${SERVICE_URL_PATH_PREFIX:-}"
+	PREFIX="${PREFIX%/}"
+	if [[ -z "${PREFIX}" ]]; then
+		echo "error: PACKAGE_INCLUDE_FRONTEND=1 requires SERVICE_URL_PATH_PREFIX (no trailing slash)" >&2
+		exit 1
+	fi
+	if ! command -v npm >/dev/null 2>&1; then
+		echo "error: PACKAGE_INCLUDE_FRONTEND=1 requires npm on PATH" >&2
+		exit 1
+	fi
+	echo "==> Building static frontend (NEXT_PUBLIC_BASE_PATH=${PREFIX})..."
+	(
+		cd "${REPO_ROOT}/frontend"
+		if [[ -f package-lock.json ]]; then
+			npm ci
+		else
+			npm install
+		fi
+		rm -rf out .next
+		AOE_STATIC_EXPORT=1 \
+			NEXT_PUBLIC_BASE_PATH="${PREFIX}" \
+			npm run build
+	)
+	mkdir -p "${STAGE}/${NAME}/frontend"
+	cp -R "${REPO_ROOT}/frontend/out" "${STAGE}/${NAME}/frontend/out"
+	echo "==> Included frontend/out in bundle"
 fi
 
 # Strip remaining extended attributes on macOS (avoids provenance/quarantine xattrs in PAX headers).

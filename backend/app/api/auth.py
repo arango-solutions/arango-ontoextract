@@ -51,10 +51,24 @@ _MOCK_USER = AuthenticatedUser(
     display_name="Dev Admin",
 )
 
-_PUBLIC_PATHS = frozenset({
-    "/health", "/ready", "/docs", "/openapi.json", "/redoc",
+# Under ``/api/`` only these accept HTTP requests without ``Authorization`` (production).
+_PUBLIC_API_PATHS_WITHOUT_AUTH = frozenset({
     "/api/v1/auth/login",
+    "/api/v1/metrics",
 })
+
+
+def _is_public_http_path(path: str) -> bool:
+    """Paths that skip JWT middleware.
+
+    - Next static export (HTML, ``/_next/*``, ``/favicon.*``, ``/health``, …) never sends Bearer on first load.
+    - REST APIs under ``/api/`` require JWT unless listed in ``_PUBLIC_API_PATHS_WITHOUT_AUTH``.
+    """
+    if path.startswith("/_next/"):
+        return True
+    if not path.startswith("/api/"):
+        return True
+    return path in _PUBLIC_API_PATHS_WITHOUT_AUTH
 
 
 def decode_jwt(token: str) -> dict[str, Any]:
@@ -122,7 +136,7 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        if request.url.path in _PUBLIC_PATHS:
+        if _is_public_http_path(request.url.path):
             return await call_next(request)
 
         if request.scope.get("type") == "websocket":

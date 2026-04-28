@@ -10,6 +10,7 @@ import pytest
 
 from app.api.auth import (
     _MOCK_USER,
+    _is_public_http_path,
     AuthenticatedUser,
     decode_jwt,
     user_from_claims,
@@ -100,6 +101,27 @@ class TestUserFromClaims:
     def test_empty_claims(self):
         user = user_from_claims({})
         assert user.user_id == ""
+
+
+class TestIsPublicHttpPath:
+    """JWT middleware: HTML/static without Bearer; APIs mostly require auth."""
+
+    def test_static_and_health_without_api_prefix(self):
+        assert _is_public_http_path("/") is True
+        assert _is_public_http_path("/login") is True
+        assert _is_public_http_path("/health") is True
+        assert _is_public_http_path("/docs") is True
+        assert _is_public_http_path("/favicon.svg") is True
+
+    def test_next_assets(self):
+        assert _is_public_http_path("/_next/static/chunks/foo.js") is True
+
+    def test_public_api_routes(self):
+        assert _is_public_http_path("/api/v1/auth/login") is True
+        assert _is_public_http_path("/api/v1/metrics") is True
+
+    def test_protected_api_routes(self):
+        assert _is_public_http_path("/api/v1/ontology/library") is False
 
 
 class TestMockUser:

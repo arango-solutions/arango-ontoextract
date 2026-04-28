@@ -2,7 +2,6 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-import os
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,6 +29,7 @@ from app.api.metrics import PrometheusMiddleware
 from app.api.rate_limit import RateLimitMiddleware
 from app.config import settings
 from app.db.client import close_db
+from app.frontend_static import resolve_frontend_out_dir
 from app.middleware.strip_service_prefix import StripServicePrefixMiddleware
 
 logging.basicConfig(
@@ -105,17 +105,16 @@ app.include_router(quality.router)
 app.include_router(ws_extraction.router)
 app.include_router(ws_curation.router)
 
-# Serve static frontend files if they exist (Next.js export)
-frontend_out = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "out"
-)
-# Fallback for unified Docker image structure
-if not os.path.isdir(frontend_out):
-    frontend_out = "/app/static"
-
-if os.path.isdir(frontend_out):
-    app.mount("/", StaticFiles(directory=frontend_out, html=True), name="static")
+# Serve static frontend files if they exist (Next.js static export → frontend/out/)
+_frontend_dir = resolve_frontend_out_dir(__file__)
+if _frontend_dir is not None:
+    app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True), name="static")
 else:
-    log.warning("frontend_out_not_found", path=frontend_out)
+    log.warning(
+        "frontend_out_not_found",
+        checked_flat_bundle="<bundle>/frontend/out",
+        checked_monorepo="<repo>/frontend/out",
+        docker_fallback="/app/static",
+    )
 
 
