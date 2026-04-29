@@ -5,6 +5,7 @@
  */
 
 export interface PerOntologyQualityApiShape {
+  ontology_id?: string;
   avg_confidence: number | null;
   avg_faithfulness?: number | null;
   avg_semantic_validity?: number | null;

@@ -664,7 +664,7 @@ All ontology edge collections carry `created` and `expired` fields (same interva
 |------------|---------|------------|
 | `ontology_registry` | Catalog of all imported/extracted ontologies in the library | `_key`, `ontology_uri` (canonical namespace URI), `label`, `description`, `ontology_type` (owl\|rdfs\|skos\|mixed), `source_type` (import\|extraction\|schema_reverse), `source_file`, `version`, `iri_prefix`, `pgt_graph_name`, `owl_imports` (list of dependent ontology URIs), `status` (draft\|active\|deprecated), `created_at`, `created_by`, `class_count`, `property_count` |
 | `ontology_releases` | Immutable release snapshots | `_key`, `ontology_id` (FK to registry), `version` (semver string), `version_major`/`minor`/`patch`, `release_status` (candidate/released/superseded), `snapshot_timestamp`, `release_notes`, `released_by`, `released_at`, `class_count`, `property_count`, `owl_version_iri`, `breaking_changes`, `created_at` |
-| `quality_history` | Quality metric snapshots over time | `_key`, `ontology_id`, `timestamp`, `health_score`, `avg_confidence`, `completeness`, `connectivity`, `schema_metrics` |
+| `quality_history` | Quality metric snapshots over time | `_key`, `ontology_id`, `timestamp`, `health_score`, `avg_confidence`, `avg_faithfulness`, `avg_semantic_validity`, `completeness`, `connectivity`, `acceptance_rate`, `expected_calibration_error`, `class_count`, `property_count`, `relationship_count`, `orphan_count`, `has_cycles`, `schema_metrics`, `assertion_metrics`, `source` |
 
 Each ontology in the library gets a registry entry. All `ontology_classes` and `ontology_properties` documents carry an `ontology_id` foreign key linking back to this registry, enabling filtering and isolation.
 
@@ -2098,7 +2098,7 @@ These metrics are intentionally observational. They do not automatically change 
 | FR-13.5 | Gold-standard recall comparison | User can upload a reference OWL/TTL file; system computes `recall = |extracted ∩ reference| / |reference|` using fuzzy label matching. Results displayed alongside the ontology detail. |
 | FR-13.6 | Structural quality analysis per ontology | System computes: (a) **Completeness** — % of classes with ≥1 property, % of properties with defined domain+range; (b) **Coherence** — cycle detection in `subclass_of` hierarchy; (c) **Orphan count** — classes with no parent and not designated as root; (d) **Avg confidence** — mean of multi-signal per-class confidence across all current classes. |
 | FR-13.7 | Quality dashboard page with radar chart | Dedicated `/dashboard` route with a **radar/spider chart** showing 6 quality dimensions normalized to 0–5, surrounded by **score cards** with numeric values and plain-English explanations. `/quality` remains a legacy alias that redirects to `/dashboard`. Supports per-ontology drill-down (select an ontology to see its specific radar) and aggregate view (all ontologies combined). Expandable "Schema Metrics (OntoQA)" section shows the 4 audited metrics from §6.13.3: Relationship Richness, Attribute Richness, Max Depth, and Annotation Completeness. The 6 radar dimensions are: **Annotation Quality** (description completeness), **Completeness** (classes with properties), **Faithfulness** (avg multi-signal confidence including LLM-as-Judge), **Connectivity** (inter-class relationships), **Structural Integrity** (coherence + orphan ratio), **Curation Acceptance** (curator approval rate, N/A until curation starts). Each score card includes an (ⓘ) tooltip explaining the metric. Ontology comparison mode: select two ontologies to overlay their radar polygons. Uses `recharts` `RadarChart` component (React-native charting library). |
-| FR-13.8 | Quality history over time | Quality metrics stored with timestamps so trends can be tracked. Leverages temporal snapshot infrastructure for historical quality snapshots. |
+| FR-13.8 | Quality history over time | Quality metrics are stored in `quality_history` with timestamps whenever the per-ontology quality report is computed. `GET /api/v1/quality/{ontology_id}/history` returns recent snapshots oldest-to-newest for trend charts, and the workspace quality overlay displays health, completeness, and curation-acceptance trends. |
 | FR-13.9 | Low-confidence visual highlighting in curation graph | Nodes in the curation graph canvas are color-coded by multi-signal confidence: red border < 0.5, yellow 0.5–0.7, green > 0.7. Enables curators to focus on uncertain entities first. |
 | FR-13.10 | Quality-oriented ArangoDB Visualizer queries | Saved queries for: "Low Confidence Classes" (below threshold), "Orphan Classes" (no hierarchy edges), "Classes Without Properties" (incomplete definitions). |
 | FR-13.11 | Multi-signal per-class confidence | Each class's `confidence` field is computed as a weighted blend of 7 signals: cross-pass agreement, LLM-as-Judge faithfulness, semantic validity, structural quality (relationship richness), description quality, provenance strength, and property agreement (see §6.13.1). |
@@ -2384,15 +2384,13 @@ Bottom section highlighting ontologies that need attention:
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/v1/quality/{ontology_id}` | Returns all computed quality scores including health score, avg faithfulness, avg semantic validity, structural metrics, and estimated cost for an ontology |
-| `GET` | `/api/v1/quality/{ontology_id}/history` | *(Planned — not implemented in router yet.)* Quality metrics over time via temporal snapshots |
+| `GET` | `/api/v1/quality/{ontology_id}/history` | Returns recent timestamped quality snapshots from `quality_history` for trend views. Query params: optional `limit` (default 50). |
 | `GET` | `/api/v1/quality/{ontology_id}/evaluation` | Returns the qualitative evaluation (strengths/weaknesses) for the ontology's extraction run |
 | `GET` | `/api/v1/quality/{ontology_id}/class-scores` | Returns per-class faithfulness and semantic validity scores for distribution charts |
 | `GET` | `/api/v1/quality/dashboard` | Single aggregated payload for the dashboard: all ontology scorecards, aggregate **summary** (replaces the former `/quality/summary` endpoint), and flags/alerts |
 | `POST` | `/api/v1/quality/recall` | *(Specified — not yet implemented.)* Upload a reference OWL/TTL file to compute recall against extracted ontology |
 
 **Removed / superseded:** `GET /api/v1/quality/summary` was removed; clients should use `GET /api/v1/quality/dashboard` and read the `summary` field.
-
-**Not yet implemented (API spec vs code):** `GET /api/v1/quality/{ontology_id}/history` (quality over time) is described below but is not registered in the current FastAPI router.
 
 **Dashboard UI:** The second tab on `/dashboard` is **Per-Ontology Quality** (live API data). A separate GraphRAG-vs-VectorRAG mock comparison is no longer shipped in the product UI.
 
@@ -2639,7 +2637,7 @@ The `ontology_constraints` collection already exists in §5.1 with fields for `o
 | `GET` | `/api/v1/quality/{ontology_id}` | All computed quality scores for an ontology (health score, structural metrics, extraction metrics, schema metrics, etc.) |
 | `GET` | `/api/v1/quality/{ontology_id}/evaluation` | Qualitative evaluation (strengths / weaknesses) from the linked extraction run |
 | `GET` | `/api/v1/quality/{ontology_id}/class-scores` | Per-class faithfulness and semantic validity for charts |
-| `GET` | `/api/v1/quality/{ontology_id}/history` | *(Not implemented in router yet — planned: quality over time via temporal snapshots.)* |
+| `GET` | `/api/v1/quality/{ontology_id}/history` | Recent timestamped quality snapshots from `quality_history`, returned oldest-to-newest for trend charts. |
 | `POST` | `/api/v1/quality/recall` | *(Not implemented yet.)* Upload reference OWL/TTL; compute recall against extracted ontology |
 
 ### 7.9 API Conventions

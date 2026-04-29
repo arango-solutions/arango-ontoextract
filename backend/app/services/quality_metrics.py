@@ -12,6 +12,7 @@ from typing import Any, cast
 
 from arango.database import StandardDatabase
 
+from app.db import quality_history_repo
 from app.db.utils import run_aql
 
 log = logging.getLogger(__name__)
@@ -582,6 +583,43 @@ def compute_extraction_quality(
         "acceptance_rate": acceptance_rate,
         "time_to_ontology_ms": time_to_ontology_ms,
         "confidence_calibration": compute_confidence_calibration_metrics(db, ontology_id),
+    }
+
+
+def compute_quality_report(
+    db: StandardDatabase,
+    ontology_id: str,
+    *,
+    record_snapshot: bool = True,
+) -> dict[str, Any]:
+    """Compute the public per-ontology quality report and optionally persist it."""
+    ontology_quality = compute_ontology_quality(db, ontology_id)
+    extraction_quality = compute_extraction_quality(db, ontology_id)
+    report = {
+        **ontology_quality,
+        **extraction_quality,
+    }
+    if record_snapshot:
+        quality_history_repo.save_quality_snapshot(ontology_id, report, db=db)
+    return report
+
+
+def get_quality_history(
+    db: StandardDatabase,
+    ontology_id: str,
+    *,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Return timestamped quality snapshots for an ontology."""
+    snapshots = quality_history_repo.list_quality_history(
+        ontology_id,
+        limit=limit,
+        db=db,
+    )
+    return {
+        "ontology_id": ontology_id,
+        "count": len(snapshots),
+        "snapshots": snapshots,
     }
 
 

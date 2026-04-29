@@ -10,10 +10,10 @@ from fastapi import APIRouter, HTTPException
 from app.db.client import get_db
 from app.services.quality_metrics import (
     compute_dashboard_payload,
-    compute_extraction_quality,
-    compute_ontology_quality,
+    compute_quality_report,
     get_class_scores,
     get_qualitative_evaluation,
+    get_quality_history,
 )
 
 log = logging.getLogger(__name__)
@@ -37,14 +37,23 @@ async def quality_for_ontology(ontology_id: str) -> dict:
     """Return structural and extraction quality scores for an ontology."""
     try:
         db = get_db()
-        ontology_quality = compute_ontology_quality(db, ontology_id)
-        extraction_quality = compute_extraction_quality(db, ontology_id)
-        return {
-            **ontology_quality,
-            **extraction_quality,
-        }
+        return compute_quality_report(db, ontology_id, record_snapshot=True)
     except Exception as exc:
         log.exception("Failed to compute quality for ontology %s", ontology_id)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
+@router.get("/{ontology_id}/history")
+async def quality_history_for_ontology(
+    ontology_id: str,
+    limit: int = 50,
+) -> dict:
+    """Return timestamped quality snapshots for trend views."""
+    try:
+        db = get_db()
+        return get_quality_history(db, ontology_id, limit=limit)
+    except Exception as exc:
+        log.exception("Failed to get quality history for ontology %s", ontology_id)
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 

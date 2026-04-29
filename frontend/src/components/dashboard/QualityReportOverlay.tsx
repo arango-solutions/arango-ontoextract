@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  CartesianGrid,
+  Line,
+  LineChart,
   RadarChart,
   PolarGrid,
   PolarAngleAxis,
@@ -9,7 +12,13 @@ import {
   Radar,
   ResponsiveContainer,
   Tooltip,
+  XAxis,
+  YAxis,
 } from "recharts";
+import {
+  loadQualityHistory,
+  type QualityHistorySnapshot,
+} from "@/lib/qualityHistory";
 import {
   PER_ONTOLOGY_QUALITY_DIMENSIONS,
   healthBgColor,
@@ -59,6 +68,28 @@ function formatSchemaValue(key: string, v: number): string {
 
 export default function QualityReportOverlay({ name, data, onClose }: Props) {
   const [schemaExpanded, setSchemaExpanded] = useState(false);
+  const [history, setHistory] = useState<QualityHistorySnapshot[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const ontologyId = data.ontology_id;
+
+  const loadHistory = useCallback(async () => {
+    if (!ontologyId) return;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const res = await loadQualityHistory(ontologyId, { limit: 30 });
+      setHistory(res.snapshots);
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : "Failed to load quality history");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [ontologyId]);
+
+  useEffect(() => {
+    void loadHistory();
+  }, [loadHistory]);
 
   const radarData: RadarDatum[] = PER_ONTOLOGY_QUALITY_DIMENSIONS.map(
     (dim) => {
@@ -72,6 +103,18 @@ export default function QualityReportOverlay({ name, data, onClose }: Props) {
   );
 
   const schema = data.schema_metrics;
+  const trendData = useMemo(
+    () => history.map((snapshot, index) => ({
+      label: formatSnapshotLabel(snapshot.timestamp, index),
+      health: snapshot.health_score ?? null,
+      completeness: snapshot.completeness ?? null,
+      acceptance:
+        snapshot.acceptance_rate != null
+          ? Math.round(snapshot.acceptance_rate * 1000) / 10
+          : null,
+    })),
+    [history],
+  );
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -216,8 +259,138 @@ export default function QualityReportOverlay({ name, data, onClose }: Props) {
                 )}
               </div>
             )}
+
+          <QualityHistorySection
+            loading={historyLoading}
+            error={historyError}
+            snapshots={history}
+            trendData={trendData}
+          />
         </div>
       </div>
+    </div>
+  );
+}
+
+function formatSnapshotLabel(timestamp: string | undefined, index: number): string {
+  if (!timestamp) return `#${index + 1}`;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return `#${index + 1}`;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatPct(v: number | null | undefined, scale: "ratio" | "percent" = "percent"): string {
+  if (v == null) return "—";
+  return `${(scale === "ratio" ? v * 100 : v).toFixed(1)}%`;
+}
+
+function QualityHistorySection({
+  loading,
+  error,
+  snapshots,
+  trendData,
+}: {
+  loading: boolean;
+  error: string | null;
+  snapshots: QualityHistorySnapshot[];
+  trendData: { label: string; health: number | null; completeness: number | null; acceptance: number | null }[];
+}) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700">Quality History</h3>
+          <p className="mt-1 text-xs text-gray-500">
+            Timestamped snapshots from the quality API, useful for tracking trend after extraction,
+            curation, and prompt changes.
+          </p>
+        </div>
+        <span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600">
+          {snapshots.length} snapshots
+        </span>
+      </div>
+
+      {loading && (
+        <p className="mt-4 text-sm text-gray-500">Loading quality history…</p>
+      )}
+      {error && (
+        <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+          {error}
+        </p>
+      )}
+      {!loading && !error && snapshots.length === 0 && (
+        <p className="mt-4 text-sm text-gray-500">
+          No historical snapshots yet. Opening this quality report records the first snapshot.
+        </p>
+      )}
+      {!loading && !error && snapshots.length > 0 && (
+        <div className="mt-5 grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-6">
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={trendData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#6b7280" }} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "#6b7280" }} />
+                <Tooltip formatter={(value) => `${Number(value).toFixed(1)}%`} />
+                <Line
+                  type="monotone"
+                  dataKey="health"
+                  name="Health"
+                  stroke="#2563eb"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  connectNulls
+                />
+                <Line
+                  type="monotone"
+                  dataKey="completeness"
+                  name="Completeness"
+                  stroke="#16a34a"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  connectNulls
+                />
+                <Line
+                  type="monotone"
+                  dataKey="acceptance"
+                  name="Acceptance"
+                  stroke="#9333ea"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  connectNulls
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="space-y-2">
+            {snapshots.slice(-5).reverse().map((snapshot) => (
+              <div
+                key={snapshot._key ?? snapshot.timestamp}
+                className="rounded-lg border border-gray-100 bg-gray-50 p-3"
+              >
+                <p className="text-[11px] font-medium text-gray-500">
+                  {new Date(snapshot.timestamp).toLocaleString()}
+                </p>
+                <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                  <Metric label="Health" value={snapshot.health_score?.toFixed(0) ?? "—"} />
+                  <Metric label="Complete" value={formatPct(snapshot.completeness)} />
+                  <Metric label="Accept" value={formatPct(snapshot.acceptance_rate, "ratio")} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-gray-400">{label}</p>
+      <p className="font-semibold text-gray-800">{value}</p>
     </div>
   );
 }

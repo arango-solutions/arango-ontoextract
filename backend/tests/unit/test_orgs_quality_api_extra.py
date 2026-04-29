@@ -22,7 +22,7 @@ from app.api.orgs import (
     update_organization,
     update_user_role,
 )
-from app.api.quality import quality_for_ontology
+from app.api.quality import quality_for_ontology, quality_history_for_ontology
 
 
 class TestOrgRoutes:
@@ -133,15 +133,32 @@ class TestQualityRoutes:
         with (
             patch("app.api.quality.get_db", return_value=MagicMock()),
             patch(
-                "app.api.quality.compute_ontology_quality",
-                side_effect=[{"health": 90}, RuntimeError("boom")],
-            ),
-            patch(
-                "app.api.quality.compute_extraction_quality", return_value={"acceptance_rate": 0.8}
+                "app.api.quality.compute_quality_report",
+                side_effect=[{"health": 90, "acceptance_rate": 0.8}, RuntimeError("boom")],
             ),
         ):
             result = await quality_for_ontology("onto1")
             assert result == {"health": 90, "acceptance_rate": 0.8}
             with pytest.raises(HTTPException) as exc:
                 await quality_for_ontology("onto1")
+        assert exc.value.status_code == 500
+
+    @pytest.mark.asyncio
+    async def test_quality_history_returns_snapshots_and_handles_error(self):
+        with (
+            patch("app.api.quality.get_db", return_value=MagicMock()),
+            patch(
+                "app.api.quality.get_quality_history",
+                side_effect=[
+                    {"ontology_id": "onto1", "count": 1, "snapshots": [{"health_score": 80}]},
+                    RuntimeError("boom"),
+                ],
+            ) as mock_history,
+        ):
+            result = await quality_history_for_ontology("onto1", limit=5)
+            assert result["count"] == 1
+            mock_history.assert_called_once()
+            assert mock_history.call_args.kwargs["limit"] == 5
+            with pytest.raises(HTTPException) as exc:
+                await quality_history_for_ontology("onto1")
         assert exc.value.status_code == 500

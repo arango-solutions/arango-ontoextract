@@ -234,6 +234,59 @@ class TestComputeExtractionQuality:
         assert result["time_to_ontology_ms"] is None
 
 
+class TestQualityReportHistory:
+    def test_compute_quality_report_records_snapshot(self):
+        from app.services import quality_metrics
+
+        db = MagicMock()
+        with (
+            patch.object(
+                quality_metrics,
+                "compute_ontology_quality",
+                return_value={"ontology_id": "onto_1", "health_score": 82},
+            ) as mock_ontology,
+            patch.object(
+                quality_metrics,
+                "compute_extraction_quality",
+                return_value={"acceptance_rate": 0.75},
+            ) as mock_extraction,
+            patch.object(
+                quality_metrics.quality_history_repo,
+                "save_quality_snapshot",
+                return_value={"_key": "snap1"},
+            ) as mock_save,
+        ):
+            result = quality_metrics.compute_quality_report(db, "onto_1")
+
+        assert result == {
+            "ontology_id": "onto_1",
+            "health_score": 82,
+            "acceptance_rate": 0.75,
+        }
+        mock_ontology.assert_called_once_with(db, "onto_1")
+        mock_extraction.assert_called_once_with(db, "onto_1")
+        mock_save.assert_called_once_with("onto_1", result, db=db)
+
+    def test_get_quality_history_delegates_to_repository(self):
+        from app.services import quality_metrics
+
+        db = MagicMock()
+        snapshots = [{"timestamp": "2026-04-28T00:00:00+00:00", "health_score": 80}]
+        with patch.object(
+            quality_metrics.quality_history_repo,
+            "list_quality_history",
+            return_value=snapshots,
+        ) as mock_list:
+            result = quality_metrics.get_quality_history(db, "onto_1", limit=10)
+
+        assert result == {
+            "ontology_id": "onto_1",
+            "count": 1,
+            "snapshots": snapshots,
+        }
+        mock_list.assert_called_once_with("onto_1", limit=10, db=db)
+
+
 class TestComputeAssertionEvidenceMetrics:
     """Tests for assertion-level evidence coverage metrics."""
 
