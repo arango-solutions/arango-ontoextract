@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -30,6 +31,7 @@ from app.api.rate_limit import RateLimitMiddleware
 from app.config import settings
 from app.db.client import close_db
 from app.frontend_static import resolve_frontend_out_dir
+from app.minimal_login import render_minimal_login_html
 from app.middleware.strip_service_prefix import StripServicePrefixMiddleware
 
 logging.basicConfig(
@@ -106,15 +108,27 @@ app.include_router(ws_extraction.router)
 app.include_router(ws_curation.router)
 
 # Serve static frontend files if they exist (Next.js static export → frontend/out/)
-_frontend_dir = resolve_frontend_out_dir(__file__)
+_frontend_dir = resolve_frontend_out_dir(
+    __file__,
+    override=settings.frontend_static_root or None,
+)
 if _frontend_dir is not None:
+    log.info("static_frontend_mounted", directory=str(_frontend_dir))
     app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True), name="static")
 else:
     log.warning(
-        "frontend_out_not_found",
+        "frontend_out_not_found - SPA routes (/workspace, /pipeline, ...) will 404; "
+        "bundle Next with PACKAGE_INCLUDE_FRONTEND=1, copy frontend/out beside app/, "
+        "or set AOE_FRONTEND_OUT_DIR to the static export directory",
+        checked_explicit=settings.frontend_static_root or None,
         checked_flat_bundle="<bundle>/frontend/out",
         checked_monorepo="<repo>/frontend/out",
         docker_fallback="/app/static",
     )
+
+    @app.get("/login")
+    async def minimal_login_page() -> HTMLResponse:
+        """Fallback HTML login when Next static export is not deployed."""
+        return HTMLResponse(content=render_minimal_login_html(settings.service_url_path_prefix))
 
 

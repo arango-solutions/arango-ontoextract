@@ -159,6 +159,24 @@ class TestCheckRateLimit:
         assert retry_after == 0.0
 
 
+class TestGetRedis:
+    """``_get_redis`` must not rely on pipeline ``execute`` for first connect (k8s without Redis)."""
+
+    def test_returns_none_when_ping_fails(self):
+        from app.api import rate_limit as rl
+
+        rl._redis_client = None
+        rl._redis_unavailable_until = 0.0
+
+        with patch("redis.Redis.from_url") as from_url:
+            inst = MagicMock()
+            inst.ping.side_effect = OSError("Error 111 connecting to localhost:6379")
+            from_url.return_value = inst
+            assert rl._get_redis() is None
+            assert rl._redis_client is None
+            assert rl._redis_unavailable_until > 0.0
+
+
 class TestOrgIdExtraction:
     """Tests for _org_id_from_request helper."""
 

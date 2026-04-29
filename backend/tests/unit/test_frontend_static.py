@@ -36,3 +36,25 @@ def test_resolve_returns_none_when_missing(tmp_path: Path) -> None:
     main_py.write_text("#", encoding="utf-8")
 
     assert resolve_frontend_out_dir(str(main_py)) is None
+
+
+def test_resolve_explicit_override(tmp_path: Path) -> None:
+    bundle = tmp_path / "project"
+    (bundle / "app").mkdir(parents=True)
+    main_py = bundle / "app" / "main.py"
+    main_py.write_text("#", encoding="utf-8")
+    custom = tmp_path / "custom-out"
+    custom.mkdir()
+
+    assert resolve_frontend_out_dir(str(main_py), override=str(custom)) == custom.resolve()
+
+
+def test_resolve_override_invalid_falls_back_to_auto(tmp_path: Path) -> None:
+    bundle = tmp_path / "project"
+    (bundle / "app").mkdir(parents=True)
+    out = bundle / "frontend" / "out"
+    out.mkdir(parents=True)
+    main_py = bundle / "app" / "main.py"
+    main_py.write_text("#", encoding="utf-8")
+
+    assert resolve_frontend_out_dir(str(main_py), override="/no/such/static/export") == out.resolve()

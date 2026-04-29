@@ -193,6 +193,24 @@ class LoginResponse(BaseModel):
     token: str
 
 
+class LoginHelpResponse(BaseModel):
+    """Returned on GET ``/api/v1/auth/login`` — login itself requires POST."""
+
+    detail: str
+    method: str
+    path: str
+
+
+@router.get("/login", response_model=LoginHelpResponse)
+async def login_get_help() -> LoginHelpResponse:
+    """Explain that issuing a JWT requires ``POST`` with JSON body (not GET)."""
+    return LoginHelpResponse(
+        detail='Send POST with JSON body {"email":"...","password":"..."}',
+        method="POST",
+        path="/api/v1/auth/login",
+    )
+
+
 @router.post("/login", response_model=LoginResponse)
 async def login(body: LoginRequest) -> LoginResponse:
     """Issue a JWT for valid credentials.

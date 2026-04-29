@@ -29,17 +29,58 @@ TIER_LIMITS: dict[str, int] = {
 
 WINDOW_SECONDS = 60
 
+# ``from_url`` does not connect; first ``execute()`` on a pipeline did — noisy tracebacks
+# in k8s without Redis. We ``ping()`` once, cache the client, and back off after failures.
+_redis_client: Any | None = None
+_redis_unavailable_until: float = 0.0
+_REDIS_BACKOFF_SECONDS = 60.0
+
 
 def _get_redis():
-    """Lazy import and connect to Redis. Returns None if unavailable."""
+    """Lazy import, validate with ``ping``, cache client. Returns None if unavailable."""
+    global _redis_client, _redis_unavailable_until
+
+    now = time.time()
+    if now < _redis_unavailable_until:
+        return None
+
     try:
         import redis  # type: ignore[import-untyped]
-
-        return redis.Redis.from_url(
-            settings.redis_url, decode_responses=True, socket_connect_timeout=2,
-        )
+        from redis.exceptions import RedisError  # type: ignore[import-untyped]
     except Exception:
-        log.warning("redis_unavailable — rate limiting will pass-through")
+        log.warning("redis_import_failed_rate_limit_pass_through")
+        _redis_unavailable_until = now + _REDIS_BACKOFF_SECONDS
+        return None
+
+    if _redis_client is not None:
+        try:
+            _redis_client.ping()
+            return _redis_client
+        except RedisError:
+            try:
+                _redis_client.close()
+            except Exception:
+                pass
+            _redis_client = None
+            _redis_unavailable_until = now + _REDIS_BACKOFF_SECONDS
+
+    try:
+        client = redis.Redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=2,
+        )
+        client.ping()
+        _redis_client = client
+        _redis_unavailable_until = 0.0
+        return client
+    except Exception as exc:
+        _redis_unavailable_until = now + _REDIS_BACKOFF_SECONDS
+        log.warning(
+            "redis_unavailable_rate_limit_pass_through "
+            "(set REDIS_URL to your Redis service, or RATE_LIMIT_ENABLED=false): %s",
+            exc,
+        )
         return None
 
 
@@ -119,13 +160,17 @@ def check_rate_limit(
 
         return allowed, remaining, limit, retry_after
     except Exception as exc:
-        # Redis connects lazily — ``from_url`` can succeed then ``execute`` fails if
-        # nothing listens on REDIS_URL (e.g. pilot pod without Redis).
-        log.warning(
-            "redis_rate_limit_unavailable_pass_through",
-            extra={"error": str(exc)},
-            exc_info=True,
-        )
+        # Stale pooled connection or Redis died mid-request — allow traffic; refresh client.
+        global _redis_client, _redis_unavailable_until
+
+        log.warning("redis_pipeline_failed_rate_limit_pass_through: %s", exc)
+        try:
+            if _redis_client is not None:
+                _redis_client.close()
+        except Exception:
+            pass
+        _redis_client = None
+        _redis_unavailable_until = time.time() + _REDIS_BACKOFF_SECONDS
         return True, limit, limit, 0.0
 
 
@@ -133,7 +178,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     """FastAPI middleware that enforces per-org sliding-window rate limits."""
 
     EXEMPT_PATHS: frozenset[str] = frozenset(
-        {"/health", "/ready", "/docs", "/openapi.json", "/redoc"}
+        {"/health", "/ready", "/docs", "/openapi.json", "/redoc", "/login"}
     )
 
     async def dispatch(

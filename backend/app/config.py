@@ -2,7 +2,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.middleware.strip_service_prefix import normalize_service_url_path_prefix
@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     gae_deployment_mode: str = ""
 
     # -- Redis -------------------------------------------------------------
+    #: In k8s set ``REDIS_URL`` to your Redis Service (not localhost). If Redis is
+    #: unreachable, rate limiting degrades to pass-through (see ``rate_limit.py``).
+    #: To disable limits entirely: ``RATE_LIMIT_ENABLED=false``.
     redis_url: str = "redis://localhost:6379/0"
 
     # -- LLM ---------------------------------------------------------------
@@ -99,6 +102,16 @@ class Settings(BaseSettings):
     #: External path prefix before routes (env ``SERVICE_URL_PATH_PREFIX``).
     #: Must match the frontend static bundle / Next ``basePath`` (same env in repo ``.env``).
     service_url_path_prefix: str = ""
+
+    #: Next.js static export root (directory containing ``index.html`` and ``_next/``).
+    #: Use in k8s when the UI is copied or mounted at a known path. If unset, the app
+    #: looks for ``<bundle>/frontend/out``, monorepo ``frontend/out``, or ``/app/static``.
+    #: Build the export with ``AOE_STATIC_EXPORT=1`` and ``SERVICE_URL_PATH_PREFIX`` (see
+    #: ``scripts/package-arango-manual.sh`` with ``PACKAGE_INCLUDE_FRONTEND=1``).
+    frontend_static_root: str = Field(
+        default="",
+        validation_alias=AliasChoices("AOE_FRONTEND_OUT_DIR", "FRONTEND_STATIC_ROOT"),
+    )
 
     # -- Rate Limiting -----------------------------------------------------
     rate_limit_enabled: bool = True
