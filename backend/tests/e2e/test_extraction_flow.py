@@ -82,10 +82,11 @@ def _make_mock_llm_response(fixture_name: str):
     fixture = _load_fixture(fixture_name)
     mock_response = MagicMock()
     mock_response.content = json.dumps(fixture)
-    mock_response.usage_metadata = MagicMock()
-    mock_response.usage_metadata.total_tokens = 1000
-    mock_response.usage_metadata.input_tokens = 800
-    mock_response.usage_metadata.output_tokens = 200
+    mock_response.usage_metadata = {
+        "total_tokens": 1000,
+        "input_tokens": 800,
+        "output_tokens": 200,
+    }
     return mock_response
 
 
@@ -109,14 +110,14 @@ class TestExtractionFlow:
         ]
         fixture_idx = 0
 
-        def mock_invoke(messages):
+        async def mock_invoke(messages):
             nonlocal fixture_idx
             fname = fixtures[fixture_idx % len(fixtures)]
             fixture_idx += 1
             return _make_mock_llm_response(fname)
 
         mock_llm = MagicMock()
-        mock_llm.invoke = mock_invoke
+        mock_llm.ainvoke = mock_invoke
 
         with (
             patch("app.services.extraction.get_db", return_value=test_db),
@@ -149,11 +150,11 @@ class TestExtractionFlow:
 
         doc_id = _seed_document_and_chunks(test_db, doc_id="test_doc_results")
 
-        def mock_invoke(messages):
+        async def mock_invoke(messages):
             return _make_mock_llm_response("extraction_response_01.json")
 
         mock_llm = MagicMock()
-        mock_llm.invoke = mock_invoke
+        mock_llm.ainvoke = mock_invoke
 
         with (
             patch("app.services.extraction.get_db", return_value=test_db),

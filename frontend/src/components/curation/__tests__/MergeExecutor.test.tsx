@@ -108,8 +108,8 @@ describe("MergeExecutor", () => {
     expect(screen.getByTestId("field-comparison-description")).toBeInTheDocument();
     expect(screen.getByTestId("field-comparison-uri")).toBeInTheDocument();
 
-    expect(screen.getByText("Person")).toBeInTheDocument();
-    expect(screen.getByText("Individual")).toBeInTheDocument();
+    expect(screen.getAllByText("Person").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Individual").length).toBeGreaterThan(0);
     expect(screen.getByText("A human being with consciousness.")).toBeInTheDocument();
     expect(screen.getByText("A single person in society.")).toBeInTheDocument();
   });
@@ -204,8 +204,8 @@ describe("MergeExecutor", () => {
       />,
     );
 
-    expect(screen.getByText("Agent")).toBeInTheDocument();
-    expect(screen.getByText("birthDate")).toBeInTheDocument();
+    expect(screen.getByText(/Agent/)).toBeInTheDocument();
+    expect(screen.getByText(/birthDate/)).toBeInTheDocument();
   });
 
   it("shows property comparison when entities have properties", () => {

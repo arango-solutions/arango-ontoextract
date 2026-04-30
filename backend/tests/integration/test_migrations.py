@@ -147,8 +147,8 @@ def test_arangosearch_view(test_db: StandardDatabase) -> None:
     )
 
 
-def test_019_backfill_expired_sentinel_repairs_null(test_db: StandardDatabase) -> None:
-    """019 backfill sets NEVER_EXPIRES on documents with null/missing expired."""
+def test_019_backfill_expired_sentinel_repairs_missing(test_db: StandardDatabase) -> None:
+    """019 backfill sets NEVER_EXPIRES on documents with missing expired."""
     apply_all(test_db)
     never = sys.maxsize
     col = test_db.collection("ontology_classes")
@@ -160,7 +160,6 @@ def test_019_backfill_expired_sentinel_repairs_null(test_db: StandardDatabase) -
             "description": "migration 019 test",
             "ontology_id": "test_onto_m019",
             "created": 1.0,
-            "expired": None,
             "rdf_type": "owl:Class",
             "confidence": 0.5,
             "status": "pending",

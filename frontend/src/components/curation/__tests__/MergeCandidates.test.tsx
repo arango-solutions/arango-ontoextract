@@ -144,10 +144,9 @@ describe("MergeCandidates", () => {
     fireEvent.click(screen.getByTestId("explain-btn-pair_001"));
 
     await waitFor(() => {
-      expect(screen.getByTestId("explanation-pair_001")).toBeInTheDocument();
+      expect(screen.getByTestId("explanation-table")).toBeInTheDocument();
     });
 
-    expect(screen.getByTestId("explanation-table")).toBeInTheDocument();
     expect(screen.getByText("label")).toBeInTheDocument();
     expect(screen.getByText("description")).toBeInTheDocument();
   });

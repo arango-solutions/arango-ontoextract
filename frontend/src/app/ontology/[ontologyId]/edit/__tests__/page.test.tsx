@@ -50,6 +50,7 @@ jest.mock("@/lib/api-client", () => ({
       this.body = body;
     }
   },
+  getApiBaseUrl: () => "http://localhost:8001",
 }));
 
 jest.mock("@/components/curation/NodeDetail", () => {
