@@ -147,11 +147,18 @@ def test_arangosearch_view(test_db: StandardDatabase) -> None:
     )
 
 
-def test_019_backfill_expired_sentinel_repairs_missing(test_db: StandardDatabase) -> None:
-    """019 backfill sets NEVER_EXPIRES on documents with missing expired."""
+def test_019_backfill_expired_sentinel_repairs_missing(
+    test_db: StandardDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """019 backfill sets NEVER_EXPIRES on legacy documents with missing expired."""
     apply_all(test_db)
     never = sys.maxsize
-    col = test_db.collection("ontology_classes")
+    col_name = "tmp_m019_legacy_temporal"
+    if test_db.has_collection(col_name):
+        test_db.delete_collection(col_name)
+    test_db.create_collection(col_name)
+    col = test_db.collection(col_name)
     col.insert(
         {
             "_key": "tmp_m019_null_expired",
@@ -173,8 +180,9 @@ def test_019_backfill_expired_sentinel_repairs_missing(test_db: StandardDatabase
         overwrite=True,
     )
     m019 = importlib.import_module("migrations.019_backfill_expired_sentinel")
+    monkeypatch.setattr(m019, "COLLECTIONS_WITH_EXPIRED", (col_name,))
     m019.up(test_db)
     doc = col.get("tmp_m019_null_expired")
     assert doc is not None
     assert doc.get("expired") == never
-    col.delete("tmp_m019_null_expired")
+    test_db.delete_collection(col_name)
