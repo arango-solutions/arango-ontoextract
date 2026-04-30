@@ -376,7 +376,7 @@ def resolve_ontology_edge(
         if not db.has_collection(col_name):
             continue
         try:
-            doc = db.collection(col_name).get(edge_key)
+            doc = cast(dict[str, Any] | None, db.collection(col_name).get(edge_key))
         except (KeyError, TypeError, ValueError, AttributeError):
             continue
         if doc and doc.get("expired") == NEVER_EXPIRES:

@@ -930,9 +930,9 @@ def _materialize_to_graph(
 
     # has_chunk edges
     if db.has_collection("has_chunk"):
-        has_chunk_col = db.collection("has_chunk")
+        has_chunk_col = cast(Any, db.collection("has_chunk"))
     else:
-        has_chunk_col = db.create_collection("has_chunk", edge=True)
+        has_chunk_col = cast(Any, db.create_collection("has_chunk", edge=True))
     if db.has_collection("chunks"):
         chunk_docs = list(run_aql(db,
             "FOR c IN chunks FILTER c.doc_id == @doc_id RETURN c._key",
