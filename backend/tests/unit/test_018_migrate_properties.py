@@ -51,7 +51,7 @@ class TestMigration018:
         db.aql.execute.assert_not_called()
 
     def test_creates_missing_target_collections(self):
-        db, cols = _make_db(
+        db, _cols = _make_db(
             {"ontology_properties"},
             {0: [], 1: []},  # class_keys query, properties query
         )

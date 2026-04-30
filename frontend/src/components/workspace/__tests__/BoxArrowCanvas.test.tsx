@@ -2,36 +2,38 @@ import { render, screen } from "@testing-library/react";
 
 jest.mock("reactflow", () => {
   const React = require("react");
+  function MockReactFlow({
+    nodes,
+    edges,
+    onInit,
+    children,
+  }: {
+    nodes: unknown[];
+    edges: unknown[];
+    onInit?: (instance: unknown) => void;
+    children?: React.ReactNode;
+  }) {
+    React.useEffect(() => {
+      onInit?.({
+        fitView: () => {},
+        setCenter: () => {},
+        getNode: () => null,
+        getEdges: () => [],
+      });
+    }, [onInit]);
+
+    return React.createElement(
+      "div",
+      { "data-testid": "mock-reactflow" },
+      React.createElement("span", { "data-testid": "node-count" }, nodes.length),
+      React.createElement("span", { "data-testid": "edge-count" }, edges.length),
+      children,
+    );
+  }
+
   return {
     __esModule: true,
-    default: ({
-      nodes,
-      edges,
-      onInit,
-      children,
-    }: {
-      nodes: unknown[];
-      edges: unknown[];
-      onInit?: (instance: unknown) => void;
-      children?: React.ReactNode;
-    }) => {
-      React.useEffect(() => {
-        onInit?.({
-          fitView: () => {},
-          setCenter: () => {},
-          getNode: () => null,
-          getEdges: () => [],
-        });
-      }, [onInit]);
-
-      return React.createElement(
-        "div",
-        { "data-testid": "mock-reactflow" },
-        React.createElement("span", { "data-testid": "node-count" }, nodes.length),
-        React.createElement("span", { "data-testid": "edge-count" }, edges.length),
-        children,
-      );
-    },
+    default: MockReactFlow,
     Background: () => null,
     BackgroundVariant: { Dots: "dots" },
     MarkerType: { ArrowClosed: "arrowclosed" },
@@ -66,11 +68,17 @@ jest.mock("dagre", () => {
 
 jest.mock("@/components/workspace/ClassBoxNode", () => {
   const React = require("react");
+  const MockClassBoxNode = React.memo(function MockClassBoxNode({
+    data,
+  }: {
+    data: { label: string };
+  }) {
+    return React.createElement("div", { "data-testid": "class-box" }, data.label);
+  });
+
   return {
     __esModule: true,
-    default: React.memo(({ data }: { data: { label: string } }) =>
-      React.createElement("div", { "data-testid": "class-box" }, data.label),
-    ),
+    default: MockClassBoxNode,
   };
 });
 

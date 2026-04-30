@@ -1054,9 +1054,26 @@ The initial v0.1.0 prototype uses React Flow for graph rendering. React Flow is 
 
 **Target architecture:** Replace the `GraphCanvas` component (currently React Flow) with a Sigma.js-backed renderer using `@react-sigma/core` and `graphology`. The graph data model should use graphology natively throughout the application, replacing the current flat `classes[]` + `edges[]` arrays. This enables efficient subgraph operations, traversal algorithms, and layout computations without converting data structures.
 
-**Full Ontology Editor Vision (TopBraid Composer-class):**
+**Post-MVP Full Ontology Editor Vision (TopBraid Composer-class):**
 
-The ontology editor should evolve beyond a simple graph visualization into a comprehensive OWL ontology authoring environment comparable to TopBraid Composer. The target feature set includes:
+The MVP ontology editor focuses on practical graph/class/property editing for extraction,
+curation, and lifecycle management. A complete OWL ontology authoring environment is a
+**post-MVP capability**. This capability may be implemented natively over time or fulfilled
+through integration with an open-source third-party ontology editor such as
+[Protégé](https://protege.stanford.edu/) or
+[Microsoft Ontology Playground](https://github.com/microsoft/Ontology-Playground), with AOE
+providing import/export, versioning, provenance, and lifecycle management around that editor.
+Candidate open-source editors and tools include:
+
+| Tool | Link | Potential Role |
+|------|------|----------------|
+| Protégé | https://protege.stanford.edu/ | Full OWL ontology authoring and reasoning workbench |
+| Microsoft Ontology Playground | https://github.com/microsoft/Ontology-Playground | Web-based ontology exploration/editing candidate |
+| Chowlk | https://chowlk.linkeddata.es/ | Diagram-driven ontology modeling and OWL generation |
+| Chowlk converter | https://github.com/oeg-upm/Chowlk | Open-source converter for Chowlk visual notation to OWL |
+| VocBench | https://vocbench.uniroma2.it/ | Collaborative vocabulary, thesaurus, and ontology management |
+
+The target feature set includes:
 
 | Panel | Function | Implementation |
 |-------|----------|---------------|
@@ -1071,8 +1088,12 @@ The ontology editor should evolve beyond a simple graph visualization into a com
 | **Diff/Merge View** | Side-by-side comparison of ontology versions with merge controls | Split view using temporal snapshots |
 | **VCR Timeline** | Temporal slider for ontology time travel | Bottom bar with playback controls |
 | **Validation Console** | Real-time OWL consistency checking and SHACL validation results | Bottom panel with error/warning list |
+| **External Editor Integration** | Launch/export to an open-source ontology editor for advanced OWL authoring | Protégé, Ontology Playground, Chowlk, or VocBench compatible OWL/Turtle export/import, round-trip validation, and change provenance |
 
-This evolution should be planned as a separate phase after the current extraction-focused MVP stabilizes.
+This evolution should be planned as a separate phase after the current extraction-focused MVP
+stabilizes. The first post-MVP milestone may be round-trip integration with Protégé or a
+similar open-source OWL editor, including Microsoft Ontology Playground, Chowlk, or VocBench,
+before attempting to replicate the full authoring surface inside AOE.
 
 **Requirements:**
 

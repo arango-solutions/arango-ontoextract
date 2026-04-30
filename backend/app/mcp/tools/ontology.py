@@ -96,19 +96,23 @@ def _load_class_property_rows(
             )
         )
 
-    if not attributes and not relationships:
-        if db.has_collection("has_property") and db.has_collection("ontology_properties"):
-            legacy_properties = list(
-                run_aql(
-                    db,
-                    "FOR e IN has_property "
-                    "FILTER e._from == @cid AND e.expired == @never "
-                    "LET prop = DOCUMENT(e._to) "
-                    "FILTER prop != null AND prop.expired == @never "
-                    "RETURN prop",
-                    bind_vars={"cid": class_id, "never": NEVER_EXPIRES},
-                )
+    if (
+        not attributes
+        and not relationships
+        and db.has_collection("has_property")
+        and db.has_collection("ontology_properties")
+    ):
+        legacy_properties = list(
+            run_aql(
+                db,
+                "FOR e IN has_property "
+                "FILTER e._from == @cid AND e.expired == @never "
+                "LET prop = DOCUMENT(e._to) "
+                "FILTER prop != null AND prop.expired == @never "
+                "RETURN prop",
+                bind_vars={"cid": class_id, "never": NEVER_EXPIRES},
             )
+        )
 
     return attributes, relationships, legacy_properties
 

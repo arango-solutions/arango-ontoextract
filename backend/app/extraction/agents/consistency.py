@@ -263,7 +263,7 @@ def consistency_checker_node(state: ExtractionPipelineState) -> dict:
             {_relationship_key(r) for r in rels} for rels in all_relationship_lists
         ]
         combined_uris_per_pass = [
-            au | ru for au, ru in zip(attr_uris_per_pass, rel_uris_per_pass)
+            au | ru for au, ru in zip(attr_uris_per_pass, rel_uris_per_pass, strict=True)
         ]
 
         attr_agreement = round(_property_agreement_score(attr_uris_per_pass), 3)

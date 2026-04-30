@@ -45,7 +45,7 @@ You MUST output valid JSON matching the following schema exactly:
           "uri": "string (namespace#attributeName)",
           "label": "string",
           "description": "string",
-          "range_datatype": "string (XSD type: xsd:string, xsd:integer, xsd:date, xsd:boolean, xsd:decimal, xsd:dateTime, xsd:float, xsd:anyURI)",
+          "range_datatype": "string (XSD type, e.g. xsd:string, xsd:integer, xsd:dateTime)",
           "confidence": 0.0-1.0
         }}
       ],

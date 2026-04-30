@@ -53,7 +53,7 @@ _LIBRARY_EDGE_COLLECTIONS = (
 
 
 def _batch_edge_counts_for_ontology_ids(db: Any, ontology_ids: list[str]) -> dict[str, int]:
-    """One AQL per edge collection, grouped by ontology_id (avoids N×5 round-trips).
+    """One AQL per edge collection, grouped by ontology_id (avoids Nx5 round-trips).
 
     The previous per-entry loop blocked the asyncio event loop and stalled other
     API routes (e.g. GET /documents) on the same worker.
@@ -220,7 +220,12 @@ async def update_ontology_metadata(
 class CreateOntologyReleaseRequest(BaseModel):
     """Body for recording a versioned ontology release."""
 
-    version: str = Field(..., min_length=1, max_length=120, description="Release version label, e.g. 1.0.0")
+    version: str = Field(
+        ...,
+        min_length=1,
+        max_length=120,
+        description="Release version label, e.g. 1.0.0",
+    )
     description: str = Field(
         "",
         max_length=4000,
@@ -1187,16 +1192,23 @@ async def get_class_detail(ontology_id: str, class_key: str) -> dict:
         ))
 
     legacy_properties: list[dict] = []
-    if not attributes and not relationships:
-        if db.has_collection("has_property") and db.has_collection("ontology_properties"):
-            legacy_properties = list(run_aql(db,
+    if (
+        not attributes
+        and not relationships
+        and db.has_collection("has_property")
+        and db.has_collection("ontology_properties")
+    ):
+        legacy_properties = list(
+            run_aql(
+                db,
                 "FOR e IN has_property "
                 "FILTER e._from == @cid AND e.expired == @never "
                 "LET prop = DOCUMENT(e._to) "
                 "FILTER prop != null AND prop.expired == @never "
                 "RETURN prop",
                 bind_vars={"cid": class_id, "never": NEVER_EXPIRES},
-            ))
+            )
+        )
 
     return {
         **cls,
@@ -1773,7 +1785,7 @@ async def create_ontology(body: CreateOntologyRequest) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Ontology imports management (PRD 6.15 FR-15.7–15.12)
+# Ontology imports management (PRD 6.15 FR-15.7-15.12)
 # ---------------------------------------------------------------------------
 
 
@@ -1879,7 +1891,9 @@ async def add_ontology_import(ontology_id: str, body: AddImportRequest) -> dict:
     existing = list(
         run_aql(
             db,
-            "FOR e IN imports FILTER e._from == @f AND e._to == @t AND e.expired == @never RETURN e._key",
+            "FOR e IN imports "
+            "FILTER e._from == @f AND e._to == @t AND e.expired == @never "
+            "RETURN e._key",
             bind_vars={"f": from_id, "t": to_id, "never": NEVER_EXPIRES},
         )
     )
@@ -1906,7 +1920,7 @@ async def add_ontology_import(ontology_id: str, body: AddImportRequest) -> dict:
     )
     if cycle_check:
         raise ValidationError(
-            f"Adding this import would create a circular dependency"
+            "Adding this import would create a circular dependency"
         )
 
     edge = ontology_repo.create_edge(
@@ -1939,7 +1953,9 @@ async def remove_ontology_import(ontology_id: str, target_ontology_id: str) -> d
     edges = list(
         run_aql(
             db,
-            "FOR e IN imports FILTER e._from == @f AND e._to == @t AND e.expired == @never RETURN e",
+            "FOR e IN imports "
+            "FILTER e._from == @f AND e._to == @t AND e.expired == @never "
+            "RETURN e",
             bind_vars={"f": from_id, "t": to_id, "never": NEVER_EXPIRES},
         )
     )

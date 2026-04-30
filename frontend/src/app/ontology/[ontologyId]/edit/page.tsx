@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { api, ApiError, getApiBaseUrl, type PaginatedResponse } from "@/lib/api-client";
@@ -294,24 +295,24 @@ export default function OntologyEditorPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              <a
+              <Link
                 href={`/workspace?ontologyId=${ontologyId}`}
                 className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
               >
                 Open in Workspace
-              </a>
-              <a
+              </Link>
+              <Link
                 href="/library"
                 className="text-sm text-gray-500 hover:text-gray-700"
               >
                 &larr; Library
-              </a>
-              <a
+              </Link>
+              <Link
                 href="/"
                 className="text-sm text-gray-500 hover:text-gray-700"
               >
                 Home
-              </a>
+              </Link>
             </div>
           </div>
         </div>

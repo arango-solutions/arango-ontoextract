@@ -320,7 +320,6 @@ class TestFallbackImporter:
 class TestSyncOwlImportsEdges:
     def test_creates_imports_edge_when_target_in_registry(self):
         from rdflib import OWL, URIRef
-
         from rdflib import Graph as RDFGraph
 
         g = RDFGraph()
@@ -347,7 +346,6 @@ class TestSyncOwlImportsEdges:
 
     def test_warns_when_import_target_not_in_registry(self):
         from rdflib import OWL, URIRef
-
         from rdflib import Graph as RDFGraph
 
         g = RDFGraph()
