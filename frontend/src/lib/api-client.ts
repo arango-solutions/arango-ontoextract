@@ -65,7 +65,7 @@ function shouldUseSameOriginApiProxy(envUrl: string | undefined): boolean {
 }
 
 /** Inlined from ``SERVICE_URL_PATH_PREFIX`` (see ``frontend/next.config.js``). */
-function nextPublicBasePath(): string {
+export function nextPublicBasePath(): string {
   return (process.env.NEXT_PUBLIC_BASE_PATH || "").replace(/\/$/, "");
 }
 
@@ -236,14 +236,25 @@ export function backendUrl(path: string): string {
  * Use this when you need a real URL — e.g. building a WebSocket URL — rather
  * than a fetch prefix. Browser HTTP callers should prefer `getApiBaseUrl()`
  * so the Next.js rewrite handles CORS.
+ *
+ * If the configured ``NEXT_PUBLIC_API_URL`` is a relative path (e.g. ``/api/v1``
+ * in the unified Docker image), the URL parser cannot extract an origin; we
+ * fall back to ``window.location.origin`` so callers building ``ws://``/``wss://``
+ * URLs still get a valid host. SSR returns ``""`` (callers handle that).
  */
 export function getApiOrigin(): string {
   const direct = effectiveApiBaseUrl();
-  if (direct !== "") {
-    return direct;
+  const candidate =
+    direct !== ""
+      ? direct
+      : (process.env.NEXT_PUBLIC_API_URL?.trim() || DEFAULT_BACKEND_ORIGIN);
+
+  try {
+    return new URL(candidate).origin;
+  } catch {
+    if (typeof window !== "undefined") {
+      return window.location.origin;
+    }
+    return "";
   }
-  const envUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
-  return resolveApiBaseUrl(
-    envUrl && envUrl.length > 0 ? envUrl : DEFAULT_BACKEND_ORIGIN,
-  );
 }

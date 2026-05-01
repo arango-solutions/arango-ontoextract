@@ -17,5 +17,4 @@ dist
 build
 .env
 .env.*
-!.env.template
 !.env.example

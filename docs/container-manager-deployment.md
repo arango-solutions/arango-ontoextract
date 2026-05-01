@@ -18,7 +18,7 @@ path documented in [`arango-cloud-deployment.md`](./arango-cloud-deployment.md).
 | Your platform integrates the Arango Container Manager and offers `py13base` for Python services | You are running outside the Arango platform on a vanilla container host |
 | You want operations to mirror how Arango itself ships services (manual packaging) | You want a single OCI image that bundles nginx + Next + Python |
 | You don't want to maintain an OCI registry or use `docker save` workflows | You already have an image registry and CI for `docker build` / `push` |
-| You want to ship a `.env` alongside the bundle for first-bring-up | You manage env exclusively from the platform UI |
+| You want to optionally ship a sanitized `.env` alongside the bundle (`PACKAGE_INCLUDE_ENV=1`) | You manage env exclusively from the platform UI |
 
 The output of this path is a **single tarball** (`aoe-myservice.tar.gz`)
 containing the FastAPI app, migrations, `pyproject.toml` / `uv.lock`, an
@@ -74,8 +74,12 @@ What the script does (`scripts/package-arango-manual.sh`):
 
 1. Stages `backend/{app,migrations,pyproject.toml,uv.lock,entrypoint}` into
    a flat archive tree.
-2. Copies repo-root `.env` into the bundle if present (skip by removing it
-   first).
+2. **Opt-in only:** copies repo-root `.env` into the bundle when
+   `PACKAGE_INCLUDE_ENV=1` is set. Default is **skip** so a developer's local
+   `.env` (typically containing `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` /
+   `APP_SECRET_KEY`) doesn't leak into a tarball that may be shared, archived,
+   or stored insecurely. Prefer Container Manager UI env vars for production
+   secrets.
 3. If `PACKAGE_INCLUDE_FRONTEND=1`:
    - Validates `SERVICE_URL_PATH_PREFIX` is set (no trailing slash).
    - Runs `npm ci` (or `npm install`) in `frontend/`.
@@ -195,8 +199,13 @@ which derives candidate paths from `Path(__file__)` — picking up:
 - `…/project/.env` (sibling of `app/` in the manual-packaging bundle)
 
 Whichever exists wins; both is fine (later overrides earlier). The packaging
-script copies `${REPO_ROOT}/.env` into the bundle so this just works on
-first bring-up.
+script copies `${REPO_ROOT}/.env` into the bundle **only when
+`PACKAGE_INCLUDE_ENV=1`** — the default is to skip it (see §3 step 2 and
+§9). For first bring-up against a sanitized `.env`, set the flag explicitly:
+
+```bash
+PACKAGE_INCLUDE_ENV=1 make package-arango-manual-all
+```
 
 ### 4.6 Loopback guard
 
@@ -386,9 +395,10 @@ single startup attempt still surfaces in logs.
 
 ## 9. Security notes
 
-- **`.env` in the tarball is convenient but sensitive.** For production,
-  prefer **only** Container Manager UI env vars and exclude `.env` from the
-  bundle (rename or move it before `make package-arango-manual…`).
+- **`.env` is excluded from the tarball by default.** Set
+  `PACKAGE_INCLUDE_ENV=1` only when you've sanitized the file (no API keys,
+  no production `APP_SECRET_KEY`). For production, prefer **only** Container
+  Manager UI env vars and leave the flag unset.
 - **`APP_SECRET_KEY`** must be unique per environment and **must not be the
   default** when `APP_ENV=production` — the app will refuse to issue JWTs.
 - **JWT enforcement** applies to `/api/...` (except public routes). Health

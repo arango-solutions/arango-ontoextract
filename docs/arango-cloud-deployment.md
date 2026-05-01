@@ -113,7 +113,7 @@ docker build -t aoe:latest .
 Copy the template and configure it:
 
 ```bash
-cp .env.template .env
+cp .env.example .env
 ```
 
 Edit `.env` with your values:
@@ -301,7 +301,7 @@ aoe          latest    680MB
 
 ## Security Best Practices
 
-1. **Never commit `.env` files** — use `.env.template` as a guide
+1. **Never commit `.env` files** — use `.env.example` as a guide
 2. **Use strong `APP_SECRET_KEY`** values in production:
    ```bash
    openssl rand -hex 32
@@ -395,4 +395,4 @@ If the new deployment has issues:
 - **Documentation:** `docs/` directory
 - **Issue Tracker:** GitHub issues
 - **API Reference:** `/docs` endpoint when running
-- **Configuration:** `.env.template` for all available options
+- **Configuration:** `.env.example` for all available options

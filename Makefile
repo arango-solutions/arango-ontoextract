@@ -143,10 +143,10 @@ docker-unified-down: ## Stop unified AOE with docker-compose
 # Arango Container Manager — manual packaging (tar.gz + uv + pyproject.toml)
 # ---------------------------------------------------------------------------
 
-package-arango-manual: ## Build aoe-myservice.tar.gz (flat: entrypoint + pyproject at archive root)
+package-arango-manual: ## Build aoe-myservice.tar.gz (flat: entrypoint + pyproject at archive root). Pass PACKAGE_INCLUDE_ENV=1 to opt into bundling repo .env (default: skipped to avoid leaking secrets).
 	bash scripts/package-arango-manual.sh
 
-package-arango-manual-all: ## Same + Next static export (SERVICE_URL_PATH_PREFIX from repo .env via include)
+package-arango-manual-all: ## Same + Next static export (SERVICE_URL_PATH_PREFIX from repo .env via include). Pass PACKAGE_INCLUDE_ENV=1 to bundle .env.
 	PACKAGE_INCLUDE_FRONTEND=1 SERVICE_URL_PATH_PREFIX="$(SERVICE_URL_PATH_PREFIX)" bash scripts/package-arango-manual.sh
 
 # ---------------------------------------------------------------------------

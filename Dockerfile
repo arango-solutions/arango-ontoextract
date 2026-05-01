@@ -36,8 +36,14 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc libffi-dev && \
     rm -rf /var/lib/apt/lists/*
 
+# Copy pyproject AND the package source before installing. ``-e .`` against a
+# source tree without ``app/`` (the previous layout) created a .pth pointing at
+# /build, which silently disappeared in the runtime stage and left the install
+# functional only because cwd happens to be on sys.path. Installing as a real
+# wheel puts ``app/`` into site-packages, which we then carry into runtime.
 COPY backend/pyproject.toml ./
-RUN pip install --no-cache-dir --prefix=/install -e .
+COPY backend/app/ ./app/
+RUN pip install --no-cache-dir --prefix=/install .
 
 # ============================================================================
 # Stage 4: Runtime
@@ -53,9 +59,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Python app + installed packages
+# Copy installed Python packages from the build stage. ``app`` is installed as
+# a real wheel into site-packages, so no separate COPY of backend/app/ is
+# needed. ``migrations/`` is NOT part of the wheel (pyproject ``packages = ["app"]``)
+# so we still ship it next to the runtime cwd; ``docker-entrypoint.sh`` runs
+# ``python -m migrations.runner`` from /app.
 COPY --from=backend-build /install /usr/local
-COPY backend/app/ ./app/
 COPY backend/migrations/ ./migrations/
 
 # Copy Next.js standalone output

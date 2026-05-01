@@ -37,10 +37,18 @@ if [[ -f "${REPO_ROOT}/backend/uv.lock" ]]; then
 fi
 cp "${REPO_ROOT}/backend/entrypoint" "${STAGE}/${NAME}/entrypoint"
 chmod +x "${STAGE}/${NAME}/entrypoint"
-# Optional: ship repo-root .env so Container Manager picks up ARANGO_* without duplicating env in UI.
-# Do not commit secrets; use UI env vars for production when preferred.
-if [[ -f "${REPO_ROOT}/.env" ]]; then
-	cp "${REPO_ROOT}/.env" "${STAGE}/${NAME}/.env"
+# Opt-in only: ship repo-root .env so Container Manager picks up ARANGO_* without
+# duplicating env in UI. Default is OFF — local .env files typically contain
+# OPENAI_API_KEY / ANTHROPIC_API_KEY / APP_SECRET_KEY etc. that must NOT leak
+# into a tarball that may be shared, archived, or stored insecurely.
+# Set PACKAGE_INCLUDE_ENV=1 to bundle .env intentionally.
+if [[ "${PACKAGE_INCLUDE_ENV:-0}" == "1" ]]; then
+	if [[ -f "${REPO_ROOT}/.env" ]]; then
+		cp "${REPO_ROOT}/.env" "${STAGE}/${NAME}/.env"
+		echo "==> Bundled .env (PACKAGE_INCLUDE_ENV=1). Verify it contains no production secrets."
+	fi
+elif [[ -f "${REPO_ROOT}/.env" ]]; then
+	echo "==> Skipping .env (set PACKAGE_INCLUDE_ENV=1 to bundle it; prefer Container Manager UI env vars for secrets)." >&2
 fi
 
 if [[ "${PACKAGE_INCLUDE_FRONTEND:-0}" == "1" ]]; then
