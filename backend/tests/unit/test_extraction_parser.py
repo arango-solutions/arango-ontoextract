@@ -134,9 +134,7 @@ class TestParseLLMResponse:
 
         assert cls.evidence[0].source_chunk_ids == ["chunk_3"]
         assert cls.parent_evidence[0].source_chunk_ids == ["chunk_7"]
-        assert cls.relationships[0].evidence[0].evidence_text == (
-            "Accounts are held by customers."
-        )
+        assert cls.relationships[0].evidence[0].evidence_text == ("Accounts are held by customers.")
 
     def test_parse_invalid_json_raises(self):
         with pytest.raises((json.JSONDecodeError, ValueError, KeyError)):
@@ -151,8 +149,6 @@ class TestParseLLMResponse:
         for fixture_file in sorted(FIXTURES_DIR.glob("extraction_response_*.json")):
             fixture = json.loads(fixture_file.read_text())
             raw_json = json.dumps(fixture)
-            result = _parse_llm_response(
-                raw_json, pass_number=1, model_name="test"
-            )
+            result = _parse_llm_response(raw_json, pass_number=1, model_name="test")
             assert isinstance(result, ExtractionResult)
             assert len(result.classes) > 0

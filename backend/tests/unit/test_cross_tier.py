@@ -66,11 +66,7 @@ def _mock_db_for_conflicts(
             return iter(range_results or [])
         if "ontology_datatype_properties" in q and "range_datatype" in q:
             return iter(pgt_dt_range_results or [])
-        if (
-            "ontology_object_properties" in q
-            and "rdfs_range_class" in q
-            and "local_range" in q
-        ):
+        if "ontology_object_properties" in q and "rdfs_range_class" in q and "local_range" in q:
             return iter(pgt_obj_range_results or [])
         if "DOCUMENT(e._from)" in q and "subclass_of" in q:
             return iter(domain_edges or [])
@@ -184,9 +180,7 @@ class TestDetectConflicts:
         assert len(conflicts) == 0
 
     def test_detects_hierarchy_redefinition(self):
-        domain_edges = [
-            {"child_uri": "http://ex.org#Car", "parent_uri": "http://ex.org#Vehicle"}
-        ]
+        domain_edges = [{"child_uri": "http://ex.org#Car", "parent_uri": "http://ex.org#Vehicle"}]
         staging_with_parents = [
             {
                 "key": "local1",
@@ -207,11 +201,7 @@ class TestDetectConflicts:
                 return iter([])
             if "ontology_datatype_properties" in q and "range_datatype" in q:
                 return iter([])
-            if (
-                "ontology_object_properties" in q
-                and "rdfs_range_class" in q
-                and "local_range" in q
-            ):
+            if "ontology_object_properties" in q and "rdfs_range_class" in q and "local_range" in q:
                 return iter([])
             if "DOCUMENT(e._from)" in q and "subclass_of" in q:
                 return iter(domain_edges)

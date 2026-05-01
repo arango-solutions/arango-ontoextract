@@ -126,9 +126,7 @@ class Settings(BaseSettings):
     def _validate_secret_key(cls, v: str, info: Any) -> str:
         env = info.data.get("app_env", "development")
         if env == "production" and v in ("change-this", ""):
-            raise ValueError(
-                "APP_SECRET_KEY must be set to a strong random value in production"
-            )
+            raise ValueError("APP_SECRET_KEY must be set to a strong random value in production")
         return v
 
     @field_validator("test_deployment_mode", mode="before")

@@ -55,15 +55,8 @@ def _batch_chunks(chunks: list[dict[str, Any]], batch_size: int) -> list[str]:
         batch = chunks[i : i + batch_size]
         text_parts = []
         for j, chunk in enumerate(batch, start=i + 1):
-            chunk_id = (
-                chunk.get("_key")
-                or chunk.get("id")
-                or chunk.get("chunk_id")
-                or str(j)
-            )
-            text_parts.append(
-                f"[Chunk {j} | source_chunk_id={chunk_id}]\n{chunk.get('text', '')}"
-            )
+            chunk_id = chunk.get("_key") or chunk.get("id") or chunk.get("chunk_id") or str(j)
+            text_parts.append(f"[Chunk {j} | source_chunk_id={chunk_id}]\n{chunk.get('text', '')}")
         batches.append("\n\n".join(text_parts))
     return batches
 
@@ -210,9 +203,7 @@ async def _extract_batch(
 
                 response = await llm.ainvoke(messages)
                 raw_text = (
-                    response.content
-                    if isinstance(response.content, str)
-                    else str(response.content)
+                    response.content if isinstance(response.content, str) else str(response.content)
                 )
 
                 if not raw_text or not raw_text.strip():
@@ -303,7 +294,9 @@ async def _run_single_pass(
 
     log.info(
         "extractor pass %d completed: %d classes, %d errors",
-        pass_num, len(all_classes), len(all_errors),
+        pass_num,
+        len(all_classes),
+        len(all_errors),
     )
 
     return pass_result, all_errors, pass_tokens
@@ -372,8 +365,8 @@ async def extractor_node(state: ExtractionPipelineState) -> dict:
             total_tokens.get("completion_tokens", 0) + pass_tokens["completion_tokens"]
         )
 
-    total_tokens["total_tokens"] = (
-        total_tokens.get("prompt_tokens", 0) + total_tokens.get("completion_tokens", 0)
+    total_tokens["total_tokens"] = total_tokens.get("prompt_tokens", 0) + total_tokens.get(
+        "completion_tokens", 0
     )
 
     duration = time.time() - start

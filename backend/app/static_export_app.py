@@ -67,9 +67,7 @@ class NextStaticExportApp(StaticFiles):
                 return original_response
 
         html_path = f"{path}.html"
-        full_path, stat_result = await anyio.to_thread.run_sync(
-            self.lookup_path, html_path
-        )
+        full_path, stat_result = await anyio.to_thread.run_sync(self.lookup_path, html_path)
         if stat_result is not None and stat.S_ISREG(stat_result.st_mode):
             return self.file_response(full_path, stat_result, scope)
 

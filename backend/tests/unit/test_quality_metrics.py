@@ -61,28 +61,30 @@ class TestComputeOntologyQuality:
         # 7: classes with relationships (UNION_DISTINCT)
         # 8: chunk count
         # 9: subclass_of edge count
-        db = _mock_db({
-            0: [{"cnt": 5, "avg_conf": 0.85, "avg_faith": 0.8, "avg_sem": 0.9}],
-            1: [2],     # datatype properties
-            2: [1],     # object properties
-            3: [4],     # classes with ≥1 rdfs_domain edge
-            4: [0],     # orphan count
-            5: [],      # cycle check (no cycles)
-            6: [2],     # rdfs_range_class edges
-            7: [3],     # classes involved in relationships
-            8: [2],     # chunk count
-            9: [0],     # subclass_of edge count
-        })
+        db = _mock_db(
+            {
+                0: [{"cnt": 5, "avg_conf": 0.85, "avg_faith": 0.8, "avg_sem": 0.9}],
+                1: [2],  # datatype properties
+                2: [1],  # object properties
+                3: [4],  # classes with ≥1 rdfs_domain edge
+                4: [0],  # orphan count
+                5: [],  # cycle check (no cycles)
+                6: [2],  # rdfs_range_class edges
+                7: [3],  # classes involved in relationships
+                8: [2],  # chunk count
+                9: [0],  # subclass_of edge count
+            }
+        )
 
         result = compute_ontology_quality(db, "onto_1")
 
         assert result["ontology_id"] == "onto_1"
         assert result["avg_confidence"] == 0.85
         assert result["class_count"] == 5
-        assert result["property_count"] == 3   # 2 dt + 1 obj
-        assert result["completeness"] == 80.0   # 4/5 * 100
+        assert result["property_count"] == 3  # 2 dt + 1 obj
+        assert result["completeness"] == 80.0  # 4/5 * 100
         assert result["classes_without_properties"] == 1
-        assert result["connectivity"] == 60.0   # 3/5 * 100
+        assert result["connectivity"] == 60.0  # 3/5 * 100
         assert result["schema_metrics"] is not None
         assert result["health_score"] is not None
         assert 0 <= result["health_score"] <= 100
@@ -92,10 +94,14 @@ class TestComputeOntologyQuality:
         from app.services.quality_metrics import compute_ontology_quality
 
         old_collections = {
-            "ontology_classes", "ontology_properties",
-            "has_property", "related_to",
-            "subclass_of", "has_chunk",
-            "ontology_registry", "extraction_runs",
+            "ontology_classes",
+            "ontology_properties",
+            "has_property",
+            "related_to",
+            "subclass_of",
+            "has_chunk",
+            "ontology_registry",
+            "extraction_runs",
         }
         # Query order for legacy path:
         # 0: class stats
@@ -107,17 +113,20 @@ class TestComputeOntologyQuality:
         # 6: classes_with_relationships
         # 7: chunk count
         # 8: subclass_of edge count
-        db = _mock_db_selective(old_collections, {
-            0: [{"cnt": 5, "avg_conf": 0.85, "avg_faith": 0.8, "avg_sem": 0.9}],
-            1: [3],     # property count
-            2: [4],     # classes with props
-            3: [0],     # orphan count
-            4: [],      # cycle check
-            5: [2],     # related_to count
-            6: [3],     # classes_with_relationships
-            7: [2],     # chunk count
-            8: [0],     # subclass_of edge count
-        })
+        db = _mock_db_selective(
+            old_collections,
+            {
+                0: [{"cnt": 5, "avg_conf": 0.85, "avg_faith": 0.8, "avg_sem": 0.9}],
+                1: [3],  # property count
+                2: [4],  # classes with props
+                3: [0],  # orphan count
+                4: [],  # cycle check
+                5: [2],  # related_to count
+                6: [3],  # classes_with_relationships
+                7: [2],  # chunk count
+                8: [0],  # subclass_of edge count
+            },
+        )
 
         result = compute_ontology_quality(db, "onto_1")
 
@@ -168,18 +177,21 @@ class TestComputeOntologyQuality:
         # 5: chunk count
         # 6: subclass_of edge count
         # 7: registry lookup
-        db = _mock_db({
-            0: [{"cnt": 0, "avg_conf": None, "avg_faith": None, "avg_sem": None}],
-            1: [0],     # dt prop count
-            2: [0],     # obj prop count
-            3: [0],     # orphan count
-            4: [],      # cycle check
-            5: [0],     # chunk count
-            6: [0],     # subclass_of edge count
-            7: [{"run_id": "run_1", "name": "Ontology 1", "tier": "domain"}],
-        })
+        db = _mock_db(
+            {
+                0: [{"cnt": 0, "avg_conf": None, "avg_faith": None, "avg_sem": None}],
+                1: [0],  # dt prop count
+                2: [0],  # obj prop count
+                3: [0],  # orphan count
+                4: [],  # cycle check
+                5: [0],  # chunk count
+                6: [0],  # subclass_of edge count
+                7: [{"run_id": "run_1", "name": "Ontology 1", "tier": "domain"}],
+            }
+        )
 
         import sys
+
         fake_extraction = MagicMock()
         fake_extraction.get_run_cost = mock_get_run_cost
         with patch.dict(sys.modules, {"app.services.extraction": fake_extraction}):
@@ -199,10 +211,12 @@ class TestComputeExtractionQuality:
     def test_returns_acceptance_rate(self):
         from app.services.quality_metrics import compute_extraction_quality
 
-        db = _mock_db({
-            0: [{"accepted": 8, "rejected": 1, "edited": 1}],  # curation_decisions
-            1: [{"completed_at": 1000.5, "uploaded_at": 999.0}],  # time_to_ontology
-        })
+        db = _mock_db(
+            {
+                0: [{"accepted": 8, "rejected": 1, "edited": 1}],  # curation_decisions
+                1: [{"completed_at": 1000.5, "uploaded_at": 999.0}],  # time_to_ontology
+            }
+        )
 
         result = compute_extraction_quality(db, "onto_1")
 
@@ -212,10 +226,12 @@ class TestComputeExtractionQuality:
     def test_null_when_no_decisions(self):
         from app.services.quality_metrics import compute_extraction_quality
 
-        db = _mock_db({
-            0: [{"accepted": 0, "rejected": 0, "edited": 0}],
-            1: [{}],
-        })
+        db = _mock_db(
+            {
+                0: [{"accepted": 0, "rejected": 0, "edited": 0}],
+                1: [{}],
+            }
+        )
 
         result = compute_extraction_quality(db, "onto_1")
 
@@ -293,12 +309,14 @@ class TestComputeAssertionEvidenceMetrics:
     def test_returns_evidence_coverage_by_assertion_type(self):
         from app.services.quality_metrics import compute_assertion_evidence_metrics
 
-        db = _mock_db({
-            0: [{"total": 4, "evidenced": 3}],  # classes
-            1: [{"total": 2, "evidenced": 1}],  # attributes
-            2: [{"total": 1, "evidenced": 1}],  # relationships
-            3: [{"total": 3, "evidenced": 0}],  # subclass links
-        })
+        db = _mock_db(
+            {
+                0: [{"total": 4, "evidenced": 3}],  # classes
+                1: [{"total": 2, "evidenced": 1}],  # attributes
+                2: [{"total": 1, "evidenced": 1}],  # relationships
+                3: [{"total": 3, "evidenced": 0}],  # subclass links
+            }
+        )
 
         result = compute_assertion_evidence_metrics(db, "onto_1")
 
@@ -320,9 +338,12 @@ class TestComputeAssertionEvidenceMetrics:
     def test_handles_missing_assertion_collections(self):
         from app.services.quality_metrics import compute_assertion_evidence_metrics
 
-        db = _mock_db_selective({"ontology_classes"}, {
-            0: [{"total": 1, "evidenced": 0}],
-        })
+        db = _mock_db_selective(
+            {"ontology_classes"},
+            {
+                0: [{"total": 1, "evidenced": 0}],
+            },
+        )
 
         result = compute_assertion_evidence_metrics(db, "onto_1")
 
@@ -341,26 +362,28 @@ class TestComputeConfidenceCalibrationMetrics:
     def test_returns_bucketed_calibration_metrics(self):
         from app.services.quality_metrics import compute_confidence_calibration_metrics
 
-        db = _mock_db({
-            0: [
-                {
-                    "bucket_id": 8,
-                    "total": 10,
-                    "accepted": 8,
-                    "edited": 1,
-                    "rejected": 1,
-                    "avg_confidence": 0.82,
-                },
-                {
-                    "bucket_id": 4,
-                    "total": 5,
-                    "accepted": 1,
-                    "edited": 1,
-                    "rejected": 3,
-                    "avg_confidence": 0.45,
-                },
-            ],
-        })
+        db = _mock_db(
+            {
+                0: [
+                    {
+                        "bucket_id": 8,
+                        "total": 10,
+                        "accepted": 8,
+                        "edited": 1,
+                        "rejected": 1,
+                        "avg_confidence": 0.82,
+                    },
+                    {
+                        "bucket_id": 4,
+                        "total": 5,
+                        "accepted": 1,
+                        "edited": 1,
+                        "rejected": 3,
+                        "avg_confidence": 0.45,
+                    },
+                ],
+            }
+        )
 
         result = compute_confidence_calibration_metrics(db, "onto_1")
 
@@ -394,9 +417,11 @@ class TestCountOrphans:
     def test_all_connected_returns_zero(self):
         from app.services.quality_metrics import _count_orphans
 
-        db = _mock_db({
-            0: [0],  # orphan count query returns 0
-        })
+        db = _mock_db(
+            {
+                0: [0],  # orphan count query returns 0
+            }
+        )
 
         assert _count_orphans(db, "onto_1") == 0
 

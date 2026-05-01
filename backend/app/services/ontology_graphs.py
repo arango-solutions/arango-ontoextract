@@ -97,8 +97,7 @@ def ensure_ontology_graph(
     cols = cast("list[dict[str, Any]]", db.collections())
     existing_cols = {c["name"] for c in cols if not c["system"]}
     edge_defs_to_use = [
-        ed for ed in PER_ONTOLOGY_EDGE_DEFINITIONS
-        if ed["edge_collection"] in existing_cols
+        ed for ed in PER_ONTOLOGY_EDGE_DEFINITIONS if ed["edge_collection"] in existing_cols
     ]
 
     db.create_graph(
@@ -124,7 +123,7 @@ def list_ontology_graphs(
     for g in cast("list[dict[str, Any]]", db.graphs()):
         name = g["name"]
         if name.startswith("ontology_"):
-            ontology_id = name[len("ontology_"):]
+            ontology_id = name[len("ontology_") :]
             graphs.append({"graph_name": name, "ontology_id": ontology_id})
     return graphs
 

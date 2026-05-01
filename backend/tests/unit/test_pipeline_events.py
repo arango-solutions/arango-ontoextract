@@ -186,6 +186,7 @@ class TestPipelineErrorEvents:
     @pytest.mark.asyncio
     async def test_no_error_when_callback_is_none(self):
         """Pipeline handles event_callback=None gracefully (no AttributeError)."""
+
         async def failing_stream():
             raise RuntimeError("boom")
             yield  # makes this an async generator

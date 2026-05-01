@@ -10,6 +10,7 @@ expired entries are pruned, and the remaining count is compared against the limi
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from typing import Any
@@ -57,10 +58,8 @@ def _get_redis():
             _redis_client.ping()
             return _redis_client
         except RedisError:
-            try:
+            with contextlib.suppress(Exception):
                 _redis_client.close()
-            except Exception:
-                pass
             _redis_client = None
             _redis_unavailable_until = now + _REDIS_BACKOFF_SECONDS
 
@@ -181,16 +180,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         {"/health", "/ready", "/docs", "/openapi.json", "/redoc", "/login"}
     )
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if not settings.rate_limit_enabled:
             return await call_next(request)
 
         path = request.url.path
-        if path in self.EXEMPT_PATHS or path.startswith("/_next/") or path in (
-            "/favicon.svg",
-            "/favicon.ico",
+        if (
+            path in self.EXEMPT_PATHS
+            or path.startswith("/_next/")
+            or path
+            in (
+                "/favicon.svg",
+                "/favicon.ico",
+            )
         ):
             return await call_next(request)
 

@@ -51,7 +51,7 @@ class TestMigration018:
         db.aql.execute.assert_not_called()
 
     def test_creates_missing_target_collections(self):
-        db, cols = _make_db(
+        db, _cols = _make_db(
             {"ontology_properties"},
             {0: [], 1: []},  # class_keys query, properties query
         )
@@ -78,13 +78,16 @@ class TestMigration018:
         }
         db, cols = _make_db(
             {
-                "ontology_properties", "ontology_classes",
-                "ontology_object_properties", "ontology_datatype_properties",
-                "rdfs_domain", "rdfs_range_class",
+                "ontology_properties",
+                "ontology_classes",
+                "ontology_object_properties",
+                "ontology_datatype_properties",
+                "rdfs_domain",
+                "rdfs_range_class",
             },
             {
                 0: ["Customer", "Account"],  # class keys
-                1: [obj_prop],               # properties
+                1: [obj_prop],  # properties
             },
         )
         up(db)
@@ -124,13 +127,16 @@ class TestMigration018:
         }
         db, cols = _make_db(
             {
-                "ontology_properties", "ontology_classes",
-                "ontology_object_properties", "ontology_datatype_properties",
-                "rdfs_domain", "rdfs_range_class",
+                "ontology_properties",
+                "ontology_classes",
+                "ontology_object_properties",
+                "ontology_datatype_properties",
+                "rdfs_domain",
+                "rdfs_range_class",
             },
             {
-                0: ["Customer"],   # class keys
-                1: [dt_prop],      # properties
+                0: ["Customer"],  # class keys
+                1: [dt_prop],  # properties
             },
         )
         up(db)
@@ -168,12 +174,15 @@ class TestMigration018:
         }
         db, cols = _make_db(
             {
-                "ontology_properties", "ontology_classes",
-                "ontology_object_properties", "ontology_datatype_properties",
-                "rdfs_domain", "rdfs_range_class",
+                "ontology_properties",
+                "ontology_classes",
+                "ontology_object_properties",
+                "ontology_datatype_properties",
+                "rdfs_domain",
+                "rdfs_range_class",
             },
             {
-                0: ["Document"],   # class keys — ExternalEntity NOT present
+                0: ["Document"],  # class keys — ExternalEntity NOT present
                 1: [obj_prop],
             },
         )
@@ -201,9 +210,12 @@ class TestMigration018:
         }
         db, cols = _make_db(
             {
-                "ontology_properties", "ontology_classes",
-                "ontology_object_properties", "ontology_datatype_properties",
-                "rdfs_domain", "rdfs_range_class",
+                "ontology_properties",
+                "ontology_classes",
+                "ontology_object_properties",
+                "ontology_datatype_properties",
+                "rdfs_domain",
+                "rdfs_range_class",
             },
             {
                 0: ["Person"],

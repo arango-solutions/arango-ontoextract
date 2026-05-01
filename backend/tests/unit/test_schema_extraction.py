@@ -133,7 +133,10 @@ class TestExtractSchema:
     ):
         mock_get_db.return_value = MagicMock()
         mock_try_mapper.return_value = (object(), object(), object(), object())
-        mock_run_extract.return_value = ("@prefix owl: <> .", {"physical_schema_fingerprint": "fp1"})
+        mock_run_extract.return_value = (
+            "@prefix owl: <> .",
+            {"physical_schema_fingerprint": "fp1"},
+        )
         mock_import.return_value = {"imported": True}
         config = _make_config()
         result = extract_schema(config)

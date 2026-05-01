@@ -12,9 +12,7 @@ class TestRecordDecision:
 
     @patch("app.services.curation.curation_repo")
     @patch("app.services.curation.update_entity")
-    def test_approve_creates_decision_and_updates_entity(
-        self, mock_update, mock_repo
-    ):
+    def test_approve_creates_decision_and_updates_entity(self, mock_update, mock_repo):
         from app.services.curation import record_decision
 
         mock_repo.create_decision.return_value = {

@@ -151,7 +151,8 @@ FOR doc IN @@col
   RETURN doc"""
 
     return list(
-        run_aql(db,
+        run_aql(
+            db,
             query,
             bind_vars={
                 "@col": collection,
@@ -177,7 +178,8 @@ FOR doc IN @@col
   RETURN doc"""
 
     return list(
-        run_aql(db,
+        run_aql(
+            db,
             query,
             bind_vars={
                 "@col": collection,
@@ -238,7 +240,8 @@ FOR e IN @@col
   RETURN e"""
 
         edges = list(
-            run_aql(db,
+            run_aql(
+                db,
                 query,
                 bind_vars={"@col": edge_col, "never": NEVER_EXPIRES},
             )
@@ -259,8 +262,7 @@ FOR e IN @@col
             edge_data = {
                 k: v
                 for k, v in edge.items()
-                if not k.startswith("_")
-                and k not in ("created", "expired", "ttlExpireAt")
+                if not k.startswith("_") and k not in ("created", "expired", "ttlExpireAt")
             }
             edge_data["_from"] = resolved_from
             edge_data["_to"] = resolved_to

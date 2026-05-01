@@ -26,6 +26,7 @@ from app.services.temporal import (
 
 log = logging.getLogger(__name__)
 
+
 def _collection_for(
     entity_type: str,
     *,
@@ -95,9 +96,7 @@ def record_decision(
         "issue_reasons": issue_reasons or [],
         "edited_data": edited_data,
         "edit_diff": (
-            _build_edit_diff(current_entity, edited_data or {})
-            if action == "edit"
-            else None
+            _build_edit_diff(current_entity, edited_data or {}) if action == "edit" else None
         ),
         "created_at": time.time(),
     }
@@ -375,7 +374,8 @@ FOR doc IN @@col
   RETURN doc"""
 
     results = list(
-        run_aql(db,
+        run_aql(
+            db,
             query,
             bind_vars={"@col": collection, "key": key, "never": NEVER_EXPIRES},
         )

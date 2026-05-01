@@ -70,7 +70,7 @@ def _parse_json_response(raw_text: str) -> dict[str, Any]:
     if text.startswith("```"):
         first_newline = text.index("\n")
         last_fence = text.rfind("```")
-        text = text[first_newline + 1:last_fence].strip()
+        text = text[first_newline + 1 : last_fence].strip()
     return json.loads(text)
 
 
@@ -156,6 +156,7 @@ async def _map_single_batch(
     batch_index: int,
 ) -> list[str]:
     """Run the map phase for a single chunk batch."""
+
     def _labels_for_class(cls: ExtractedClass) -> dict[str, list[str]]:
         if cls.attributes or cls.relationships:
             return {
@@ -163,12 +164,8 @@ async def _map_single_batch(
                 "relationships": [r.label for r in cls.relationships],
             }
         return {
-            "attributes": [
-                p.label for p in cls.properties if p.property_type != "object"
-            ],
-            "relationships": [
-                p.label for p in cls.properties if p.property_type == "object"
-            ],
+            "attributes": [p.label for p in cls.properties if p.property_type != "object"],
+            "relationships": [p.label for p in cls.properties if p.property_type == "object"],
         }
 
     class_summaries = [
@@ -189,12 +186,15 @@ async def _map_single_batch(
 
     try:
         result = await _invoke_llm_json(
-            llm, [HumanMessage(content=prompt)], _MAP_OBSERVATIONS_SCHEMA,
+            llm,
+            [HumanMessage(content=prompt)],
+            _MAP_OBSERVATIONS_SCHEMA,
         )
         observations = result.get("observations", [])
         log.debug(
             "qualitative map batch %d: %d observations",
-            batch_index, len(observations),
+            batch_index,
+            len(observations),
         )
         return observations
     except Exception:
@@ -251,9 +251,7 @@ async def _reduce_phase(
     observations: list[str],
 ) -> dict[str, list[str]]:
     """Synthesise per-batch observations into final strengths/weaknesses."""
-    numbered_obs = "\n".join(
-        f"{i + 1}. {obs}" for i, obs in enumerate(observations)
-    )
+    numbered_obs = "\n".join(f"{i + 1}. {obs}" for i, obs in enumerate(observations))
 
     prompt = _REDUCE_PROMPT_TEMPLATE.format(
         observation_count=len(observations),
@@ -261,7 +259,9 @@ async def _reduce_phase(
     )
 
     result = await _invoke_llm_json(
-        llm, [HumanMessage(content=prompt)], _RESPONSE_SCHEMA,
+        llm,
+        [HumanMessage(content=prompt)],
+        _RESPONSE_SCHEMA,
     )
     return {
         "strengths": result.get("strengths", []),
@@ -272,6 +272,7 @@ async def _reduce_phase(
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
 
 async def run_qualitative_evaluation(
     classes: list[ExtractedClass],

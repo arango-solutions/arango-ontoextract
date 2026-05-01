@@ -51,14 +51,14 @@ class ERPipelineConfig:
 
     collection: str = "ontology_classes"
     ontology_id: str | None = None
-    blocking_strategies: list[str] = field(
-        default_factory=lambda: ["bm25", "vector"]
+    blocking_strategies: list[str] = field(default_factory=lambda: ["bm25", "vector"])
+    field_configs: list[ERFieldConfig] = field(
+        default_factory=lambda: [
+            ERFieldConfig(field_name="label", weight=0.4, algorithm="jaro_winkler"),
+            ERFieldConfig(field_name="description", weight=0.3, algorithm="cosine"),
+            ERFieldConfig(field_name="uri", weight=0.2, algorithm="exact"),
+        ]
     )
-    field_configs: list[ERFieldConfig] = field(default_factory=lambda: [
-        ERFieldConfig(field_name="label", weight=0.4, algorithm="jaro_winkler"),
-        ERFieldConfig(field_name="description", weight=0.3, algorithm="cosine"),
-        ERFieldConfig(field_name="uri", weight=0.2, algorithm="exact"),
-    ])
     topological_weight: float = 0.1
     similarity_threshold: float = 0.7
     vector_similarity_threshold: float = 0.85
@@ -81,9 +81,7 @@ class ERPipelineConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ERPipelineConfig:
-        field_configs = [
-            ERFieldConfig(**fc) for fc in data.get("field_configs", [])
-        ]
+        field_configs = [ERFieldConfig(**fc) for fc in data.get("field_configs", [])]
         return cls(
             collection=data.get("collection", "ontology_classes"),
             ontology_id=data.get("ontology_id"),
@@ -133,30 +131,36 @@ def configure_blocking(config: ERPipelineConfig) -> dict[str, Any]:
     strategies = []
     for strategy_name in config.blocking_strategies:
         if strategy_name == "bm25":
-            strategies.append({
-                "type": "BM25BlockingStrategy",
-                "fields": ["label", "description"],
-                "view": "ontology_classes_search",
-                "top_k": 20,
-            })
+            strategies.append(
+                {
+                    "type": "BM25BlockingStrategy",
+                    "fields": ["label", "description"],
+                    "view": "ontology_classes_search",
+                    "top_k": 20,
+                }
+            )
         elif strategy_name == "vector":
-            strategies.append({
-                "type": "VectorBlockingStrategy",
-                "field": "embedding",
-                "threshold": config.vector_similarity_threshold,
-                "top_k": 10,
-            })
+            strategies.append(
+                {
+                    "type": "VectorBlockingStrategy",
+                    "field": "embedding",
+                    "threshold": config.vector_similarity_threshold,
+                    "top_k": 10,
+                }
+            )
         elif strategy_name == "graph_traversal":
-            strategies.append({
-                "type": "GraphTraversalBlockingStrategy",
-                "edge_collections": [
-                    "subclass_of",
-                    "has_property",
-                    "rdfs_domain",
-                    "rdfs_range_class",
-                ],
-                "max_depth": 2,
-            })
+            strategies.append(
+                {
+                    "type": "GraphTraversalBlockingStrategy",
+                    "edge_collections": [
+                        "subclass_of",
+                        "has_property",
+                        "rdfs_domain",
+                        "rdfs_range_class",
+                    ],
+                    "max_depth": 2,
+                }
+            )
 
     return {
         "orchestrator": "MultiStrategyOrchestrator",
@@ -172,11 +176,13 @@ def configure_scoring(config: ERPipelineConfig) -> dict[str, Any]:
     """
     field_scorers = []
     for fc in config.field_configs:
-        field_scorers.append({
-            "field": fc.field_name,
-            "algorithm": fc.algorithm,
-            "weight": fc.weight,
-        })
+        field_scorers.append(
+            {
+                "field": fc.field_name,
+                "algorithm": fc.algorithm,
+                "weight": fc.weight,
+            }
+        )
 
     return {
         "type": "WeightedFieldSimilarity",
@@ -269,7 +275,8 @@ def get_candidates(
         return []
 
     return list(
-        run_aql(db,
+        run_aql(
+            db,
             """\
 FOR e IN similarTo
   FILTER e.ontology_id == @oid
@@ -313,7 +320,8 @@ def get_clusters(
         return []
 
     return list(
-        run_aql(db,
+        run_aql(
+            db,
             """\
 FOR cluster IN entity_clusters
   FILTER cluster.ontology_id == @oid
@@ -460,13 +468,15 @@ def execute_merge(
     expire_entity(db, collection="ontology_classes", key=source_key)
 
     if db.has_collection("golden_records"):
-        db.collection("golden_records").insert({
-            "source_key": source_key,
-            "target_key": target_key,
-            "strategy": strategy,
-            "merged_at": time.time(),
-            "merged_data": merged_data,
-        })
+        db.collection("golden_records").insert(
+            {
+                "source_key": source_key,
+                "target_key": target_key,
+                "strategy": strategy,
+                "merged_at": time.time(),
+                "merged_data": merged_data,
+            }
+        )
 
     return {
         "target_key": target_key,
@@ -491,7 +501,8 @@ def get_cross_tier_candidates(
         return []
 
     local_classes = list(
-        run_aql(db,
+        run_aql(
+            db,
             """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @local_oid
@@ -502,7 +513,8 @@ FOR cls IN ontology_classes
     )
 
     domain_classes = list(
-        run_aql(db,
+        run_aql(
+            db,
             """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @domain_oid
@@ -515,23 +527,23 @@ FOR cls IN ontology_classes
     candidates: list[dict[str, Any]] = []
     for local_cls in local_classes:
         for domain_cls in domain_classes:
-            label_sim = _jaro_winkler_sim(
-                local_cls.get("label", ""), domain_cls.get("label", "")
-            )
+            label_sim = _jaro_winkler_sim(local_cls.get("label", ""), domain_cls.get("label", ""))
             desc_sim = _token_overlap(
                 local_cls.get("description", ""), domain_cls.get("description", "")
             )
             combined = 0.6 * label_sim + 0.4 * desc_sim
             if combined >= min_score:
-                candidates.append({
-                    "local_key": local_cls["_key"],
-                    "local_label": local_cls.get("label", ""),
-                    "domain_key": domain_cls["_key"],
-                    "domain_label": domain_cls.get("label", ""),
-                    "combined_score": round(combined, 4),
-                    "label_similarity": round(label_sim, 4),
-                    "description_similarity": round(desc_sim, 4),
-                })
+                candidates.append(
+                    {
+                        "local_key": local_cls["_key"],
+                        "local_label": local_cls.get("label", ""),
+                        "domain_key": domain_cls["_key"],
+                        "domain_label": domain_cls.get("label", ""),
+                        "combined_score": round(combined, 4),
+                        "label_similarity": round(label_sim, 4),
+                        "description_similarity": round(desc_sim, 4),
+                    }
+                )
 
     candidates.sort(key=lambda c: c["combined_score"], reverse=True)
     return candidates
@@ -552,7 +564,8 @@ def _execute_blocking(
         return []
 
     classes = list(
-        run_aql(db,
+        run_aql(
+            db,
             """\
 FOR cls IN @@col
   FILTER cls.ontology_id == @oid
@@ -622,9 +635,7 @@ def _execute_scoring(
             if include_weight:
                 active_weight += fc.weight
 
-        topo_score = compute_topological_similarity(
-            db, class_key_1=key1, class_key_2=key2
-        )
+        topo_score = compute_topological_similarity(db, class_key_1=key1, class_key_2=key2)
         field_scores["topological"] = topo_score
         weighted_sum += config.topological_weight * topo_score
         active_weight += config.topological_weight
@@ -644,12 +655,14 @@ def _execute_scoring(
             if db.has_collection("similarTo"):
                 db.collection("similarTo").insert(edge_doc)
 
-            scored.append({
-                "key1": key1,
-                "key2": key2,
-                "combined_score": combined,
-                "field_scores": field_scores,
-            })
+            scored.append(
+                {
+                    "key1": key1,
+                    "key2": key2,
+                    "combined_score": combined,
+                    "field_scores": field_scores,
+                }
+            )
 
     return scored
 
@@ -657,11 +670,7 @@ def _execute_scoring(
 def _blocking_tokens(label: str) -> set[str]:
     """Normalize labels into blocking tokens for simple near-duplicate discovery."""
     normalized = _CAMEL_CASE_BOUNDARY.sub(" ", label).replace("_", " ").lower().strip()
-    base_tokens = {
-        token
-        for token in _NON_ALNUM.split(normalized)
-        if token
-    }
+    base_tokens = {token for token in _NON_ALNUM.split(normalized) if token}
     expanded_tokens = set(base_tokens)
     for token in list(base_tokens):
         if len(token) > 3 and token.endswith("s"):
@@ -731,7 +740,8 @@ def _get_class_doc(db: StandardDatabase, key: str) -> dict[str, Any] | None:
         return None
 
     results = list(
-        run_aql(db,
+        run_aql(
+            db,
             "FOR cls IN ontology_classes"
             " FILTER cls._key == @k FILTER cls.expired == @never"
             " LIMIT 1 RETURN cls",
@@ -829,11 +839,13 @@ def _create_golden_record(
         return merged
     elif strategy == "newest":
         return {
-            k: v for k, v in target.items()
+            k: v
+            for k, v in target.items()
             if not k.startswith("_") and k not in ("created", "expired", "version", "ttlExpireAt")
         }
     else:
         return {
-            k: v for k, v in target.items()
+            k: v
+            for k, v in target.items()
             if not k.startswith("_") and k not in ("created", "expired", "version", "ttlExpireAt")
         }

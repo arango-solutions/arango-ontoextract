@@ -42,14 +42,10 @@ _SYSTEM_PROMPT = (
 
 def _build_user_prompt(classes: list[ExtractedClass], chunks: list[dict[str, Any]]) -> str:
     chunks_text = "\n\n".join(
-        f"[Chunk {i + 1}]\n{chunk.get('text', '')}"
-        for i, chunk in enumerate(chunks)
+        f"[Chunk {i + 1}]\n{chunk.get('text', '')}" for i, chunk in enumerate(chunks)
     )
 
-    class_list = [
-        {"uri": c.uri, "label": c.label, "description": c.description}
-        for c in classes
-    ]
+    class_list = [{"uri": c.uri, "label": c.label, "description": c.description} for c in classes]
 
     return (
         f"Source text:\n{chunks_text}\n\n"
@@ -116,11 +112,7 @@ async def judge_faithfulness(
         ]
 
         response = await llm.ainvoke(messages)
-        raw_text = (
-            response.content
-            if isinstance(response.content, str)
-            else str(response.content)
-        )
+        raw_text = response.content if isinstance(response.content, str) else str(response.content)
 
         scores = _parse_response(raw_text, class_uris)
         log.info(

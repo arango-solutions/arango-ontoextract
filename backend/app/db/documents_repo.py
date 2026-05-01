@@ -147,9 +147,7 @@ def update_document_metadata(
     return result["new"]
 
 
-def delete_chunks_for_document(
-    doc_id: str, *, db: StandardDatabase | None = None
-) -> int:
+def delete_chunks_for_document(doc_id: str, *, db: StandardDatabase | None = None) -> int:
     """Hard-delete all chunks belonging to a document. Returns count removed."""
     db = db or get_db()
     if not db.has_collection(CHUNKS_COLLECTION):
@@ -157,8 +155,7 @@ def delete_chunks_for_document(
     result = list(
         run_aql(
             db,
-            "FOR c IN @@col FILTER c.doc_id == @doc_id "
-            "REMOVE c IN @@col RETURN OLD._key",
+            "FOR c IN @@col FILTER c.doc_id == @doc_id REMOVE c IN @@col RETURN OLD._key",
             bind_vars={"@col": CHUNKS_COLLECTION, "doc_id": doc_id},
         )
     )
@@ -209,9 +206,7 @@ def get_document_affected_ontologies(
     )
 
 
-def expire_document_provenance_edges(
-    doc_id: str, *, db: StandardDatabase | None = None
-) -> int:
+def expire_document_provenance_edges(doc_id: str, *, db: StandardDatabase | None = None) -> int:
     """Expire active ``extracted_from`` edges pointing at a document."""
     db = db or get_db()
     if not db.has_collection("extracted_from"):
@@ -264,9 +259,7 @@ def delete_document(
     }
 
 
-def find_document_by_hash(
-    file_hash: str, *, db: StandardDatabase | None = None
-) -> dict | None:
+def find_document_by_hash(file_hash: str, *, db: StandardDatabase | None = None) -> dict | None:
     """Look up an active document by its SHA-256 hash."""
     db = db or get_db()
     query = """\
@@ -275,9 +268,7 @@ FOR doc IN @@col
   FILTER doc.status != "deleted"
   LIMIT 1
   RETURN doc"""
-    rows = list(
-        run_aql(db, query, bind_vars={"@col": DOCUMENTS_COLLECTION, "hash": file_hash})
-    )
+    rows = list(run_aql(db, query, bind_vars={"@col": DOCUMENTS_COLLECTION, "hash": file_hash}))
     return rows[0] if rows else None
 
 

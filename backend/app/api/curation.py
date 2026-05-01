@@ -156,25 +156,38 @@ async def get_curation_diff(
 
     current_classes: list[dict] = []
     if ontology_id and db.has_collection("ontology_classes"):
-        current_classes = list(run_aql(db,
-            "FOR c IN ontology_classes "
-            "FILTER c.ontology_id == @oid AND c.expired == @never "
-            "RETURN c",
-            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
-        ))
+        current_classes = list(
+            run_aql(
+                db,
+                "FOR c IN ontology_classes "
+                "FILTER c.ontology_id == @oid AND c.expired == @never "
+                "RETURN c",
+                bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+            )
+        )
 
     staging_by_uri = {c.get("uri", ""): c for c in staging_classes if c.get("uri")}
     current_by_uri = {c.get("uri", ""): c for c in current_classes if c.get("uri")}
 
     added = [
-        {"entity_key": c.get("uri", ""), "entity_type": "class",
-         "label": c.get("label", ""), "new_value": c}
-        for uri, c in staging_by_uri.items() if uri not in current_by_uri
+        {
+            "entity_key": c.get("uri", ""),
+            "entity_type": "class",
+            "label": c.get("label", ""),
+            "new_value": c,
+        }
+        for uri, c in staging_by_uri.items()
+        if uri not in current_by_uri
     ]
     removed = [
-        {"entity_key": c.get("uri", ""), "entity_type": "class",
-         "label": c.get("label", ""), "old_value": c}
-        for uri, c in current_by_uri.items() if uri not in staging_by_uri
+        {
+            "entity_key": c.get("uri", ""),
+            "entity_type": "class",
+            "label": c.get("label", ""),
+            "old_value": c,
+        }
+        for uri, c in current_by_uri.items()
+        if uri not in staging_by_uri
     ]
     changed = []
     for uri in staging_by_uri:
@@ -182,13 +195,16 @@ async def get_curation_diff(
             s, cur = staging_by_uri[uri], current_by_uri[uri]
             diffs = [k for k in ("label", "description", "parent_uri") if s.get(k) != cur.get(k)]
             if diffs:
-                changed.append({
-                    "entity_key": uri, "entity_type": "class",
-                    "label": s.get("label", ""),
-                    "fields_changed": diffs,
-                    "old_value": {k: cur.get(k) for k in diffs},
-                    "new_value": {k: s.get(k) for k in diffs},
-                })
+                changed.append(
+                    {
+                        "entity_key": uri,
+                        "entity_type": "class",
+                        "label": s.get("label", ""),
+                        "fields_changed": diffs,
+                        "old_value": {k: cur.get(k) for k in diffs},
+                        "new_value": {k: s.get(k) for k in diffs},
+                    }
+                )
 
     return {
         "t1": "current",

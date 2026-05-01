@@ -14,10 +14,10 @@ class TestCheckRateLimit:
         mock_redis = MagicMock()
         pipe = MagicMock()
         pipe.execute.return_value = [
-            0,              # zremrangebyscore result
-            True,           # zadd result
+            0,  # zremrangebyscore result
+            True,  # zadd result
             current_count,  # zcard result
-            True,           # expire result
+            True,  # expire result
         ]
         mock_redis.pipeline.return_value = pipe
 
@@ -34,7 +34,10 @@ class TestCheckRateLimit:
         redis_mock = self._make_redis_mock(current_count=5)
 
         allowed, remaining, limit, retry_after = check_rate_limit(
-            "org_1", "standard", redis_client=redis_mock, now=1000.0,
+            "org_1",
+            "standard",
+            redis_client=redis_mock,
+            now=1000.0,
         )
 
         assert allowed is True
@@ -52,7 +55,10 @@ class TestCheckRateLimit:
         )
 
         allowed, remaining, limit, retry_after = check_rate_limit(
-            "org_1", "standard", redis_client=redis_mock, now=now,
+            "org_1",
+            "standard",
+            redis_client=redis_mock,
+            now=now,
         )
 
         assert allowed is False
@@ -66,7 +72,10 @@ class TestCheckRateLimit:
         redis_mock = self._make_redis_mock(current_count=500)
 
         allowed, remaining, limit, _retry_after = check_rate_limit(
-            "org_1", "premium", redis_client=redis_mock, now=1000.0,
+            "org_1",
+            "premium",
+            redis_client=redis_mock,
+            now=1000.0,
         )
 
         assert allowed is True
@@ -82,7 +91,10 @@ class TestCheckRateLimit:
         )
 
         allowed, remaining, limit, _retry_after = check_rate_limit(
-            "org_1", "premium", redis_client=redis_mock, now=1000.0,
+            "org_1",
+            "premium",
+            redis_client=redis_mock,
+            now=1000.0,
         )
 
         assert allowed is False
@@ -95,7 +107,10 @@ class TestCheckRateLimit:
         redis_mock = self._make_redis_mock(current_count=100)
 
         allowed, remaining, *_ = check_rate_limit(
-            "org_1", "standard", redis_client=redis_mock, now=1000.0,
+            "org_1",
+            "standard",
+            redis_client=redis_mock,
+            now=1000.0,
         )
 
         assert allowed is True
@@ -107,7 +122,10 @@ class TestCheckRateLimit:
         redis_mock = self._make_redis_mock(current_count=5)
 
         allowed, _, limit, _ = check_rate_limit(
-            "org_1", "unknown_tier", redis_client=redis_mock, now=1000.0,
+            "org_1",
+            "unknown_tier",
+            redis_client=redis_mock,
+            now=1000.0,
         )
 
         assert allowed is True
@@ -121,7 +139,10 @@ class TestCheckRateLimit:
         redis_mock = self._make_redis_mock(current_count=101, oldest_score=oldest)
 
         _, _, _, retry_after = check_rate_limit(
-            "org_1", "standard", redis_client=redis_mock, now=now,
+            "org_1",
+            "standard",
+            redis_client=redis_mock,
+            now=now,
         )
 
         assert 29.0 <= retry_after <= 31.0
@@ -151,7 +172,10 @@ class TestCheckRateLimit:
         redis_mock.pipeline.return_value = pipe
 
         allowed, remaining, limit, retry_after = check_rate_limit(
-            "org_1", "standard", redis_client=redis_mock, now=1000.0,
+            "org_1",
+            "standard",
+            redis_client=redis_mock,
+            now=1000.0,
         )
 
         assert allowed is True
@@ -160,7 +184,10 @@ class TestCheckRateLimit:
 
 
 class TestGetRedis:
-    """``_get_redis`` must not rely on pipeline ``execute`` for first connect (k8s without Redis)."""
+    """``_get_redis`` must not rely on pipeline ``execute`` for first connect.
+
+    Regression guard for the k8s-without-Redis path.
+    """
 
     def test_returns_none_when_ping_fails(self):
         from app.api import rate_limit as rl

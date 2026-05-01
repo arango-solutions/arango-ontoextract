@@ -139,9 +139,7 @@ def list_org_users(
     )
 
 
-def get_org_user(
-    org_id: str, user_id: str, *, db: StandardDatabase | None = None
-) -> dict | None:
+def get_org_user(org_id: str, user_id: str, *, db: StandardDatabase | None = None) -> dict | None:
     """Find a user record by org_id and user_id."""
     db = db or get_db()
     query = """\
@@ -173,10 +171,13 @@ def update_user_role(
     if user is None:
         return None
     col = db.collection(USERS_COLLECTION)
-    result = cast("dict[str, Any]", col.update(
-        {"_key": user["_key"], "role": role, "updated_at": _now_iso()},
-        return_new=True,
-    ))
+    result = cast(
+        "dict[str, Any]",
+        col.update(
+            {"_key": user["_key"], "role": role, "updated_at": _now_iso()},
+            return_new=True,
+        ),
+    )
     return result["new"]
 
 

@@ -18,17 +18,19 @@ from app.db.utils import run_aql
 log = logging.getLogger(__name__)
 
 DEFAULT_ORG_ID = "default"
-DEFAULT_PERMISSIONS = frozenset({
-    "ontology:read",
-    "ontology:write",
-    "extraction:trigger",
-    "extraction:read",
-    "er:read",
-    "er:trigger",
-    "export:read",
-    "temporal:read",
-    "system:health",
-})
+DEFAULT_PERMISSIONS = frozenset(
+    {
+        "ontology:read",
+        "ontology:write",
+        "extraction:trigger",
+        "extraction:read",
+        "er:read",
+        "er:trigger",
+        "export:read",
+        "temporal:read",
+        "system:health",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -84,16 +86,18 @@ def validate_api_key(api_key: str) -> dict[str, Any]:
 
         key_hash = _hash_api_key(api_key)
 
-        results = list(run_aql(
-            db,
-            """\
+        results = list(
+            run_aql(
+                db,
+                """\
 FOR k IN api_keys
   FILTER k.key_hash == @hash
   FILTER k.status == "active"
   LIMIT 1
   RETURN k""",
-            bind_vars={"hash": key_hash},
-        ))
+                bind_vars={"hash": key_hash},
+            )
+        )
 
         if not results:
             log.warning("invalid API key attempted")
@@ -164,7 +168,8 @@ def filter_by_org(
         return data
 
     return [
-        item for item in data
+        item
+        for item in data
         if item.get(org_field) is None or item.get(org_field) == org_context.org_id
     ]
 

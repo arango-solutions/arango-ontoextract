@@ -73,10 +73,12 @@ async def quality_judge_node(state: ExtractionPipelineState) -> dict[str, Any]:
     updated_classes: list[ExtractedClass] = []
     for cls in classes:
         updated_classes.append(
-            cls.model_copy(update={
-                "faithfulness_score": faithfulness_scores.get(cls.uri, 0.5),
-                "semantic_validity_score": validity_scores.get(cls.uri, 0.8),
-            })
+            cls.model_copy(
+                update={
+                    "faithfulness_score": faithfulness_scores.get(cls.uri, 0.5),
+                    "semantic_validity_score": validity_scores.get(cls.uri, 0.8),
+                }
+            )
         )
 
     updated_result = consistency_result.model_copy(update={"classes": updated_classes})

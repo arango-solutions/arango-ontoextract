@@ -22,10 +22,7 @@ def _expand_override_dir(override: str) -> Path | None:
     if not raw:
         return None
     p = Path(raw).expanduser()
-    if not p.is_absolute():
-        p = (Path.cwd() / p).resolve()
-    else:
-        p = p.resolve()
+    p = (Path.cwd() / p).resolve() if not p.is_absolute() else p.resolve()
     return p if p.is_dir() else None
 
 
@@ -83,7 +80,9 @@ def resolve_frontend_out_dir(
         o = _expand_override_dir(override)
         if o is not None:
             resolved = _resolve_candidate(
-                o, service_url_path_prefix, explicit_override=True,
+                o,
+                service_url_path_prefix,
+                explicit_override=True,
             )
             if resolved is not None:
                 return resolved

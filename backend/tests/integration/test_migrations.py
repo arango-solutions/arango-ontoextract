@@ -65,9 +65,7 @@ def test_apply_all_migrations_on_fresh_db(test_db: StandardDatabase) -> None:
         | EXPECTED_EDGE_COLLECTIONS
     )
 
-    assert all_expected.issubset(existing), (
-        f"Missing collections: {all_expected - existing}"
-    )
+    assert all_expected.issubset(existing), f"Missing collections: {all_expected - existing}"
 
 
 def test_migrations_are_idempotent(test_db: StandardDatabase) -> None:
@@ -86,12 +84,12 @@ def test_mdi_index_exists(test_db: StandardDatabase) -> None:
     col = test_db.collection("ontology_classes")
     indexes = col.indexes()
     temporal_indexes = [
-        idx for idx in indexes
+        idx
+        for idx in indexes
         if idx.get("name", "").startswith("idx_ontology_classes_mdi_temporal")
     ]
     assert len(temporal_indexes) >= 1, (
-        f"Expected temporal index on ontology_classes, found: "
-        f"{[i.get('name') for i in indexes]}"
+        f"Expected temporal index on ontology_classes, found: {[i.get('name') for i in indexes]}"
     )
 
 
@@ -102,12 +100,10 @@ def test_ttl_index_exists(test_db: StandardDatabase) -> None:
     col = test_db.collection("ontology_classes")
     indexes = col.indexes()
     ttl_indexes = [
-        idx for idx in indexes
-        if idx.get("name", "").startswith("idx_ontology_classes_ttl")
+        idx for idx in indexes if idx.get("name", "").startswith("idx_ontology_classes_ttl")
     ]
     assert len(ttl_indexes) >= 1, (
-        f"Expected TTL index on ontology_classes, found: "
-        f"{[i.get('name') for i in indexes]}"
+        f"Expected TTL index on ontology_classes, found: {[i.get('name') for i in indexes]}"
     )
 
 

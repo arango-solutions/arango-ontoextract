@@ -43,7 +43,8 @@ class TestPublish:
 
     @pytest.mark.asyncio
     async def test_publish_no_history_when_disabled(
-        self, broadcaster_no_history: WebSocketBroadcaster,
+        self,
+        broadcaster_no_history: WebSocketBroadcaster,
     ):
         broadcaster_no_history._subscribers["run1"] = []
         await broadcaster_no_history.publish(key="run1", event_type="test_event")

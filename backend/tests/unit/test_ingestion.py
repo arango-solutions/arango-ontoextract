@@ -90,11 +90,7 @@ class TestParsePdf:
                 {
                     "type": 0,
                     "lines": [
-                        {
-                            "spans": [
-                                {"text": "A normal paragraph.", "size": 11, "font": "Regular"}
-                            ]
-                        }
+                        {"spans": [{"text": "A normal paragraph.", "size": 11, "font": "Regular"}]}
                     ],
                 }
             ]
@@ -203,9 +199,7 @@ class TestChunkDocument:
 
     def test_respects_max_tokens(self, _mock_tc: MagicMock):
         long_text = " ".join(["word"] * 2000)
-        parsed = ParsedDocument(
-            sections=[Section(heading="Long", text=long_text, page_number=1)]
-        )
+        parsed = ParsedDocument(sections=[Section(heading="Long", text=long_text, page_number=1)])
         chunks = chunk_document(parsed, max_tokens=50)
         assert len(chunks) > 1
 
@@ -243,8 +237,6 @@ class TestChunkDocument:
             "Second paragraph also with content.\n\n"
             "Third paragraph here too."
         )
-        parsed = ParsedDocument(
-            sections=[Section(heading="S", text=text, page_number=1)]
-        )
+        parsed = ParsedDocument(sections=[Section(heading="S", text=text, page_number=1)])
         chunks = chunk_document(parsed, max_tokens=15)
         assert len(chunks) >= 2

@@ -110,9 +110,7 @@ class TestDeleteOntology:
             }
             registry_repo.delete_registry_entry.return_value = True
 
-            resp = client.delete(
-                "/api/v1/ontology/library/test_onto?confirm=true&hard_delete=true"
-            )
+            resp = client.delete("/api/v1/ontology/library/test_onto?confirm=true&hard_delete=true")
 
         assert resp.status_code == 200
         data = resp.json()
@@ -133,9 +131,7 @@ class TestDeleteOntology:
             }
             registry_repo.delete_registry_entry.return_value = True
 
-            resp = client.delete(
-                "/api/v1/ontology/library/test_onto?confirm=true&hard_delete=true"
-            )
+            resp = client.delete("/api/v1/ontology/library/test_onto?confirm=true&hard_delete=true")
 
         assert resp.status_code == 200
         data = resp.json()
@@ -162,13 +158,17 @@ class TestGetClassDetail:
     def test_returns_class_with_attributes_and_relationships(self, client, _mock_db):
         cls = _class_doc()
         attr = {
-            "_key": "Person_name", "_id": "ontology_datatype_properties/Person_name",
-            "label": "name", "range_datatype": "xsd:string",
+            "_key": "Person_name",
+            "_id": "ontology_datatype_properties/Person_name",
+            "label": "name",
+            "range_datatype": "xsd:string",
             "expired": NEVER_EXPIRES,
         }
         rel = {
-            "_key": "Person_knows", "_id": "ontology_object_properties/Person_knows",
-            "label": "knows", "expired": NEVER_EXPIRES,
+            "_key": "Person_knows",
+            "_id": "ontology_object_properties/Person_knows",
+            "label": "knows",
+            "expired": NEVER_EXPIRES,
             "target_class": {"_key": "Org", "label": "Organization", "_id": "ontology_classes/Org"},
         }
 
@@ -210,12 +210,19 @@ class TestGetClassDetail:
 
     def test_legacy_fallback_when_no_pgt_data(self, client, _mock_db):
         cls = _class_doc()
-        _mock_db.has_collection.side_effect = lambda name: name in {
-            "ontology_classes", "has_property", "ontology_properties",
-        }
+        _mock_db.has_collection.side_effect = lambda name: (
+            name
+            in {
+                "ontology_classes",
+                "has_property",
+                "ontology_properties",
+            }
+        )
         legacy_prop = {
-            "_key": "Person_email", "_id": "ontology_properties/Person_email",
-            "label": "email", "expired": NEVER_EXPIRES,
+            "_key": "Person_email",
+            "_id": "ontology_properties/Person_email",
+            "label": "email",
+            "expired": NEVER_EXPIRES,
         }
 
         def _mock_aql(db, query, bind_vars=None):

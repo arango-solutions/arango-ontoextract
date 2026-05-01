@@ -30,14 +30,16 @@ def _seed_document_and_chunks(db, doc_id: str = "test_doc_001") -> str:
     _ensure_collection(db, "documents")
     _ensure_collection(db, "chunks")
 
-    db.collection("documents").insert({
-        "_key": doc_id,
-        "filename": "test_enterprise.md",
-        "mime_type": "text/markdown",
-        "upload_date": time.time(),
-        "status": "ready",
-        "org_id": "test_org",
-    })
+    db.collection("documents").insert(
+        {
+            "_key": doc_id,
+            "filename": "test_enterprise.md",
+            "mime_type": "text/markdown",
+            "upload_date": time.time(),
+            "status": "ready",
+            "org_id": "test_org",
+        }
+    )
 
     chunks = [
         {

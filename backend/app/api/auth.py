@@ -52,17 +52,21 @@ _MOCK_USER = AuthenticatedUser(
 )
 
 # Under ``/api/`` only these accept HTTP requests without ``Authorization`` (production).
-_PUBLIC_API_PATHS_WITHOUT_AUTH = frozenset({
-    "/api/v1/auth/login",
-    "/api/v1/metrics",
-})
+_PUBLIC_API_PATHS_WITHOUT_AUTH = frozenset(
+    {
+        "/api/v1/auth/login",
+        "/api/v1/metrics",
+    }
+)
 
 
 def _is_public_http_path(path: str) -> bool:
     """Paths that skip JWT middleware.
 
-    - Next static export (HTML, ``/_next/*``, ``/favicon.*``, ``/health``, …) never sends Bearer on first load.
-    - REST APIs under ``/api/`` require JWT unless listed in ``_PUBLIC_API_PATHS_WITHOUT_AUTH``.
+    - Next static export (HTML, ``/_next/*``, ``/favicon.*``, ``/health``, …) never
+      sends Bearer on first load.
+    - REST APIs under ``/api/`` require JWT unless listed in
+      ``_PUBLIC_API_PATHS_WITHOUT_AUTH``.
     """
     if path.startswith("/_next/"):
         return True
@@ -133,9 +137,7 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
     token receive a mock admin user so the API is usable without an IdP.
     """
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if _is_public_http_path(request.url.path):
             return await call_next(request)
 
@@ -183,6 +185,7 @@ def _error_response(status: int, code: str, message: str) -> JSONResponse:
 # ---------------------------------------------------------------------------
 # Login endpoint (scaffold — will be replaced by real IdP integration)
 # ---------------------------------------------------------------------------
+
 
 class LoginRequest(BaseModel):
     email: str

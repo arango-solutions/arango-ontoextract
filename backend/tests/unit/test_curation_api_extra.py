@@ -89,7 +89,7 @@ class TestCurationRoutes:
             patch("app.api.curation.curation_svc.get_decision", return_value=None),
             pytest.raises(NotFoundError),
         ):
-                await get_decision("missing")
+            await get_decision("missing")
 
     @pytest.mark.asyncio
     async def test_execute_merge_validates_target(self):

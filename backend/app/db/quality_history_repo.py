@@ -51,21 +51,17 @@ def save_quality_snapshot(
     db = _ensure_collection(db)
     calibration = report.get("confidence_calibration")
     expected_calibration_error = (
-        calibration.get("expected_calibration_error")
-        if isinstance(calibration, dict)
-        else None
+        calibration.get("expected_calibration_error") if isinstance(calibration, dict) else None
     )
-    doc = {
-        field: report.get(field)
-        for field in _SNAPSHOT_FIELDS
-        if field in report
-    }
-    doc.update({
-        "ontology_id": ontology_id,
-        "timestamp": now_iso(),
-        "expected_calibration_error": expected_calibration_error,
-        "source": "quality_api",
-    })
+    doc = {field: report.get(field) for field in _SNAPSHOT_FIELDS if field in report}
+    doc.update(
+        {
+            "ontology_id": ontology_id,
+            "timestamp": now_iso(),
+            "expected_calibration_error": expected_calibration_error,
+            "source": "quality_api",
+        }
+    )
     result = cast("dict[str, Any]", db.collection(_COLLECTION).insert(doc, return_new=True))
     return result["new"]
 

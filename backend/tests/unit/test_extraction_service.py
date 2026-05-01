@@ -434,9 +434,7 @@ class TestExecuteRunSuccess:
         ontology_persist = [
             c.args[0]
             for c in mock_col.update.call_args_list
-            if c.args
-            and isinstance(c.args[0], dict)
-            and c.args[0].get("ontology_id") == "onto_new"
+            if c.args and isinstance(c.args[0], dict) and c.args[0].get("ontology_id") == "onto_new"
         ]
         assert len(ontology_persist) == 1
         assert ontology_persist[0]["_key"] == "run_abc"
@@ -1283,10 +1281,16 @@ class TestRecomputeMultiSignalConfidence:
             [],  # rdfs_range_class lateral: no
             [1],  # provenance_count
         ]
-        mock_db.has_collection.side_effect = lambda name: name in {
-            "rdfs_domain", "rdfs_range_class",
-            "ontology_classes", "subclass_of", "extracted_from",
-        }
+        mock_db.has_collection.side_effect = lambda name: (
+            name
+            in {
+                "rdfs_domain",
+                "rdfs_range_class",
+                "ontology_classes",
+                "subclass_of",
+                "extracted_from",
+            }
+        )
 
         classes = [
             MagicMock(

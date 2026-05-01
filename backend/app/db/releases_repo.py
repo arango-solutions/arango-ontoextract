@@ -9,8 +9,8 @@ from typing import Any, cast
 
 from arango.database import StandardDatabase
 
-from app.db.client import get_db
 from app.db import registry_repo
+from app.db.client import get_db
 from app.db.utils import run_aql
 
 log = logging.getLogger(__name__)

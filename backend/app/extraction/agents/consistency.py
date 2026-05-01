@@ -161,28 +161,30 @@ def _convert_properties_to_pgt(
     relationships: list[ExtractedRelationship] = []
     for prop in properties:
         is_object = (
-            prop.property_type == "object"
-            or prop.range.startswith("http")
-            or "#" in prop.range
+            prop.property_type == "object" or prop.range.startswith("http") or "#" in prop.range
         )
         if is_object:
-            relationships.append(ExtractedRelationship(
-                uri=prop.uri,
-                label=prop.label,
-                description=prop.description,
-                target_class_uri=prop.range,
-                confidence=prop.confidence,
-                evidence=prop.evidence,
-            ))
+            relationships.append(
+                ExtractedRelationship(
+                    uri=prop.uri,
+                    label=prop.label,
+                    description=prop.description,
+                    target_class_uri=prop.range,
+                    confidence=prop.confidence,
+                    evidence=prop.evidence,
+                )
+            )
         else:
-            attributes.append(ExtractedAttribute(
-                uri=prop.uri,
-                label=prop.label,
-                description=prop.description,
-                range_datatype=prop.range,
-                confidence=prop.confidence,
-                evidence=prop.evidence,
-            ))
+            attributes.append(
+                ExtractedAttribute(
+                    uri=prop.uri,
+                    label=prop.label,
+                    description=prop.description,
+                    range_datatype=prop.range,
+                    confidence=prop.confidence,
+                    evidence=prop.evidence,
+                )
+            )
     return attributes, relationships
 
 
@@ -276,9 +278,7 @@ def consistency_checker_node(state: ExtractionPipelineState) -> dict:
         merged_props = _merge_properties(all_property_lists)
 
         # Per-type agreement scores (Jaccard of URIs across passes)
-        attr_uris_per_pass = [
-            {_attribute_key(a) for a in attrs} for attrs in all_attribute_lists
-        ]
+        attr_uris_per_pass = [{_attribute_key(a) for a in attrs} for attrs in all_attribute_lists]
         rel_uris_per_pass = [
             {_relationship_key(r) for r in rels} for rels in all_relationship_lists
         ]
@@ -343,8 +343,7 @@ def consistency_checker_node(state: ExtractionPipelineState) -> dict:
             "output_classes": len(filtered_classes),
             "threshold": threshold,
             "agreement_rates": {
-                _class_key(c): uri_counter[_class_key(c)] / num_passes
-                for c in filtered_classes
+                _class_key(c): uri_counter[_class_key(c)] / num_passes for c in filtered_classes
             },
         },
     )

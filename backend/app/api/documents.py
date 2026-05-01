@@ -190,17 +190,20 @@ async def get_document_ontologies(doc_id: str) -> dict:
     db = get_db()
     ontologies: list[dict] = []
     if db.has_collection("extracted_from") and db.has_collection("ontology_registry"):
-        ontologies = list(run_aql(db,
-            "FOR e IN extracted_from "
-            "FILTER e._to == @doc_id "
-            "LET oid = e.ontology_id "
-            "COLLECT ontology_id = oid INTO group "
-            "FOR o IN ontology_registry "
-            "FILTER o._key == ontology_id "
-            "RETURN {_key: o._key, name: o.name, tier: o.tier, "
-            "class_count: o.class_count, status: o.status, edge_count: LENGTH(group)}",
-            bind_vars={"doc_id": f"documents/{doc_id}"},
-        ))
+        ontologies = list(
+            run_aql(
+                db,
+                "FOR e IN extracted_from "
+                "FILTER e._to == @doc_id "
+                "LET oid = e.ontology_id "
+                "COLLECT ontology_id = oid INTO group "
+                "FOR o IN ontology_registry "
+                "FILTER o._key == ontology_id "
+                "RETURN {_key: o._key, name: o.name, tier: o.tier, "
+                "class_count: o.class_count, status: o.status, edge_count: LENGTH(group)}",
+                bind_vars={"doc_id": f"documents/{doc_id}"},
+            )
+        )
 
     return {"doc_id": doc_id, "ontologies": ontologies}
 

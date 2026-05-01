@@ -36,8 +36,7 @@ def _ensure_arango_rdf():
         return ArangoRDF
     except ImportError as exc:
         raise ImportError(
-            "arango_rdf is required for OWL import. "
-            "Install it with: pip install arango-rdf"
+            "arango_rdf is required for OWL import. Install it with: pip install arango-rdf"
         ) from exc
 
 
@@ -322,12 +321,14 @@ def _import_with_rdflib_fallback(
                 collection=target_col,
             )
             property_ids[prop_uri] = doc["_id"]
-            property_meta.append({
-                "uri": prop_uri,
-                "kind": property_kind,
-                "domain": str(domain) if domain else None,
-                "range": str(range_value) if range_value else None,
-            })
+            property_meta.append(
+                {
+                    "uri": prop_uri,
+                    "kind": property_kind,
+                    "domain": str(domain) if domain else None,
+                    "range": str(range_value) if range_value else None,
+                }
+            )
 
     for child, parent in rdf_graph.subject_objects(RDFS.subClassOf):
         child_id = class_ids.get(str(child))
@@ -464,9 +465,7 @@ def _ensure_named_graph(db: StandardDatabase, *, graph_name: str) -> None:
 
     cols = cast("list[dict[str, Any]]", db.collections())
     existing_cols = {c["name"] for c in cols if not c["system"]}
-    edge_defs_to_use = [
-        ed for ed in edge_definitions if ed["edge_collection"] in existing_cols
-    ]
+    edge_defs_to_use = [ed for ed in edge_definitions if ed["edge_collection"] in existing_cols]
     orphan_cols = [vc for vc in vertex_cols if vc in existing_cols]
 
     try:

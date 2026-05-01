@@ -131,14 +131,15 @@ class TestRunERMatching:
         mock_temporal_module = MagicMock()
         mock_temporal_module.NEVER_EXPIRES = "9999-12-31T00:00:00Z"
 
-        with patch.dict(sys.modules, {
-            "app.services.er": mock_er_module,
-            "app.db.client": mock_db_client_module,
-            "app.services.temporal": mock_temporal_module,
-        }):
-            result = _run_er_matching(
-                run_id="r1", extracted_classes=[], ontology_id="onto1"
-            )
+        with patch.dict(
+            sys.modules,
+            {
+                "app.services.er": mock_er_module,
+                "app.db.client": mock_db_client_module,
+                "app.services.temporal": mock_temporal_module,
+            },
+        ):
+            result = _run_er_matching(run_id="r1", extracted_classes=[], ontology_id="onto1")
         assert result["status"] == "skipped"
         assert result["reason"] == "no_ontology_classes_collection"
 
@@ -152,18 +153,21 @@ class TestRunERMatching:
         mock_temporal_module.NEVER_EXPIRES = "9999-12-31T00:00:00Z"
 
         with (
-            patch.dict(sys.modules, {
-                "app.services.er": MagicMock(),
-                "app.db.client": mock_db_client_module,
-                "app.services.temporal": mock_temporal_module,
-            }),
+            patch.dict(
+                sys.modules,
+                {
+                    "app.services.er": MagicMock(),
+                    "app.db.client": mock_db_client_module,
+                    "app.services.temporal": mock_temporal_module,
+                },
+            ),
             patch("app.extraction.agents.er_agent.run_aql", return_value=iter([])),
         ):
             result = _run_er_matching(
                 run_id="r1",
-                extracted_classes=[ExtractedClass(
-                    uri="u1", label="A", description="d", confidence=0.9
-                )],
+                extracted_classes=[
+                    ExtractedClass(uri="u1", label="A", description="d", confidence=0.9)
+                ],
                 ontology_id="onto1",
             )
         assert result["status"] == "completed"
@@ -178,30 +182,40 @@ class TestRunERMatching:
         mock_temporal_module = MagicMock()
         mock_temporal_module.NEVER_EXPIRES = "9999-12-31T00:00:00Z"
 
-        mock_score = MagicMock(return_value={
-            "combined_score": 0.95,
-            "field_scores": {"label": 0.9},
-        })
+        mock_score = MagicMock(
+            return_value={
+                "combined_score": 0.95,
+                "field_scores": {"label": 0.9},
+            }
+        )
         mock_er_module = MagicMock()
         mock_er_module.score_existing_class_vs_extracted = mock_score
 
         with (
-            patch.dict(sys.modules, {
-                "app.services.er": mock_er_module,
-                "app.db.client": mock_db_client_module,
-                "app.services.temporal": mock_temporal_module,
-            }),
-            patch("app.extraction.agents.er_agent.run_aql", return_value=iter([
-                {"key": "k1", "label": "ExistingA", "uri": "http://ex.org#ExA"},
-            ])),
+            patch.dict(
+                sys.modules,
+                {
+                    "app.services.er": mock_er_module,
+                    "app.db.client": mock_db_client_module,
+                    "app.services.temporal": mock_temporal_module,
+                },
+            ),
+            patch(
+                "app.extraction.agents.er_agent.run_aql",
+                return_value=iter(
+                    [
+                        {"key": "k1", "label": "ExistingA", "uri": "http://ex.org#ExA"},
+                    ]
+                ),
+            ),
             patch("app.extraction.agents.er_agent.settings") as mock_settings,
         ):
             mock_settings.er_vector_similarity_threshold = 0.7
             result = _run_er_matching(
                 run_id="r1",
-                extracted_classes=[ExtractedClass(
-                    uri="u1", label="A", description="d", confidence=0.9
-                )],
+                extracted_classes=[
+                    ExtractedClass(uri="u1", label="A", description="d", confidence=0.9)
+                ],
                 ontology_id="onto1",
             )
 
@@ -216,14 +230,15 @@ class TestRunERMatching:
         mock_temporal_module = MagicMock()
         mock_temporal_module.NEVER_EXPIRES = "9999-12-31T00:00:00Z"
 
-        with patch.dict(sys.modules, {
-            "app.services.er": mock_er_module,
-            "app.db.client": mock_db_client_module,
-            "app.services.temporal": mock_temporal_module,
-        }):
-            result = _run_er_matching(
-                run_id="r1", extracted_classes=[], ontology_id="onto1"
-            )
+        with patch.dict(
+            sys.modules,
+            {
+                "app.services.er": mock_er_module,
+                "app.db.client": mock_db_client_module,
+                "app.services.temporal": mock_temporal_module,
+            },
+        ):
+            result = _run_er_matching(run_id="r1", extracted_classes=[], ontology_id="onto1")
         assert result["status"] == "completed"
         assert result["merge_candidates"] == []
 
@@ -237,22 +252,24 @@ class TestCreateExtensionEdges:
         mock_cross_tier = MagicMock()
         mock_cross_tier.create_cross_tier_edges.return_value = mock_result
 
-        with patch.dict(sys.modules, {
-            "app.services.cross_tier": mock_cross_tier,
-        }):
-            count = _create_extension_edges(
-                run_id="r1", extracted_classes=[], ontology_id="onto1"
-            )
+        with patch.dict(
+            sys.modules,
+            {
+                "app.services.cross_tier": mock_cross_tier,
+            },
+        ):
+            count = _create_extension_edges(run_id="r1", extracted_classes=[], ontology_id="onto1")
         assert count == 3
 
     def test_returns_zero_on_failure(self):
         mock_cross_tier = MagicMock()
         mock_cross_tier.create_cross_tier_edges.side_effect = RuntimeError("fail")
 
-        with patch.dict(sys.modules, {
-            "app.services.cross_tier": mock_cross_tier,
-        }):
-            count = _create_extension_edges(
-                run_id="r1", extracted_classes=[], ontology_id="onto1"
-            )
+        with patch.dict(
+            sys.modules,
+            {
+                "app.services.cross_tier": mock_cross_tier,
+            },
+        ):
+            count = _create_extension_edges(run_id="r1", extracted_classes=[], ontology_id="onto1")
         assert count == 0

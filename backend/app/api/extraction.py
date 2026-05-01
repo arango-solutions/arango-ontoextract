@@ -149,7 +149,10 @@ async def list_runs(
     """List extraction runs with enriched metadata."""
     db = get_db()
     result = extraction_service.list_runs(
-        db, cursor=cursor, limit=limit, status=status,
+        db,
+        cursor=cursor,
+        limit=limit,
+        status=status,
     )
     payload = result.model_dump()
 
@@ -189,27 +192,36 @@ async def list_runs(
 
         if db.has_collection("ontology_classes") and run.get("_key"):
             try:
-                oid_result = list(run_aql(db,
-                    "FOR o IN ontology_registry "
-                    "FILTER o.extraction_run_id == @rid LIMIT 1 RETURN o._key",
-                    bind_vars={"rid": run["_key"]},
-                ))
+                oid_result = list(
+                    run_aql(
+                        db,
+                        "FOR o IN ontology_registry "
+                        "FILTER o.extraction_run_id == @rid LIMIT 1 RETURN o._key",
+                        bind_vars={"rid": run["_key"]},
+                    )
+                )
                 oid = oid_result[0] if oid_result else None
                 if oid:
                     run["ontology_id"] = oid
-                    cls_count = list(run_aql(db,
-                        "FOR c IN ontology_classes "
-                        "FILTER c.ontology_id == @oid AND c.expired == @never "
-                        "COLLECT WITH COUNT INTO cnt RETURN cnt",
-                        bind_vars={"oid": oid, "never": NEVER_EXPIRES},
-                    ))
+                    cls_count = list(
+                        run_aql(
+                            db,
+                            "FOR c IN ontology_classes "
+                            "FILTER c.ontology_id == @oid AND c.expired == @never "
+                            "COLLECT WITH COUNT INTO cnt RETURN cnt",
+                            bind_vars={"oid": oid, "never": NEVER_EXPIRES},
+                        )
+                    )
                     run["classes_extracted"] = cls_count[0] if cls_count else 0
-                    prop_count = list(run_aql(db,
-                        "FOR p IN ontology_properties "
-                        "FILTER p.ontology_id == @oid AND p.expired == @never "
-                        "COLLECT WITH COUNT INTO cnt RETURN cnt",
-                        bind_vars={"oid": oid, "never": NEVER_EXPIRES},
-                    ))
+                    prop_count = list(
+                        run_aql(
+                            db,
+                            "FOR p IN ontology_properties "
+                            "FILTER p.ontology_id == @oid AND p.expired == @never "
+                            "COLLECT WITH COUNT INTO cnt RETURN cnt",
+                            bind_vars={"oid": oid, "never": NEVER_EXPIRES},
+                        )
+                    )
                     run["properties_extracted"] = prop_count[0] if prop_count else 0
             except Exception:
                 log.debug("Could not fetch entity counts for run enrichment")

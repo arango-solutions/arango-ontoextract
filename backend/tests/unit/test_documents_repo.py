@@ -30,9 +30,7 @@ class TestDeleteDocumentRepo:
         assert result == {
             "doc_id": "d1",
             "status": "pending_confirmation",
-            "affected_ontologies": [
-                {"_key": "onto1", "name": "Ontology 1", "status": "active"}
-            ],
+            "affected_ontologies": [{"_key": "onto1", "name": "Ontology 1", "status": "active"}],
             "message": "Pass ?confirm=true to proceed with deletion.",
         }
         assert mock_run_aql.call_count == 2
@@ -60,9 +58,7 @@ class TestDeleteDocumentRepo:
             "doc_id": "d1",
             "status": "deleted",
             "chunks_removed": 3,
-            "affected_ontologies": [
-                {"_key": "onto1", "name": "Ontology 1", "status": "active"}
-            ],
+            "affected_ontologies": [{"_key": "onto1", "name": "Ontology 1", "status": "active"}],
         }
         assert mock_run_aql.call_count == 3
         mock_delete_chunks.assert_called_once_with("d1", db=db)

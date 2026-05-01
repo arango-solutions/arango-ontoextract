@@ -135,14 +135,16 @@ FOR cls IN ontology_classes
                     )
                     score = match.get("combined_score", 0.0)
                     if score >= settings.er_vector_similarity_threshold:
-                        candidates.append({
-                            "extracted_uri": extracted.uri,
-                            "extracted_label": extracted.label,
-                            "existing_key": existing["key"],
-                            "existing_label": existing["label"],
-                            "combined_score": score,
-                            "field_scores": match.get("field_scores", {}),
-                        })
+                        candidates.append(
+                            {
+                                "extracted_uri": extracted.uri,
+                                "extracted_label": extracted.label,
+                                "existing_key": existing["key"],
+                                "existing_label": existing["label"],
+                                "combined_score": score,
+                                "field_scores": match.get("field_scores", {}),
+                            }
+                        )
                 except Exception:
                     pass
 

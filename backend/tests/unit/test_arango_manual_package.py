@@ -30,5 +30,7 @@ def test_arango_manual_tarball_contains_expected_layout(tmp_path: Path) -> None:
     assert "pyproject.toml" in flat
     assert "uv.lock" in flat
     assert "app/main.py" in flat
-    ep_key = next(k for k in members if k.endswith("entrypoint") and "/" not in k.removeprefix("./"))
+    ep_key = next(
+        k for k in members if k.endswith("entrypoint") and "/" not in k.removeprefix("./")
+    )
     assert members[ep_key].mode & 0o100, "entrypoint must be executable in archive"

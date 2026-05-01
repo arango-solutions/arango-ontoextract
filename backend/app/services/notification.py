@@ -143,10 +143,13 @@ def mark_as_read(
     if doc is None or doc.get("user_id") != user_id:
         return None
 
-    result = cast("dict[str, Any]", col.update(
-        {"_key": notification_id, "read": True, "read_at": _now_iso()},
-        return_new=True,
-    ))
+    result = cast(
+        "dict[str, Any]",
+        col.update(
+            {"_key": notification_id, "read": True, "read_at": _now_iso()},
+            return_new=True,
+        ),
+    )
     return result["new"]
 
 
@@ -164,7 +167,8 @@ FOR n IN @@col
   COLLECT WITH COUNT INTO c
   RETURN c"""
     rows = list(
-        run_aql(db,
+        run_aql(
+            db,
             query,
             bind_vars={"@col": NOTIFICATIONS_COLLECTION, "user_id": user_id},
         )

@@ -27,7 +27,12 @@ def render_minimal_login_html(service_url_path_prefix: str) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>AOE — Sign in</title>
   <style>
-    body {{ font-family: system-ui, sans-serif; max-width: 22rem; margin: 3rem auto; padding: 0 1rem; }}
+    body {{
+      font-family: system-ui, sans-serif;
+      max-width: 22rem;
+      margin: 3rem auto;
+      padding: 0 1rem;
+    }}
     h1 {{ font-size: 1.25rem; }}
     label {{ display: block; margin-top: 0.75rem; font-size: 0.875rem; }}
     input {{ width: 100%; box-sizing: border-box; margin-top: 0.25rem; padding: 0.5rem; }}
@@ -38,10 +43,17 @@ def render_minimal_login_html(service_url_path_prefix: str) -> str:
 </head>
 <body>
   <h1>Arango-OntoExtract</h1>
-  <p style="color:#64748b;font-size:0.875rem;">Fallback login (static UI not bundled). Use email and password.</p>
+  <p style="color:#64748b;font-size:0.875rem;">
+    Fallback login (static UI not bundled). Use email and password.
+  </p>
   <form id="f">
     <label>Email<input type="email" id="email" autocomplete="username" required /></label>
-    <label>Password<input type="password" id="password" autocomplete="current-password" required /></label>
+    <label>Password<input
+      type="password"
+      id="password"
+      autocomplete="current-password"
+      required
+    /></label>
     <button type="submit">Sign in</button>
     <p id="err" class="err" hidden></p>
   </form>
@@ -66,7 +78,9 @@ def render_minimal_login_html(service_url_path_prefix: str) -> str:
       return r.json().then(function (body) {{ return {{ ok: r.ok, body: body }}; }});
     }}).then(function (x) {{
       if (!x.ok) {{
-        var msg = (x.body && x.body.error && x.body.error.message) || x.body.detail || 'Login failed';
+        var msg = (x.body && x.body.error && x.body.error.message)
+          || x.body.detail
+          || 'Login failed';
         err.textContent = msg;
         err.hidden = false;
         return;

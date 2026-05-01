@@ -179,7 +179,8 @@ async def execute_run(
             from app.services.ontology_context import serialize_multi_domain_context
 
             domain_context = serialize_multi_domain_context(
-                db, ontology_ids=domain_ontology_ids,
+                db,
+                ontology_ids=domain_ontology_ids,
             )
             log.info(
                 "serialized domain context for tier 2",
@@ -204,14 +205,17 @@ async def execute_run(
 
     final_state: dict[str, Any] = {}
     try:
-        final_state = cast("dict[str, Any]", await run_pipeline(
-            run_id=run_id,
-            document_id=primary_doc_id,
-            chunks=chunks,
-            event_callback=event_callback,
-            domain_context=domain_context,
-            domain_ontology_ids=domain_ontology_ids or [],
-        ))
+        final_state = cast(
+            "dict[str, Any]",
+            await run_pipeline(
+                run_id=run_id,
+                document_id=primary_doc_id,
+                chunks=chunks,
+                event_callback=event_callback,
+                domain_context=domain_context,
+                domain_ontology_ids=domain_ontology_ids or [],
+            ),
+        )
 
         completed_at = time.time()
         status = "completed"
@@ -223,15 +227,15 @@ async def execute_run(
         consistency = final_state.get("consistency_result")
         classes_extracted = len(consistency.classes) if consistency else 0
         properties_extracted = (
-            sum(_count_class_properties(c) for c in consistency.classes)
-            if consistency else 0
+            sum(_count_class_properties(c) for c in consistency.classes) if consistency else 0
         )
         pass_results = final_state.get("extraction_passes", [])
         pass_agreement_rate = _compute_agreement_rate(pass_results) if pass_results else 0.0
         if pass_agreement_rate == 0.0:
             for sl in final_state.get("step_logs", []):
                 sl_dict = (
-                    sl if isinstance(sl, dict)
+                    sl
+                    if isinstance(sl, dict)
                     else (sl.model_dump() if hasattr(sl, "model_dump") else dict(sl))
                 )
                 if sl_dict.get("step") == "consistency_checker":
@@ -247,9 +251,7 @@ async def execute_run(
                 **run_record["stats"],
                 "token_usage": final_state.get("token_usage", {}),
                 "errors": final_state.get("errors", []),
-                "step_logs": [
-                    _serialize_step_log(sl) for sl in final_state.get("step_logs", [])
-                ],
+                "step_logs": [_serialize_step_log(sl) for sl in final_state.get("step_logs", [])],
                 "classes_extracted": classes_extracted,
                 "properties_extracted": properties_extracted,
                 "pass_agreement_rate": pass_agreement_rate,
@@ -290,6 +292,7 @@ async def execute_run(
                 _create_produced_by_edge(db, ontology_id=ontology_id, run_id=run_id)
                 try:
                     from app.services.ontology_graphs import ensure_ontology_graph
+
                     graph_name = ensure_ontology_graph(ontology_id, db=db)
                     log.info("ensured per-ontology graph %s", graph_name)
                 except Exception:
@@ -312,22 +315,20 @@ async def execute_run(
         log.exception("extraction pipeline failed", extra={"run_id": run_id})
         partial_logs: list[dict[str, Any]] = []
         if final_state and final_state.get("step_logs"):
-            partial_logs = [
-                _serialize_step_log(sl) for sl in final_state["step_logs"]
-            ]
-        col.update({
-            "_key": run_id,
-            "status": "failed",
-            "completed_at": time.time(),
-            "stats": {
-                **run_record["stats"],
-                "errors": [str(exc)],
-                "step_logs": partial_logs,
-                "token_usage": (
-                    final_state.get("token_usage", {}) if final_state else {}
-                ),
-            },
-        })
+            partial_logs = [_serialize_step_log(sl) for sl in final_state["step_logs"]]
+        col.update(
+            {
+                "_key": run_id,
+                "status": "failed",
+                "completed_at": time.time(),
+                "stats": {
+                    **run_record["stats"],
+                    "errors": [str(exc)],
+                    "step_logs": partial_logs,
+                    "token_usage": (final_state.get("token_usage", {}) if final_state else {}),
+                },
+            }
+        )
 
     updated = doc_get(col, run_id)
     return updated or {}
@@ -534,10 +535,9 @@ def get_run_cost(
         model,
         {"input": 3.0, "output": 15.0},
     )
-    estimated_cost = (
-        (prompt_tokens / 1_000_000) * rates["input"]
-        + (completion_tokens / 1_000_000) * rates["output"]
-    )
+    estimated_cost = (prompt_tokens / 1_000_000) * rates["input"] + (
+        completion_tokens / 1_000_000
+    ) * rates["output"]
 
     started = run.get("started_at", 0)
     completed = run.get("completed_at", 0)
@@ -547,23 +547,29 @@ def get_run_cost(
     completeness_pct: float | None = None
     ontology_id = run.get("ontology_id") or run.get("target_ontology_id")
     if not ontology_id and db.has_collection("ontology_registry"):
-        matches = list(run_aql(db,
-            "FOR o IN ontology_registry "
-            "FILTER o.extraction_run_id == @rid "
-            "LIMIT 1 RETURN o._key",
-            bind_vars={"rid": run_id},
-        ))
+        matches = list(
+            run_aql(
+                db,
+                "FOR o IN ontology_registry "
+                "FILTER o.extraction_run_id == @rid "
+                "LIMIT 1 RETURN o._key",
+                bind_vars={"rid": run_id},
+            )
+        )
         if matches:
             ontology_id = matches[0]
     if not ontology_id and db.has_collection("ontology_registry"):
         doc_ids = run.get("doc_ids") or ([run["doc_id"]] if run.get("doc_id") else [])
         if doc_ids:
-            matches = list(run_aql(db,
-                "FOR o IN ontology_registry "
-                "FILTER o.source_document_id IN @dids OR o.source_document IN @dids "
-                "LIMIT 1 RETURN o._key",
-                bind_vars={"dids": doc_ids},
-            ))
+            matches = list(
+                run_aql(
+                    db,
+                    "FOR o IN ontology_registry "
+                    "FILTER o.source_document_id IN @dids OR o.source_document IN @dids "
+                    "LIMIT 1 RETURN o._key",
+                    bind_vars={"dids": doc_ids},
+                )
+            )
             if matches:
                 ontology_id = matches[0]
 
@@ -610,7 +616,7 @@ FOR chunk IN chunks
   SORT chunk.chunk_index ASC
   RETURN chunk"""
 
-    return list(run_aql(db,query, bind_vars={"doc_id": document_id}))
+    return list(run_aql(db, query, bind_vars={"doc_id": document_id}))
 
 
 def _store_results(
@@ -657,11 +663,29 @@ def _count_class_properties(cls: Any) -> int:
 
 
 _XSD_TYPES = {
-    "xsd:string", "xsd:integer", "xsd:int", "xsd:decimal", "xsd:float",
-    "xsd:double", "xsd:boolean", "xsd:date", "xsd:dateTime", "xsd:time",
-    "xsd:anyURI", "xsd:long", "xsd:short", "xsd:byte", "xsd:nonNegativeInteger",
-    "xsd:positiveInteger", "xsd:duration", "xsd:gYear", "xsd:gMonth",
-    "xsd:base64Binary", "xsd:hexBinary", "xsd:normalizedString", "xsd:token",
+    "xsd:string",
+    "xsd:integer",
+    "xsd:int",
+    "xsd:decimal",
+    "xsd:float",
+    "xsd:double",
+    "xsd:boolean",
+    "xsd:date",
+    "xsd:dateTime",
+    "xsd:time",
+    "xsd:anyURI",
+    "xsd:long",
+    "xsd:short",
+    "xsd:byte",
+    "xsd:nonNegativeInteger",
+    "xsd:positiveInteger",
+    "xsd:duration",
+    "xsd:gYear",
+    "xsd:gMonth",
+    "xsd:base64Binary",
+    "xsd:hexBinary",
+    "xsd:normalizedString",
+    "xsd:token",
 }
 
 
@@ -723,11 +747,17 @@ def _materialize_to_graph(
     classes = result.classes if hasattr(result, "classes") else result.get("classes", [])
 
     vertex_collections = (
-        "ontology_classes", "ontology_datatype_properties", "ontology_object_properties",
+        "ontology_classes",
+        "ontology_datatype_properties",
+        "ontology_object_properties",
     )
     edge_collections = (
-        "rdfs_domain", "rdfs_range_class", "subclass_of",
-        "extracted_from", "has_chunk", "produced_by",
+        "rdfs_domain",
+        "rdfs_range_class",
+        "subclass_of",
+        "extracted_from",
+        "has_chunk",
+        "produced_by",
     )
     for col_name in (*vertex_collections, *edge_collections):
         if not db.has_collection(col_name):
@@ -789,32 +819,33 @@ def _materialize_to_graph(
                 prop_range = prop.get("range", "xsd:string")
                 prop_type = prop.get("property_type", "")
                 if _is_object_property(prop_range, prop_type, uri_to_key, class_keys):
-                    relationships.append({
-                        "uri": prop.get("uri", ""),
-                        "label": prop.get("label", ""),
-                        "description": prop.get("description", ""),
-                        "target_class_uri": prop_range,
-                        "confidence": prop.get("confidence", 0.0),
-                        "evidence": prop.get("evidence", []),
-                    })
+                    relationships.append(
+                        {
+                            "uri": prop.get("uri", ""),
+                            "label": prop.get("label", ""),
+                            "description": prop.get("description", ""),
+                            "target_class_uri": prop_range,
+                            "confidence": prop.get("confidence", 0.0),
+                            "evidence": prop.get("evidence", []),
+                        }
+                    )
                 else:
-                    attributes.append({
-                        "uri": prop.get("uri", ""),
-                        "label": prop.get("label", ""),
-                        "description": prop.get("description", ""),
-                        "range_datatype": prop_range,
-                        "confidence": prop.get("confidence", 0.0),
-                        "evidence": prop.get("evidence", []),
-                    })
+                    attributes.append(
+                        {
+                            "uri": prop.get("uri", ""),
+                            "label": prop.get("label", ""),
+                            "description": prop.get("description", ""),
+                            "range_datatype": prop_range,
+                            "confidence": prop.get("confidence", 0.0),
+                            "evidence": prop.get("evidence", []),
+                        }
+                    )
 
         # Attributes → ontology_datatype_properties + rdfs_domain
         for attr in attributes:
             attr_label = attr.get("label", "unknown_attr")
             prop_key = f"{key}_{attr_label.replace(' ', '_').lower()}"
-            attr_uri = (
-                attr.get("uri")
-                or f"{uri.rsplit('#', 1)[0]}#{attr_label.replace(' ', '')}"
-            )
+            attr_uri = attr.get("uri") or f"{uri.rsplit('#', 1)[0]}#{attr_label.replace(' ', '')}"
             prop_doc = {
                 "_key": prop_key,
                 "uri": attr_uri,
@@ -833,42 +864,45 @@ def _materialize_to_graph(
                 log.warning("datatype property insert failed for %s: %s", prop_key, exc)
 
             with contextlib.suppress(Exception):
-                rdfs_domain_col.insert({
-                    "_from": f"ontology_datatype_properties/{prop_key}",
-                    "_to": f"ontology_classes/{key}",
-                    "ontology_id": ontology_id,
-                    "created": now,
-                    "expired": NEVER_EXPIRES,
-                })
+                rdfs_domain_col.insert(
+                    {
+                        "_from": f"ontology_datatype_properties/{prop_key}",
+                        "_to": f"ontology_classes/{key}",
+                        "ontology_id": ontology_id,
+                        "created": now,
+                        "expired": NEVER_EXPIRES,
+                    }
+                )
 
         # Collect relationships for deferred processing (need all class_keys first)
         for rel in relationships:
             rel_label = rel.get("label", "unknown_rel")
             prop_key = f"{key}_{rel_label.replace(' ', '_').lower()}"
-            rel_uri = (
-                rel.get("uri")
-                or f"{uri.rsplit('#', 1)[0]}#{rel_label.replace(' ', '')}"
+            rel_uri = rel.get("uri") or f"{uri.rsplit('#', 1)[0]}#{rel_label.replace(' ', '')}"
+            deferred_rels.append(
+                {
+                    "domain_key": key,
+                    "prop_key": prop_key,
+                    "uri": rel_uri,
+                    "label": rel_label,
+                    "description": rel.get("description", ""),
+                    "target_class_uri": rel.get("target_class_uri", ""),
+                    "confidence": rel.get("confidence", 0.0),
+                    "evidence": rel.get("evidence", []),
+                }
             )
-            deferred_rels.append({
-                "domain_key": key,
-                "prop_key": prop_key,
-                "uri": rel_uri,
-                "label": rel_label,
-                "description": rel.get("description", ""),
-                "target_class_uri": rel.get("target_class_uri", ""),
-                "confidence": rel.get("confidence", 0.0),
-                "evidence": rel.get("evidence", []),
-            })
 
         with contextlib.suppress(Exception):
-            extracted_col.insert({
-                "_from": f"ontology_classes/{key}",
-                "_to": f"documents/{document_id}",
-                "run_id": run_id,
-                "ontology_id": ontology_id,
-                "created": now,
-                "expired": NEVER_EXPIRES,
-            })
+            extracted_col.insert(
+                {
+                    "_from": f"ontology_classes/{key}",
+                    "_to": f"documents/{document_id}",
+                    "run_id": run_id,
+                    "ontology_id": ontology_id,
+                    "created": now,
+                    "expired": NEVER_EXPIRES,
+                }
+            )
 
     # subclass_of edges
     for child_key, parent_uri, parent_evidence in class_parent_uris:
@@ -878,14 +912,16 @@ def _materialize_to_graph(
             parent_key = class_keys.get(parent_frag) or class_keys.get(parent_uri)
         if parent_key and parent_key != child_key:
             with contextlib.suppress(Exception):
-                subclass_col.insert({
-                    "_from": f"ontology_classes/{child_key}",
-                    "_to": f"ontology_classes/{parent_key}",
-                    "ontology_id": ontology_id,
-                    "evidence": parent_evidence,
-                    "created": now,
-                    "expired": NEVER_EXPIRES,
-                })
+                subclass_col.insert(
+                    {
+                        "_from": f"ontology_classes/{child_key}",
+                        "_to": f"ontology_classes/{parent_key}",
+                        "ontology_id": ontology_id,
+                        "evidence": parent_evidence,
+                        "created": now,
+                        "expired": NEVER_EXPIRES,
+                    }
+                )
         elif parent_key == child_key:
             log.warning("skipping self-referential subclass_of: %s", child_key)
 
@@ -894,9 +930,7 @@ def _materialize_to_graph(
         target_uri = rel["target_class_uri"]
         range_frag = target_uri.split("#")[-1].split("/")[-1]
         range_class_key = (
-            uri_to_key.get(target_uri)
-            or class_keys.get(range_frag)
-            or class_keys.get(target_uri)
+            uri_to_key.get(target_uri) or class_keys.get(range_frag) or class_keys.get(target_uri)
         )
 
         prop_key = rel["prop_key"]
@@ -918,23 +952,27 @@ def _materialize_to_graph(
 
         domain_key = rel["domain_key"]
         with contextlib.suppress(Exception):
-            rdfs_domain_col.insert({
-                "_from": f"ontology_object_properties/{prop_key}",
-                "_to": f"ontology_classes/{domain_key}",
-                "ontology_id": ontology_id,
-                "created": now,
-                "expired": NEVER_EXPIRES,
-            })
-
-        if range_class_key:
-            with contextlib.suppress(Exception):
-                rdfs_range_col.insert({
+            rdfs_domain_col.insert(
+                {
                     "_from": f"ontology_object_properties/{prop_key}",
-                    "_to": f"ontology_classes/{range_class_key}",
+                    "_to": f"ontology_classes/{domain_key}",
                     "ontology_id": ontology_id,
                     "created": now,
                     "expired": NEVER_EXPIRES,
-                })
+                }
+            )
+
+        if range_class_key:
+            with contextlib.suppress(Exception):
+                rdfs_range_col.insert(
+                    {
+                        "_from": f"ontology_object_properties/{prop_key}",
+                        "_to": f"ontology_classes/{range_class_key}",
+                        "ontology_id": ontology_id,
+                        "created": now,
+                        "expired": NEVER_EXPIRES,
+                    }
+                )
 
     # has_chunk edges
     if db.has_collection("has_chunk"):
@@ -942,20 +980,26 @@ def _materialize_to_graph(
     else:
         has_chunk_col = db.create_collection("has_chunk", edge=True)
     if db.has_collection("chunks"):
-        chunk_docs = list(run_aql(db,
-            "FOR c IN chunks FILTER c.doc_id == @doc_id RETURN c._key",
-            bind_vars={"doc_id": document_id},
-        ))
+        chunk_docs = list(
+            run_aql(
+                db,
+                "FOR c IN chunks FILTER c.doc_id == @doc_id RETURN c._key",
+                bind_vars={"doc_id": document_id},
+            )
+        )
         for chunk_key in chunk_docs:
             with contextlib.suppress(Exception):
-                has_chunk_col.insert({
-                    "_from": f"documents/{document_id}",
-                    "_to": f"chunks/{chunk_key}",
-                    "ontology_id": ontology_id,
-                    "run_id": run_id,
-                    "created": now,
-                    "expired": NEVER_EXPIRES,
-                }, overwrite=True)
+                has_chunk_col.insert(
+                    {
+                        "_from": f"documents/{document_id}",
+                        "_to": f"chunks/{chunk_key}",
+                        "ontology_id": ontology_id,
+                        "run_id": run_id,
+                        "created": now,
+                        "expired": NEVER_EXPIRES,
+                    },
+                    overwrite=True,
+                )
 
     _recompute_multi_signal_confidence(
         db,
@@ -1026,11 +1070,13 @@ def _recompute_multi_signal_confidence(
         class_id = f"ontology_classes/{key}"
 
         faithfulness = faithfulness_scores.get(
-            uri, cls_data.get("llm_confidence", 0.5),
+            uri,
+            cls_data.get("llm_confidence", 0.5),
         )
         semantic_validity = validity_scores.get(uri, 0.5)
         prop_agreement = property_agreement_scores.get(
-            uri, cls_data.get("property_agreement", 1.0),
+            uri,
+            cls_data.get("property_agreement", 1.0),
         )
 
         # Count properties via rdfs_domain edges pointing TO this class,
@@ -1038,14 +1084,17 @@ def _recompute_multi_signal_confidence(
         datatype_count = 0
         object_count = 0
         if has_rdfs_domain:
-            prop_type_counts = list(run_aql(db,
-                "FOR e IN rdfs_domain "
-                "FILTER e._to == @cls_id AND e.ontology_id == @oid "
-                "LET col = PARSE_IDENTIFIER(e._from).collection "
-                "COLLECT type = col WITH COUNT INTO cnt "
-                "RETURN {type, cnt}",
-                bind_vars={"cls_id": class_id, "oid": ontology_id},
-            ))
+            prop_type_counts = list(
+                run_aql(
+                    db,
+                    "FOR e IN rdfs_domain "
+                    "FILTER e._to == @cls_id AND e.ontology_id == @oid "
+                    "LET col = PARSE_IDENTIFIER(e._from).collection "
+                    "COLLECT type = col WITH COUNT INTO cnt "
+                    "RETURN {type, cnt}",
+                    bind_vars={"cls_id": class_id, "oid": ontology_id},
+                )
+            )
             for row in prop_type_counts:
                 t = row.get("type", "")
                 cnt = row.get("cnt", 0)
@@ -1054,53 +1103,75 @@ def _recompute_multi_signal_confidence(
                 elif t == "ontology_datatype_properties":
                     datatype_count += cnt
 
-        has_parent = bool(list(run_aql(db,
-            "FOR e IN @@col FILTER e._from == @cls_id AND e.ontology_id == @oid "
-            "LIMIT 1 RETURN true",
-            bind_vars={
-                "@col": subclass_col.name,
-                "cls_id": class_id,
-                "oid": ontology_id,
-            },
-        )))
+        has_parent = bool(
+            list(
+                run_aql(
+                    db,
+                    "FOR e IN @@col FILTER e._from == @cls_id AND e.ontology_id == @oid "
+                    "LIMIT 1 RETURN true",
+                    bind_vars={
+                        "@col": subclass_col.name,
+                        "cls_id": class_id,
+                        "oid": ontology_id,
+                    },
+                )
+            )
+        )
 
-        has_children = bool(list(run_aql(db,
-            "FOR e IN @@col FILTER e._to == @cls_id AND e.ontology_id == @oid "
-            "LIMIT 1 RETURN true",
-            bind_vars={
-                "@col": subclass_col.name,
-                "cls_id": class_id,
-                "oid": ontology_id,
-            },
-        )))
+        has_children = bool(
+            list(
+                run_aql(
+                    db,
+                    "FOR e IN @@col FILTER e._to == @cls_id AND e.ontology_id == @oid "
+                    "LIMIT 1 RETURN true",
+                    bind_vars={
+                        "@col": subclass_col.name,
+                        "cls_id": class_id,
+                        "oid": ontology_id,
+                    },
+                )
+            )
+        )
 
         # Lateral connectivity: class is domain of an object property, or
         # range of one, or linked via extends_domain.
         has_lateral = object_count > 0
         if not has_lateral and has_rdfs_range:
-            has_lateral = bool(list(run_aql(db,
-                "FOR e IN rdfs_range_class "
-                "FILTER e._to == @cls_id AND e.ontology_id == @oid "
-                "LIMIT 1 RETURN true",
-                bind_vars={"cls_id": class_id, "oid": ontology_id},
-            )))
+            has_lateral = bool(
+                list(
+                    run_aql(
+                        db,
+                        "FOR e IN rdfs_range_class "
+                        "FILTER e._to == @cls_id AND e.ontology_id == @oid "
+                        "LIMIT 1 RETURN true",
+                        bind_vars={"cls_id": class_id, "oid": ontology_id},
+                    )
+                )
+            )
         if not has_lateral and has_extends:
-            has_lateral = bool(list(run_aql(db,
-                "FOR e IN extends_domain "
-                "FILTER (e._from == @cls_id OR e._to == @cls_id) "
-                "AND e.ontology_id == @oid "
-                "LIMIT 1 RETURN true",
-                bind_vars={"cls_id": class_id, "oid": ontology_id},
-            )))
+            has_lateral = bool(
+                list(
+                    run_aql(
+                        db,
+                        "FOR e IN extends_domain "
+                        "FILTER (e._from == @cls_id OR e._to == @cls_id) "
+                        "AND e.ontology_id == @oid "
+                        "LIMIT 1 RETURN true",
+                        bind_vars={"cls_id": class_id, "oid": ontology_id},
+                    )
+                )
+            )
 
-        provenance_count_result = list(run_aql(db,
-            "FOR e IN @@col FILTER e._from == @cls_id "
-            "COLLECT WITH COUNT INTO cnt RETURN cnt",
-            bind_vars={
-                "@col": extracted_col.name,
-                "cls_id": class_id,
-            },
-        ))
+        provenance_count_result = list(
+            run_aql(
+                db,
+                "FOR e IN @@col FILTER e._from == @cls_id COLLECT WITH COUNT INTO cnt RETURN cnt",
+                bind_vars={
+                    "@col": extracted_col.name,
+                    "cls_id": class_id,
+                },
+            )
+        )
         provenance_count = provenance_count_result[0] if provenance_count_result else 0
 
         new_confidence = compute_class_confidence(
@@ -1119,12 +1190,14 @@ def _recompute_multi_signal_confidence(
         )
 
         try:
-            cls_col.update({
-                "_key": key,
-                "confidence": new_confidence,
-                "faithfulness_score": faithfulness,
-                "semantic_validity_score": semantic_validity,
-            })
+            cls_col.update(
+                {
+                    "_key": key,
+                    "confidence": new_confidence,
+                    "faithfulness_score": faithfulness,
+                    "semantic_validity_score": semantic_validity,
+                }
+            )
         except Exception as exc:
             log.warning("confidence update failed for %s: %s", key, exc)
 
@@ -1142,12 +1215,15 @@ def _create_produced_by_edge(
                 db.create_collection(col_name, edge=True)
 
         col = db.collection("produced_by")
-        col.insert({
-            "_from": f"ontology_registry/{ontology_id}",
-            "_to": f"extraction_runs/{run_id}",
-            "created": time.time(),
-            "expired": NEVER_EXPIRES,
-        }, overwrite=True)
+        col.insert(
+            {
+                "_from": f"ontology_registry/{ontology_id}",
+                "_to": f"extraction_runs/{run_id}",
+                "created": time.time(),
+                "expired": NEVER_EXPIRES,
+            },
+            overwrite=True,
+        )
         log.info(
             "created produced_by edge",
             extra={"ontology_id": ontology_id, "run_id": run_id},
@@ -1183,11 +1259,14 @@ def _update_existing_ontology(
         new_class_count = len(classes)
         new_prop_count = sum(_count_class_properties(c) for c in classes)
 
-        registry_repo.update_registry_entry(ontology_id, {
-            "class_count": entry.get("class_count", 0) + new_class_count,
-            "property_count": entry.get("property_count", 0) + new_prop_count,
-            "extraction_run_id": run_id,
-        })
+        registry_repo.update_registry_entry(
+            ontology_id,
+            {
+                "class_count": entry.get("class_count", 0) + new_class_count,
+                "property_count": entry.get("property_count", 0) + new_prop_count,
+                "extraction_run_id": run_id,
+            },
+        )
         log.info(
             "updated existing ontology for incremental extraction",
             extra={"ontology_id": ontology_id, "run_id": run_id, "new_classes": new_class_count},
@@ -1219,16 +1298,18 @@ def _auto_register_ontology(
         classes = result.classes if hasattr(result, "classes") else result.get("classes", [])
         class_count = len(classes)
 
-        entry = registry_repo.create_registry_entry({
-            "name": name,
-            "description": f"Ontology extracted from {filename}",
-            "tier": "local",
-            "source_document_id": document_id,
-            "extraction_run_id": run_id,
-            "class_count": class_count,
-            "property_count": sum(_count_class_properties(c) for c in classes),
-            "namespace": "http://example.org/ontology#",
-        })
+        entry = registry_repo.create_registry_entry(
+            {
+                "name": name,
+                "description": f"Ontology extracted from {filename}",
+                "tier": "local",
+                "source_document_id": document_id,
+                "extraction_run_id": run_id,
+                "class_count": class_count,
+                "property_count": sum(_count_class_properties(c) for c in classes),
+                "namespace": "http://example.org/ontology#",
+            }
+        )
         ontology_id = entry.get("_key", run_id)
         log.info(
             "auto-registered ontology",

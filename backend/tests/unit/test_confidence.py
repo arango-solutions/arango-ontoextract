@@ -178,13 +178,9 @@ class TestComputeClassConfidence:
             has_parent=True,
             has_children=False,
             has_lateral_edges=True,
-            description=(
-                "An important class representing customer entities"
-                " with full provenance"
-            ),
+            description=("An important class representing customer entities with full provenance"),
             all_descriptions=[
-                "An important class representing customer entities"
-                " with full provenance",
+                "An important class representing customer entities with full provenance",
             ],
             provenance_count=3,
             property_agreement=0.9,

@@ -42,8 +42,13 @@ def er_collections(test_db: StandardDatabase):
     yield
 
     for col in (
-        "ontology_classes", "ontology_properties", "subclass_of",
-        "has_property", "similarTo", "entity_clusters", "golden_records",
+        "ontology_classes",
+        "ontology_properties",
+        "subclass_of",
+        "has_property",
+        "similarTo",
+        "entity_clusters",
+        "golden_records",
     ):
         if test_db.has_collection(col):
             test_db.collection(col).truncate()
@@ -79,17 +84,19 @@ def seeded_classes(test_db: StandardDatabase, er_collections):
     ]
 
     for label, desc in base_classes:
-        test_db.collection("ontology_classes").insert({
-            "uri": f"http://test.org#{label}",
-            "label": label,
-            "description": desc,
-            "ontology_id": ontology_id,
-            "tier": "domain",
-            "status": "approved",
-            "created": now,
-            "expired": NEVER_EXPIRES,
-            "version": 1,
-        })
+        test_db.collection("ontology_classes").insert(
+            {
+                "uri": f"http://test.org#{label}",
+                "label": label,
+                "description": desc,
+                "ontology_id": ontology_id,
+                "tier": "domain",
+                "status": "approved",
+                "created": now,
+                "expired": NEVER_EXPIRES,
+                "version": 1,
+            }
+        )
 
     return ontology_id
 
@@ -160,9 +167,7 @@ class TestERPipelineIntegration:
         assert "field_scores" in result
         assert "combined_score" in result
 
-    def test_pipeline_with_high_threshold_yields_fewer_candidates(
-        self, test_db, seeded_classes
-    ):
+    def test_pipeline_with_high_threshold_yields_fewer_candidates(self, test_db, seeded_classes):
         """Higher threshold should yield fewer candidates."""
         config_low = ERPipelineConfig(similarity_threshold=0.5, topological_weight=0.0)
         config_high = ERPipelineConfig(similarity_threshold=0.9, topological_weight=0.0)

@@ -40,9 +40,7 @@ def test_normalize_service_url_path_prefix(raw: str, expected: str) -> None:
         ("/health", "/pre", None),
     ],
 )
-def test_stripped_path_if_under_prefix(
-    path: str, prefix: str, out: str | None
-) -> None:
+def test_stripped_path_if_under_prefix(path: str, prefix: str, out: str | None) -> None:
     assert stripped_path_if_under_prefix(path, prefix) == out
 
 

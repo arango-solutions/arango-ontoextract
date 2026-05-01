@@ -259,7 +259,8 @@ async def run_pipeline(
                     final_state = node_output
     except Exception as stream_exc:
         log.exception(
-            "pipeline stream error, capturing partial state (run_id=%s)", run_id,
+            "pipeline stream error, capturing partial state (run_id=%s)",
+            run_id,
         )
         if final_state is None:
             final_state = dict(initial_state)
@@ -298,8 +299,7 @@ async def run_pipeline(
             step="filter",
             data={
                 "message": (
-                    "Pipeline paused after pre-curation filter."
-                    " Awaiting curation decisions."
+                    "Pipeline paused after pre-curation filter. Awaiting curation decisions."
                 ),
                 "filter_results": result_state.get("filter_results", {}),
                 "merge_candidates": result_state.get("merge_candidates", []),

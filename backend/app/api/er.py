@@ -24,9 +24,7 @@ class ERRunRequest(BaseModel):
     """Trigger an ER pipeline run."""
 
     ontology_id: str
-    config: dict[str, Any] | None = Field(
-        None, description="Optional pipeline config overrides"
-    )
+    config: dict[str, Any] | None = Field(None, description="Optional pipeline config overrides")
 
 
 class ERExplainRequest(BaseModel):

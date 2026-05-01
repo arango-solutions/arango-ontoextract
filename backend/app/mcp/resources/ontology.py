@@ -55,9 +55,7 @@ def _ontology_property_vertex_ids(db: Any, ontology_id: str) -> set[str]:
             continue
         for pid in run_aql(
             db,
-            f"FOR p IN {col} "
-            "FILTER p.ontology_id == @oid AND p.expired == @never "
-            "RETURN p._id",
+            f"FOR p IN {col} FILTER p.ontology_id == @oid AND p.expired == @never RETURN p._id",
             bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
         ):
             if pid:
@@ -76,9 +74,10 @@ def register_ontology_resources(mcp: FastMCP) -> None:
             entries: list[dict[str, Any]] = []
 
             if db.has_collection("ontology_registry"):
-                entries = list(run_aql(
-                    db,
-                    """\
+                entries = list(
+                    run_aql(
+                        db,
+                        """\
 FOR entry IN ontology_registry
   FILTER entry.status != "deprecated"
   SORT entry.created_at DESC
@@ -88,40 +87,51 @@ FOR entry IN ontology_registry
     tier: entry.tier,
     status: entry.status,
     created_at: entry.created_at
-  }"""
-                ))
+  }""",
+                    )
+                )
 
             ontology_sizes: list[dict[str, Any]] = []
             for entry in entries:
                 oid = entry["ontology_id"]
                 class_count = 0
                 if db.has_collection("ontology_classes"):
-                    cnt = list(run_aql(
-                        db,
-                        """\
+                    cnt = list(
+                        run_aql(
+                            db,
+                            """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
   FILTER cls.expired == @never
   COLLECT WITH COUNT INTO cnt
   RETURN cnt""",
-                        bind_vars={"oid": oid, "never": NEVER_EXPIRES},
-                    ))
+                            bind_vars={"oid": oid, "never": NEVER_EXPIRES},
+                        )
+                    )
                     class_count = cnt[0] if cnt else 0
 
-                ontology_sizes.append({
-                    **entry,
-                    "class_count": class_count,
-                })
+                ontology_sizes.append(
+                    {
+                        **entry,
+                        "class_count": class_count,
+                    }
+                )
 
             import json
-            return json.dumps({
-                "total_ontologies": len(entries),
-                "ontologies": ontology_sizes,
-                "generated_at": time.time(),
-            }, indent=2, default=str)
+
+            return json.dumps(
+                {
+                    "total_ontologies": len(entries),
+                    "ontologies": ontology_sizes,
+                    "generated_at": time.time(),
+                },
+                indent=2,
+                default=str,
+            )
         except Exception as exc:
             log.exception("ontology_domain_summary resource failed")
             import json
+
             return json.dumps({"error": str(exc)})
 
     @mcp.resource("aoe://extraction/runs/recent")
@@ -132,9 +142,10 @@ FOR cls IN ontology_classes
             runs: list[dict[str, Any]] = []
 
             if db.has_collection("extraction_runs"):
-                runs = list(run_aql(
-                    db,
-                    """\
+                runs = list(
+                    run_aql(
+                        db,
+                        """\
 FOR run IN extraction_runs
   FILTER HAS(run, "status")
   FILTER run._key NOT LIKE "results_%"
@@ -148,18 +159,25 @@ FOR run IN extraction_runs
     started_at: run.started_at,
     completed_at: run.completed_at,
     classes_extracted: run.stats.classes_extracted
-  }"""
-                ))
+  }""",
+                    )
+                )
 
             import json
-            return json.dumps({
-                "recent_runs": runs,
-                "count": len(runs),
-                "generated_at": time.time(),
-            }, indent=2, default=str)
+
+            return json.dumps(
+                {
+                    "recent_runs": runs,
+                    "count": len(runs),
+                    "generated_at": time.time(),
+                },
+                indent=2,
+                default=str,
+            )
         except Exception as exc:
             log.exception("extraction_runs_recent resource failed")
             import json
+
             return json.dumps({"error": str(exc)})
 
     @mcp.resource("aoe://system/health")
@@ -175,26 +193,34 @@ FOR run IN extraction_runs
                     if col["system"]:
                         continue
                     info = db.collection(col["name"])
-                    collections_info.append({
-                        "name": col["name"],
-                        "count": info.count(),
-                        "type": "edge" if col["type"] == 3 else "document",
-                    })
+                    collections_info.append(
+                        {
+                            "name": col["name"],
+                            "count": info.count(),
+                            "type": "edge" if col["type"] == 3 else "document",
+                        }
+                    )
             except Exception as db_exc:
                 db_connected = False
                 log.warning("health check: ArangoDB query failed", exc_info=db_exc)
 
             import json
-            return json.dumps({
-                "status": "healthy" if db_connected else "degraded",
-                "arango_connected": db_connected,
-                "collection_count": len(collections_info),
-                "collections": collections_info,
-                "generated_at": time.time(),
-            }, indent=2, default=str)
+
+            return json.dumps(
+                {
+                    "status": "healthy" if db_connected else "degraded",
+                    "arango_connected": db_connected,
+                    "collection_count": len(collections_info),
+                    "collections": collections_info,
+                    "generated_at": time.time(),
+                },
+                indent=2,
+                default=str,
+            )
         except Exception as exc:
             log.exception("system_health resource failed")
             import json
+
             return json.dumps({"error": str(exc), "status": "unhealthy"})
 
     @mcp.resource("aoe://ontology/{ontology_id}/stats")
@@ -207,16 +233,18 @@ FOR run IN extraction_runs
             prop_count = 0
 
             if db.has_collection("ontology_classes"):
-                cnt = list(run_aql(
-                    db,
-                    """\
+                cnt = list(
+                    run_aql(
+                        db,
+                        """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
   FILTER cls.expired == @never
   COLLECT WITH COUNT INTO cnt
   RETURN cnt""",
-                    bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
-                ))
+                        bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+                    )
+                )
                 class_count = cnt[0] if cnt else 0
 
             prop_count = _count_ontology_property_vertices(db, ontology_id)
@@ -262,24 +290,22 @@ FOR e IN @@col
                         bind_vars={"@col": edge_col, "never": NEVER_EXPIRES},
                     )
                 )
-                count = sum(
-                    1
-                    for e in edges
-                    if e["f"] in relevant_ids or e["t"] in relevant_ids
-                )
+                count = sum(1 for e in edges if e["f"] in relevant_ids or e["t"] in relevant_ids)
                 edge_counts[edge_col] = count
 
             total_versions = 0
             if db.has_collection("ontology_classes"):
-                cnt = list(run_aql(
-                    db,
-                    """\
+                cnt = list(
+                    run_aql(
+                        db,
+                        """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
   COLLECT WITH COUNT INTO cnt
   RETURN cnt""",
-                    bind_vars={"oid": ontology_id},
-                ))
+                        bind_vars={"oid": ontology_id},
+                    )
+                )
                 total_versions = cnt[0] if cnt else 0
 
             registry_info = None
@@ -293,18 +319,24 @@ FOR cls IN ontology_classes
                     }
 
             import json
-            return json.dumps({
-                "ontology_id": ontology_id,
-                "class_count": class_count,
-                "property_count": prop_count,
-                "edge_counts": edge_counts,
-                "total_edge_count": sum(edge_counts.values()),
-                "total_versions": total_versions,
-                "historical_versions": total_versions - class_count,
-                "registry": registry_info,
-                "generated_at": time.time(),
-            }, indent=2, default=str)
+
+            return json.dumps(
+                {
+                    "ontology_id": ontology_id,
+                    "class_count": class_count,
+                    "property_count": prop_count,
+                    "edge_counts": edge_counts,
+                    "total_edge_count": sum(edge_counts.values()),
+                    "total_versions": total_versions,
+                    "historical_versions": total_versions - class_count,
+                    "registry": registry_info,
+                    "generated_at": time.time(),
+                },
+                indent=2,
+                default=str,
+            )
         except Exception as exc:
             log.exception("ontology_stats resource failed")
             import json
+
             return json.dumps({"error": str(exc), "ontology_id": ontology_id})

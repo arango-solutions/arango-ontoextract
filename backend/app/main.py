@@ -138,5 +138,3 @@ else:
     async def minimal_login_page() -> HTMLResponse:
         """Fallback HTML login when Next static export is not deployed."""
         return HTMLResponse(content=render_minimal_login_html(settings.service_url_path_prefix))
-
-

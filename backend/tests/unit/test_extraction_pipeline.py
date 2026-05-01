@@ -97,8 +97,12 @@ class TestBuildPipeline:
         graph = build_pipeline()
         node_names = set(graph.nodes.keys())
         expected = {
-            "strategy_selector", "extractor", "consistency_checker",
-            "quality_judge", "er_agent", "filter",
+            "strategy_selector",
+            "extractor",
+            "consistency_checker",
+            "quality_judge",
+            "er_agent",
+            "filter",
         }
         assert expected.issubset(node_names)
 
@@ -127,10 +131,12 @@ class TestSetEventBus:
         bus = {"key": "value"}
         set_event_bus(bus)
         from app.extraction.pipeline import _EVENT_BUS
+
         assert _EVENT_BUS is bus
 
         set_event_bus(None)
         from app.extraction import pipeline
+
         assert pipeline._EVENT_BUS is None
 
 
@@ -179,6 +185,7 @@ class TestRunPipelinePaused:
 
         with patch("app.extraction.pipeline.compile_pipeline", return_value=mock_compiled):
             from app.extraction.pipeline import run_pipeline
+
             await run_pipeline(
                 run_id="r1",
                 document_id="d1",

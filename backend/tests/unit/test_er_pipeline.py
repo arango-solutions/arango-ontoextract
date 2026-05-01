@@ -226,9 +226,7 @@ class TestScoreExistingClassVsExtracted:
                 "description": "A customer entity",
                 "uri": "http://ex.org#Customer",
             }
-            result = score_existing_class_vs_extracted(
-                db, existing_class_key="c1", extracted=ext
-            )
+            result = score_existing_class_vs_extracted(db, existing_class_key="c1", extracted=ext)
         assert result["combined_score"] >= 0.85
         assert "field_scores" in result
 
@@ -238,9 +236,7 @@ class TestScoreExistingClassVsExtracted:
             result = score_existing_class_vs_extracted(
                 db,
                 existing_class_key="missing",
-                extracted=ExtractedClass(
-                    uri="u", label="L", description="d", confidence=0.5
-                ),
+                extracted=ExtractedClass(uri="u", label="L", description="d", confidence=0.5),
             )
         assert result["combined_score"] == 0.0
         assert result.get("error") == "existing_class_not_found"
@@ -264,13 +260,17 @@ class TestExplainMatch:
         def execute_side(query, bind_vars=None):
             call_count["n"] += 1
             if call_count["n"] <= 2:
-                return iter([{
-                    "_key": f"k{call_count['n']}",
-                    "_id": f"ontology_classes/k{call_count['n']}",
-                    "label": f"Label{call_count['n']}",
-                    "description": f"Description of entity {call_count['n']}",
-                    "uri": f"http://ex.org#Entity{call_count['n']}",
-                }])
+                return iter(
+                    [
+                        {
+                            "_key": f"k{call_count['n']}",
+                            "_id": f"ontology_classes/k{call_count['n']}",
+                            "label": f"Label{call_count['n']}",
+                            "description": f"Description of entity {call_count['n']}",
+                            "uri": f"http://ex.org#Entity{call_count['n']}",
+                        }
+                    ]
+                )
             return iter([])
 
         db.aql.execute.side_effect = execute_side

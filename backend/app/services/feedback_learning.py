@@ -44,9 +44,7 @@ def build_feedback_learning_examples(
 
     decisions = _load_feedback_decisions(db, ontology_id=ontology_id, limit=limit)
     examples = [_decision_to_example(d) for d in decisions]
-    regression_candidates = [
-        example for example in examples if _is_regression_candidate(example)
-    ]
+    regression_candidates = [example for example in examples if _is_regression_candidate(example)]
     benchmark_fixture = build_hitl_regression_fixture(
         regression_candidates,
         ontology_id=ontology_id,
@@ -143,11 +141,13 @@ FOR d IN curation_decisions
   SORT d.created_at DESC
   LIMIT @limit
   RETURN d"""
-    return list(run_aql(
-        db,
-        query,
-        bind_vars={"ontology_id": ontology_id, "limit": limit},
-    ))
+    return list(
+        run_aql(
+            db,
+            query,
+            bind_vars={"ontology_id": ontology_id, "limit": limit},
+        )
+    )
 
 
 def _decision_to_example(decision: dict[str, Any]) -> dict[str, Any]:

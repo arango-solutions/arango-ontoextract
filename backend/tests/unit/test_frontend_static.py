@@ -65,7 +65,9 @@ def test_resolve_override_invalid_falls_back_to_auto(tmp_path: Path) -> None:
     main_py = bundle / "app" / "main.py"
     main_py.write_text("#", encoding="utf-8")
 
-    assert resolve_frontend_out_dir(str(main_py), override="/no/such/static/export") == out.resolve()
+    assert (
+        resolve_frontend_out_dir(str(main_py), override="/no/such/static/export") == out.resolve()
+    )
 
 
 def test_resolve_nested_when_service_prefix_matches_next_basepath(tmp_path: Path) -> None:
