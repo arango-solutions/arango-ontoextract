@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Query, UploadFile
 
@@ -25,7 +26,7 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
-_background_tasks: set[asyncio.Task] = set()  # prevent GC of fire-and-forget tasks
+_background_tasks: set[asyncio.Task[None]] = set()  # prevent GC of fire-and-forget tasks
 
 _ALLOWED_MIME_TYPES = {
     "application/pdf",
@@ -47,7 +48,7 @@ def _validate_mime(file: UploadFile) -> str:
     return mime
 
 
-def _to_doc_response(doc: dict) -> dict:
+def _to_doc_response(doc: dict[str, Any]) -> dict[str, Any]:
     """Ensure the dict has the fields DocumentResponse expects."""
     return {
         "_key": doc["_key"],
@@ -67,7 +68,7 @@ def _to_doc_response(doc: dict) -> dict:
 async def upload_document(
     file: UploadFile,
     org_id: str | None = Query(default=None),
-) -> dict:
+) -> dict[str, Any]:
     """Upload a document and start async processing pipeline."""
     content = await file.read()
     mime = _validate_mime(file)
@@ -106,7 +107,7 @@ async def list_documents(
     order: str = Query(default="desc"),
     org_id: str | None = Query(default=None),
     status: str | None = Query(default=None),
-) -> PaginatedResponse[dict]:
+) -> PaginatedResponse[dict[str, Any]]:
     """List all documents (paginated)."""
     return documents_repo.list_documents(
         limit=limit,
@@ -119,7 +120,7 @@ async def list_documents(
 
 
 @router.get("/{doc_id}")
-async def get_document(doc_id: str) -> dict:
+async def get_document(doc_id: str) -> dict[str, Any]:
     """Get document metadata and processing status."""
     doc = get_or_404(documents_repo.get_document(doc_id), "Document", doc_id)
     return _to_doc_response(doc)
@@ -130,7 +131,7 @@ async def get_chunks(
     doc_id: str,
     limit: int = Query(default=25, ge=1, le=100),
     cursor: str | None = Query(default=None),
-) -> PaginatedResponse[dict]:
+) -> PaginatedResponse[dict[str, Any]]:
     """List chunks for a document (paginated)."""
     get_or_404(documents_repo.get_document(doc_id), "Document", doc_id)
     return documents_repo.get_chunks_for_document(doc_id, limit=limit, cursor=cursor)
@@ -141,7 +142,7 @@ async def update_document(
     doc_id: str,
     file: UploadFile,
     org_id: str | None = Query(default=None),
-) -> dict:
+) -> dict[str, Any]:
     """Replace document content with a new file upload (J.1).
 
     Deletes existing chunks, re-chunks from the new file, and updates
@@ -183,24 +184,27 @@ async def update_document(
 
 
 @router.get("/{doc_id}/ontologies")
-async def get_document_ontologies(doc_id: str) -> dict:
+async def get_document_ontologies(doc_id: str) -> dict[str, Any]:
     """List ontologies extracted from a document (via ``extracted_from`` edges)."""
     get_or_404(documents_repo.get_document(doc_id), "Document", doc_id)
 
     db = get_db()
-    ontologies: list[dict] = []
+    ontologies: list[dict[str, Any]] = []
     if db.has_collection("extracted_from") and db.has_collection("ontology_registry"):
-        ontologies = list(run_aql(db,
-            "FOR e IN extracted_from "
-            "FILTER e._to == @doc_id "
-            "LET oid = e.ontology_id "
-            "COLLECT ontology_id = oid INTO group "
-            "FOR o IN ontology_registry "
-            "FILTER o._key == ontology_id "
-            "RETURN {_key: o._key, name: o.name, tier: o.tier, "
-            "class_count: o.class_count, status: o.status, edge_count: LENGTH(group)}",
-            bind_vars={"doc_id": f"documents/{doc_id}"},
-        ))
+        ontologies = list(
+            run_aql(
+                db,
+                "FOR e IN extracted_from "
+                "FILTER e._to == @doc_id "
+                "LET oid = e.ontology_id "
+                "COLLECT ontology_id = oid INTO group "
+                "FOR o IN ontology_registry "
+                "FILTER o._key == ontology_id "
+                "RETURN {_key: o._key, name: o.name, tier: o.tier, "
+                "class_count: o.class_count, status: o.status, edge_count: LENGTH(group)}",
+                bind_vars={"doc_id": f"documents/{doc_id}"},
+            )
+        )
 
     return {"doc_id": doc_id, "ontologies": ontologies}
 
@@ -209,7 +213,7 @@ async def get_document_ontologies(doc_id: str) -> dict:
 async def delete_document(
     doc_id: str,
     confirm: bool = Query(default=False, description="Set to true to actually delete"),
-) -> dict:
+) -> dict[str, Any]:
     """Delete a document with cascade analysis and confirmation."""
     get_or_404(documents_repo.get_document(doc_id), "Document", doc_id)
     return documents_repo.delete_document(doc_id, confirm=confirm)

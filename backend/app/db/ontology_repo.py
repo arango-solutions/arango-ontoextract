@@ -376,7 +376,14 @@ def resolve_ontology_edge(
         if not db.has_collection(col_name):
             continue
         try:
-            doc = db.collection(col_name).get(edge_key)
+            # ``Collection.get`` is typed as ``T | AsyncJob[T] | BatchJob[T]``
+            # in python-arango because the same handle is reused for batch /
+            # async execution; on a ``StandardDatabase`` only the ``dict``
+            # branch is ever produced.
+            doc = cast(
+                "dict[str, Any] | None",
+                db.collection(col_name).get(edge_key),
+            )
         except (KeyError, TypeError, ValueError, AttributeError):
             continue
         if doc and doc.get("expired") == NEVER_EXPIRES:

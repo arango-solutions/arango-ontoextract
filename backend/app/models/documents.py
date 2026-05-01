@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -18,7 +19,7 @@ class DocumentCreate(BaseModel):
     filename: str
     mime_type: str
     org_id: str | None = None
-    metadata: dict | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class DocumentResponse(BaseModel):
@@ -29,7 +30,7 @@ class DocumentResponse(BaseModel):
     status: DocumentStatus
     upload_date: datetime
     chunk_count: int = 0
-    metadata: dict | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class ChunkResponse(BaseModel):

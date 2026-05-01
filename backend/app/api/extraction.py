@@ -145,11 +145,14 @@ async def list_runs(
     cursor: str | None = Query(None, description="Pagination cursor"),
     limit: int = Query(25, ge=1, le=100, description="Page size"),
     status: str | None = Query(None, description="Filter by status"),
-) -> dict:
+) -> dict[str, Any]:
     """List extraction runs with enriched metadata."""
     db = get_db()
     result = extraction_service.list_runs(
-        db, cursor=cursor, limit=limit, status=status,
+        db,
+        cursor=cursor,
+        limit=limit,
+        status=status,
     )
     payload = result.model_dump()
 
@@ -189,27 +192,36 @@ async def list_runs(
 
         if db.has_collection("ontology_classes") and run.get("_key"):
             try:
-                oid_result = list(run_aql(db,
-                    "FOR o IN ontology_registry "
-                    "FILTER o.extraction_run_id == @rid LIMIT 1 RETURN o._key",
-                    bind_vars={"rid": run["_key"]},
-                ))
+                oid_result = list(
+                    run_aql(
+                        db,
+                        "FOR o IN ontology_registry "
+                        "FILTER o.extraction_run_id == @rid LIMIT 1 RETURN o._key",
+                        bind_vars={"rid": run["_key"]},
+                    )
+                )
                 oid = oid_result[0] if oid_result else None
                 if oid:
                     run["ontology_id"] = oid
-                    cls_count = list(run_aql(db,
-                        "FOR c IN ontology_classes "
-                        "FILTER c.ontology_id == @oid AND c.expired == @never "
-                        "COLLECT WITH COUNT INTO cnt RETURN cnt",
-                        bind_vars={"oid": oid, "never": NEVER_EXPIRES},
-                    ))
+                    cls_count = list(
+                        run_aql(
+                            db,
+                            "FOR c IN ontology_classes "
+                            "FILTER c.ontology_id == @oid AND c.expired == @never "
+                            "COLLECT WITH COUNT INTO cnt RETURN cnt",
+                            bind_vars={"oid": oid, "never": NEVER_EXPIRES},
+                        )
+                    )
                     run["classes_extracted"] = cls_count[0] if cls_count else 0
-                    prop_count = list(run_aql(db,
-                        "FOR p IN ontology_properties "
-                        "FILTER p.ontology_id == @oid AND p.expired == @never "
-                        "COLLECT WITH COUNT INTO cnt RETURN cnt",
-                        bind_vars={"oid": oid, "never": NEVER_EXPIRES},
-                    ))
+                    prop_count = list(
+                        run_aql(
+                            db,
+                            "FOR p IN ontology_properties "
+                            "FILTER p.ontology_id == @oid AND p.expired == @never "
+                            "COLLECT WITH COUNT INTO cnt RETURN cnt",
+                            bind_vars={"oid": oid, "never": NEVER_EXPIRES},
+                        )
+                    )
                     run["properties_extracted"] = prop_count[0] if prop_count else 0
             except Exception:
                 log.debug("Could not fetch entity counts for run enrichment")
@@ -220,14 +232,14 @@ async def list_runs(
 
 
 @router.get("/runs/{run_id}")
-async def get_run(run_id: str) -> dict:
+async def get_run(run_id: str) -> dict[str, Any]:
     """Get extraction run status and stats."""
     db = get_db()
     return extraction_service.get_run(db, run_id=run_id)
 
 
 @router.delete("/runs/{run_id}")
-async def delete_run(run_id: str) -> dict:
+async def delete_run(run_id: str) -> dict[str, Any]:
     """Delete an extraction run and its results document."""
     db = get_db()
     if not db.has_collection("extraction_runs"):
@@ -244,7 +256,7 @@ async def delete_run(run_id: str) -> dict:
 
 
 @router.get("/runs/{run_id}/steps")
-async def get_run_steps(run_id: str) -> dict:
+async def get_run_steps(run_id: str) -> dict[str, Any]:
     """Get per-agent step detail: inputs, outputs, token usage, errors, duration."""
     db = get_db()
     steps = extraction_service.get_run_steps(db, run_id=run_id)
@@ -252,7 +264,7 @@ async def get_run_steps(run_id: str) -> dict:
 
 
 @router.get("/runs/{run_id}/results")
-async def get_run_results(run_id: str) -> dict:
+async def get_run_results(run_id: str) -> dict[str, Any]:
     """Get extracted entities from a run."""
     db = get_db()
     return extraction_service.get_run_results(db, run_id=run_id)
@@ -271,7 +283,7 @@ async def retry_run(run_id: str) -> RetryResponse:
 
 
 @router.get("/runs/{run_id}/cost")
-async def get_run_cost(run_id: str) -> dict:
+async def get_run_cost(run_id: str) -> dict[str, Any]:
     """Get LLM cost breakdown: tokens by model, estimated cost."""
     db = get_db()
     return extraction_service.get_run_cost(db, run_id=run_id)

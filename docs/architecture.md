@@ -290,3 +290,26 @@ docker compose -f docker-compose.prod.yml up -d
 ```
 
 Includes all services with TLS termination and health checks.
+
+### Manual packaging (Arango Container Manager)
+
+For deployments running on the Arango platform's Container Manager,
+AOE ships as a flat `.tar.gz` (`make package-arango-manual` /
+`make package-arango-manual-all`) rather than an OCI image. The bundle is
+launched on `py13base` with `uv pip install -e .`, and the FastAPI app
+optionally serves the Next.js static export from `frontend/out/`. Two
+backend pieces are deployment-mode-aware:
+
+- **`StripServicePrefixMiddleware`** (`backend/app/middleware/strip_service_prefix.py`)
+  removes `SERVICE_URL_PATH_PREFIX` from incoming HTTP/WebSocket paths so
+  existing routers keep matching at `/api/...`, `/ws/...`, `/health`, etc.
+- **`NextStaticExportApp`** (`backend/app/static_export_app.py`) extends
+  `StaticFiles` to retry `<path>.html` for clean SPA URLs after the
+  standard lookup misses — necessary because Next 15 `output: 'export'`
+  emits flat per-route HTML files rather than `<route>/index.html`.
+
+See:
+
+- [`docs/container-manager-deployment.md`](./container-manager-deployment.md) — operator runbook
+- [`docs/path-prefix-routing.md`](./path-prefix-routing.md) — how `SERVICE_URL_PATH_PREFIX` flows end-to-end
+- [`docs/adr/007-spa-html-fallback.md`](./adr/007-spa-html-fallback.md) — `NextStaticExportApp` decision record

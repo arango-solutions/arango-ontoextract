@@ -1,0 +1,57 @@
+services:
+  aoe:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aoe-dev
+    ports:
+      - "8000:8000"
+    environment:
+      ARANGO_HOST: http://arangodb:8529
+      ARANGO_DB: OntoExtract
+      ARANGO_USER: root
+      ARANGO_PASSWORD: changeme
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-change-this}
+      APP_ENV: development
+      APP_LOG_LEVEL: DEBUG
+      NEXT_PUBLIC_API_URL: /api/v1
+    depends_on:
+      arangodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./nginx:/app/nginx:ro
+    restart: unless-stopped
+
+  arangodb:
+    image: arangodb:3.12
+    container_name: aoe-arangodb
+    command: ["arangod", "--server.endpoint", "tcp://0.0.0.0:8529", "--vector-index"]
+    environment:
+      ARANGO_ROOT_PASSWORD: changeme
+    ports:
+      - "8529:8529"
+    volumes:
+      - arangodb_data:/var/lib/arangodb3
+      - arangodb_var:/var/lib/arangodb3-apps
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8529/_api/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  arangodb_data:
+    driver: local
+  arangodb_var:
+    driver: local

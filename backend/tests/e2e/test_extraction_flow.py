@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -30,14 +30,16 @@ def _seed_document_and_chunks(db, doc_id: str = "test_doc_001") -> str:
     _ensure_collection(db, "documents")
     _ensure_collection(db, "chunks")
 
-    db.collection("documents").insert({
-        "_key": doc_id,
-        "filename": "test_enterprise.md",
-        "mime_type": "text/markdown",
-        "upload_date": time.time(),
-        "status": "ready",
-        "org_id": "test_org",
-    })
+    db.collection("documents").insert(
+        {
+            "_key": doc_id,
+            "filename": "test_enterprise.md",
+            "mime_type": "text/markdown",
+            "upload_date": time.time(),
+            "status": "ready",
+            "org_id": "test_org",
+        }
+    )
 
     chunks = [
         {
@@ -78,14 +80,22 @@ def _seed_document_and_chunks(db, doc_id: str = "test_doc_001") -> str:
 
 
 def _make_mock_llm_response(fixture_name: str):
-    """Create a mock LLM response from a fixture file."""
+    """Create a mock LLM response from a fixture file.
+
+    ``usage_metadata`` is a real ``dict`` — the extractor calls
+    ``usage.get("input_tokens", 0)`` on it.  Using a ``MagicMock`` would
+    return another ``MagicMock`` from ``.get()`` and silently poison the
+    token-usage counters with non-msgpack-serializable values, breaking
+    LangGraph checkpointing.
+    """
     fixture = _load_fixture(fixture_name)
     mock_response = MagicMock()
     mock_response.content = json.dumps(fixture)
-    mock_response.usage_metadata = MagicMock()
-    mock_response.usage_metadata.total_tokens = 1000
-    mock_response.usage_metadata.input_tokens = 800
-    mock_response.usage_metadata.output_tokens = 200
+    mock_response.usage_metadata = {
+        "input_tokens": 800,
+        "output_tokens": 200,
+        "total_tokens": 1000,
+    }
     return mock_response
 
 
@@ -115,12 +125,28 @@ class TestExtractionFlow:
             fixture_idx += 1
             return _make_mock_llm_response(fname)
 
+        # Extractor calls `await llm.ainvoke(...)`; AsyncMock(side_effect=...) wraps
+        # the sync fixture-builder in a coroutine returning the same response.
         mock_llm = MagicMock()
         mock_llm.invoke = mock_invoke
+        mock_llm.ainvoke = AsyncMock(side_effect=mock_invoke)
 
+        # Each judge module re-binds `_get_llm` via `from ... import _get_llm`,
+        # so patching the source alone does not affect them.  Patch each
+        # importing module so the pipeline never reaches a real LLM provider.
         with (
             patch("app.services.extraction.get_db", return_value=test_db),
             patch("app.extraction.agents.extractor._get_llm", return_value=mock_llm),
+            patch(
+                "app.extraction.judges.faithfulness._get_llm", return_value=mock_llm
+            ),
+            patch(
+                "app.extraction.judges.semantic_validator._get_llm", return_value=mock_llm
+            ),
+            patch(
+                "app.extraction.judges.qualitative_eval_node._get_llm",
+                return_value=mock_llm,
+            ),
             patch(
                 "app.extraction.agents.extractor._retrieve_relevant_chunks",
                 side_effect=lambda *a, **k: [],
@@ -154,10 +180,21 @@ class TestExtractionFlow:
 
         mock_llm = MagicMock()
         mock_llm.invoke = mock_invoke
+        mock_llm.ainvoke = AsyncMock(side_effect=mock_invoke)
 
         with (
             patch("app.services.extraction.get_db", return_value=test_db),
             patch("app.extraction.agents.extractor._get_llm", return_value=mock_llm),
+            patch(
+                "app.extraction.judges.faithfulness._get_llm", return_value=mock_llm
+            ),
+            patch(
+                "app.extraction.judges.semantic_validator._get_llm", return_value=mock_llm
+            ),
+            patch(
+                "app.extraction.judges.qualitative_eval_node._get_llm",
+                return_value=mock_llm,
+            ),
             patch(
                 "app.extraction.agents.extractor._retrieve_relevant_chunks",
                 side_effect=lambda *a, **k: [],

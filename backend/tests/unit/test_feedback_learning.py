@@ -77,9 +77,7 @@ class TestBuildFeedbackLearningExamples:
         fixture = result["benchmark_fixture"]
         assert fixture["schema_version"] == "hitl-regression-v1"
         assert fixture["summary"]["documents"] == 1
-        assert fixture["documents"][0]["negative_classes"] == [
-            {"label": "Ghost", "type": ""}
-        ]
+        assert fixture["documents"][0]["negative_classes"] == [{"label": "Ghost", "type": ""}]
 
     @patch("app.services.feedback_learning.run_aql", return_value=[])
     def test_clamps_limit_and_filters_by_ontology(self, mock_run_aql):
@@ -130,6 +128,4 @@ class TestBuildHitlRegressionFixture:
         assert result["documents"][0]["gold_classes"] == [
             {"label": "Customer", "type": "DomainClass"}
         ]
-        assert result["documents"][1]["negative_classes"] == [
-            {"label": "Ghost", "type": ""}
-        ]
+        assert result["documents"][1]["negative_classes"] == [{"label": "Ghost", "type": ""}]

@@ -87,8 +87,7 @@ def parse_pdf(file_bytes: bytes) -> ParsedDocument:
                     default=0,
                 )
                 is_bold = any(
-                    "bold" in (span.get("font", "").lower())
-                    for span in line.get("spans", [])
+                    "bold" in (span.get("font", "").lower()) for span in line.get("spans", [])
                 )
 
                 if max_size >= 14 or (is_bold and max_size >= 12):
@@ -156,9 +155,7 @@ def parse_docx(file_bytes: bytes) -> ParsedDocument:
             current_text_parts.append(text)
 
     if current_text_parts:
-        parsed.sections.append(
-            Section(heading=current_heading, text="\n".join(current_text_parts))
-        )
+        parsed.sections.append(Section(heading=current_heading, text="\n".join(current_text_parts)))
 
     return parsed
 

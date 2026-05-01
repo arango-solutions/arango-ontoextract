@@ -24,16 +24,18 @@ def test_release_exists_false_when_collection_missing() -> None:
 def test_create_release_duplicate_version_raises() -> None:
     db = MagicMock()
     db.has_collection.return_value = True
-    with patch.object(releases_repo, "release_exists", return_value=True):
-        with pytest.raises(ValueError, match="already exists"):
-            releases_repo.create_release(
-                "o1",
-                version="1.0.0",
-                description="",
-                release_notes="",
-                released_by=None,
-                db=db,
-            )
+    with (
+        patch.object(releases_repo, "release_exists", return_value=True),
+        pytest.raises(ValueError, match="already exists"),
+    ):
+        releases_repo.create_release(
+            "o1",
+            version="1.0.0",
+            description="",
+            release_notes="",
+            released_by=None,
+            db=db,
+        )
 
 
 def test_create_release_inserts_and_updates_registry() -> None:
@@ -51,10 +53,13 @@ def test_create_release_inserts_and_updates_registry() -> None:
         }
     }
 
-    with patch.object(releases_repo, "release_exists", return_value=False), patch.object(
-        releases_repo.registry_repo,
-        "update_registry_entry",
-    ) as mock_update:
+    with (
+        patch.object(releases_repo, "release_exists", return_value=False),
+        patch.object(
+            releases_repo.registry_repo,
+            "update_registry_entry",
+        ) as mock_update,
+    ):
         out = releases_repo.create_release(
             "o1",
             version="2.1.0",

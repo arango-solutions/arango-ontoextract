@@ -16,19 +16,45 @@ from app.models.ontology import ExtractedClass, ExtractionResult
 
 log = logging.getLogger(__name__)
 
-GENERIC_TERMS = frozenset({
-    "thing", "object", "entity", "item", "element", "resource",
-    "concept", "type", "category", "class", "instance", "data",
-    "value", "record", "entry", "node", "document", "model",
-    "base", "root", "abstract", "generic", "default", "other",
-    "unknown", "misc", "miscellaneous", "general", "common",
-})
+GENERIC_TERMS = frozenset(
+    {
+        "thing",
+        "object",
+        "entity",
+        "item",
+        "element",
+        "resource",
+        "concept",
+        "type",
+        "category",
+        "class",
+        "instance",
+        "data",
+        "value",
+        "record",
+        "entry",
+        "node",
+        "document",
+        "model",
+        "base",
+        "root",
+        "abstract",
+        "generic",
+        "default",
+        "other",
+        "unknown",
+        "misc",
+        "miscellaneous",
+        "general",
+        "common",
+    }
+)
 
 _CONFIDENCE_HIGH = 0.8
 _CONFIDENCE_LOW = 0.5
 
 
-def filter_agent_node(state: ExtractionPipelineState) -> dict:
+def filter_agent_node(state: ExtractionPipelineState) -> dict[str, Any]:
     """LangGraph node: pre-curation filtering and annotation.
 
     1. Removes noise: generic terms, single-word classes with low confidence

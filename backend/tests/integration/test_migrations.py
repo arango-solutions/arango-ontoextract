@@ -65,9 +65,7 @@ def test_apply_all_migrations_on_fresh_db(test_db: StandardDatabase) -> None:
         | EXPECTED_EDGE_COLLECTIONS
     )
 
-    assert all_expected.issubset(existing), (
-        f"Missing collections: {all_expected - existing}"
-    )
+    assert all_expected.issubset(existing), f"Missing collections: {all_expected - existing}"
 
 
 def test_migrations_are_idempotent(test_db: StandardDatabase) -> None:
@@ -86,12 +84,12 @@ def test_mdi_index_exists(test_db: StandardDatabase) -> None:
     col = test_db.collection("ontology_classes")
     indexes = col.indexes()
     temporal_indexes = [
-        idx for idx in indexes
+        idx
+        for idx in indexes
         if idx.get("name", "").startswith("idx_ontology_classes_mdi_temporal")
     ]
     assert len(temporal_indexes) >= 1, (
-        f"Expected temporal index on ontology_classes, found: "
-        f"{[i.get('name') for i in indexes]}"
+        f"Expected temporal index on ontology_classes, found: {[i.get('name') for i in indexes]}"
     )
 
 
@@ -102,12 +100,10 @@ def test_ttl_index_exists(test_db: StandardDatabase) -> None:
     col = test_db.collection("ontology_classes")
     indexes = col.indexes()
     ttl_indexes = [
-        idx for idx in indexes
-        if idx.get("name", "").startswith("idx_ontology_classes_ttl")
+        idx for idx in indexes if idx.get("name", "").startswith("idx_ontology_classes_ttl")
     ]
     assert len(ttl_indexes) >= 1, (
-        f"Expected TTL index on ontology_classes, found: "
-        f"{[i.get('name') for i in indexes]}"
+        f"Expected TTL index on ontology_classes, found: {[i.get('name') for i in indexes]}"
     )
 
 
@@ -148,34 +144,61 @@ def test_arangosearch_view(test_db: StandardDatabase) -> None:
 
 
 def test_019_backfill_expired_sentinel_repairs_null(test_db: StandardDatabase) -> None:
-    """019 backfill sets NEVER_EXPIRES on documents with null/missing expired."""
+    """019 backfill sets NEVER_EXPIRES on docs with null/missing/zero expired.
+
+    The mdi-prefixed temporal index built by migration 005/020 requires
+    ``expired`` to be a finite double, which would reject the legacy "broken"
+    documents we want to backfill.  We drop the index, seed all three repair
+    targets (``null``, ``0``, missing), run 019, then re-run 020 to restore the
+    index for downstream tests in the session.
+    """
     apply_all(test_db)
     never = sys.maxsize
     col = test_db.collection("ontology_classes")
-    col.insert(
-        {
-            "_key": "tmp_m019_null_expired",
-            "label": "M019 Test Class",
-            "uri": "http://test.example.org#M019",
-            "description": "migration 019 test",
-            "ontology_id": "test_onto_m019",
-            "created": 1.0,
-            "expired": None,
-            "rdf_type": "owl:Class",
-            "confidence": 0.5,
-            "status": "pending",
-            "tier": "domain",
-            "version": 1,
-            "change_type": "initial",
-            "change_summary": "test",
-            "created_by": "migration_test",
-            "ttlExpireAt": None,
-        },
-        overwrite=True,
-    )
-    m019 = importlib.import_module("migrations.019_backfill_expired_sentinel")
-    m019.up(test_db)
-    doc = col.get("tmp_m019_null_expired")
-    assert doc is not None
-    assert doc.get("expired") == never
-    col.delete("tmp_m019_null_expired")
+
+    mdi_name = "idx_ontology_classes_mdi_temporal"
+    for idx in col.indexes():
+        if idx.get("name") == mdi_name:
+            col.delete_index(idx["id"])
+            break
+
+    base = {
+        "label": "M019 Test Class",
+        "uri": "http://test.example.org#M019",
+        "description": "migration 019 test",
+        "ontology_id": "test_onto_m019",
+        "created": 1.0,
+        "rdf_type": "owl:Class",
+        "confidence": 0.5,
+        "status": "pending",
+        "tier": "domain",
+        "version": 1,
+        "change_type": "initial",
+        "change_summary": "test",
+        "created_by": "migration_test",
+        "ttlExpireAt": None,
+    }
+    null_doc = {**base, "_key": "tmp_m019_null_expired", "expired": None}
+    zero_doc = {**base, "_key": "tmp_m019_zero_expired", "expired": 0}
+    missing_doc = {**base, "_key": "tmp_m019_missing_expired"}
+
+    keys = [null_doc["_key"], zero_doc["_key"], missing_doc["_key"]]
+    try:
+        for doc in (null_doc, zero_doc, missing_doc):
+            col.insert(doc, overwrite=True)
+
+        m019 = importlib.import_module("migrations.019_backfill_expired_sentinel")
+        m019.up(test_db)
+
+        for key in keys:
+            stored = col.get(key)
+            assert stored is not None, f"{key} missing after backfill"
+            assert stored.get("expired") == never, (
+                f"{key}: expected expired={never}, got {stored.get('expired')!r}"
+            )
+    finally:
+        for key in keys:
+            if col.has(key):
+                col.delete(key)
+        m020 = importlib.import_module("migrations.020_repair_mdi_temporal_indexes")
+        m020.up(test_db)

@@ -34,9 +34,10 @@ class TestImportExportRoundtrip:
 
         from unittest.mock import patch
 
-        with patch("app.services.arangordf_bridge.get_db", return_value=test_db), \
-             patch("app.services.export.get_db", return_value=test_db):
-
+        with (
+            patch("app.services.arangordf_bridge.get_db", return_value=test_db),
+            patch("app.services.export.get_db", return_value=test_db),
+        ):
             import_result = import_from_file(
                 file_content=ttl_content,
                 filename="sample_ontology.ttl",
@@ -68,17 +69,16 @@ class TestImportExportRoundtrip:
 
         original = Graph()
         original.parse(str(SAMPLE_TTL), format="turtle")
-        original_classes = {
-            str(s) for s, p, o in original.triples((None, RDF.type, OWL.Class))
-        }
+        original_classes = {str(s) for s, p, o in original.triples((None, RDF.type, OWL.Class))}
 
         ttl_content = SAMPLE_TTL.read_bytes()
 
         from unittest.mock import patch
 
-        with patch("app.services.arangordf_bridge.get_db", return_value=test_db), \
-             patch("app.services.export.get_db", return_value=test_db):
-
+        with (
+            patch("app.services.arangordf_bridge.get_db", return_value=test_db),
+            patch("app.services.export.get_db", return_value=test_db),
+        ):
             import_from_file(
                 file_content=ttl_content,
                 filename="sample_ontology.ttl",
@@ -93,9 +93,7 @@ class TestImportExportRoundtrip:
 
             exported = Graph()
             exported.parse(data=exported_ttl, format="turtle")
-            exported_classes = {
-                str(s) for s, p, o in exported.triples((None, RDF.type, OWL.Class))
-            }
+            exported_classes = {str(s) for s, p, o in exported.triples((None, RDF.type, OWL.Class))}
 
             for cls_uri in original_classes:
                 assert cls_uri in exported_classes, (
@@ -144,9 +142,10 @@ class TestImportExportRoundtrip:
 
         from unittest.mock import patch
 
-        with patch("app.services.arangordf_bridge.get_db", return_value=test_db), \
-             patch("app.services.export.get_db", return_value=test_db):
-
+        with (
+            patch("app.services.arangordf_bridge.get_db", return_value=test_db),
+            patch("app.services.export.get_db", return_value=test_db),
+        ):
             import_from_file(
                 file_content=ttl_content,
                 filename="sample_ontology.ttl",
@@ -178,9 +177,10 @@ class TestImportExportRoundtrip:
 
         from unittest.mock import patch
 
-        with patch("app.services.arangordf_bridge.get_db", return_value=test_db), \
-             patch("app.services.export.get_db", return_value=test_db):
-
+        with (
+            patch("app.services.arangordf_bridge.get_db", return_value=test_db),
+            patch("app.services.export.get_db", return_value=test_db),
+        ):
             import_from_file(
                 file_content=ttl_content,
                 filename="sample_ontology.ttl",

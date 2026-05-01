@@ -51,10 +51,28 @@ _MOCK_USER = AuthenticatedUser(
     display_name="Dev Admin",
 )
 
-_PUBLIC_PATHS = frozenset({
-    "/health", "/ready", "/docs", "/openapi.json", "/redoc",
-    "/api/v1/auth/login",
-})
+# Under ``/api/`` only these accept HTTP requests without ``Authorization`` (production).
+_PUBLIC_API_PATHS_WITHOUT_AUTH = frozenset(
+    {
+        "/api/v1/auth/login",
+        "/api/v1/metrics",
+    }
+)
+
+
+def _is_public_http_path(path: str) -> bool:
+    """Paths that skip JWT middleware.
+
+    - Next static export (HTML, ``/_next/*``, ``/favicon.*``, ``/health``, …) never
+      sends Bearer on first load.
+    - REST APIs under ``/api/`` require JWT unless listed in
+      ``_PUBLIC_API_PATHS_WITHOUT_AUTH``.
+    """
+    if path.startswith("/_next/"):
+        return True
+    if not path.startswith("/api/"):
+        return True
+    return path in _PUBLIC_API_PATHS_WITHOUT_AUTH
 
 
 def decode_jwt(token: str) -> dict[str, Any]:
@@ -119,10 +137,8 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
     token receive a mock admin user so the API is usable without an IdP.
     """
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
-        if request.url.path in _PUBLIC_PATHS:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        if _is_public_http_path(request.url.path):
             return await call_next(request)
 
         if request.scope.get("type") == "websocket":
@@ -170,6 +186,7 @@ def _error_response(status: int, code: str, message: str) -> JSONResponse:
 # Login endpoint (scaffold — will be replaced by real IdP integration)
 # ---------------------------------------------------------------------------
 
+
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -177,6 +194,24 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     token: str
+
+
+class LoginHelpResponse(BaseModel):
+    """Returned on GET ``/api/v1/auth/login`` — login itself requires POST."""
+
+    detail: str
+    method: str
+    path: str
+
+
+@router.get("/login", response_model=LoginHelpResponse)
+async def login_get_help() -> LoginHelpResponse:
+    """Explain that issuing a JWT requires ``POST`` with JSON body (not GET)."""
+    return LoginHelpResponse(
+        detail='Send POST with JSON body {"email":"...","password":"..."}',
+        method="POST",
+        path="/api/v1/auth/login",
+    )
 
 
 @router.post("/login", response_model=LoginResponse)

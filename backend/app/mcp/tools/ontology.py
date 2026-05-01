@@ -96,19 +96,23 @@ def _load_class_property_rows(
             )
         )
 
-    if not attributes and not relationships:
-        if db.has_collection("has_property") and db.has_collection("ontology_properties"):
-            legacy_properties = list(
-                run_aql(
-                    db,
-                    "FOR e IN has_property "
-                    "FILTER e._from == @cid AND e.expired == @never "
-                    "LET prop = DOCUMENT(e._to) "
-                    "FILTER prop != null AND prop.expired == @never "
-                    "RETURN prop",
-                    bind_vars={"cid": class_id, "never": NEVER_EXPIRES},
-                )
+    if (
+        not attributes
+        and not relationships
+        and db.has_collection("has_property")
+        and db.has_collection("ontology_properties")
+    ):
+        legacy_properties = list(
+            run_aql(
+                db,
+                "FOR e IN has_property "
+                "FILTER e._from == @cid AND e.expired == @never "
+                "LET prop = DOCUMENT(e._to) "
+                "FILTER prop != null AND prop.expired == @never "
+                "RETURN prop",
+                bind_vars={"cid": class_id, "never": NEVER_EXPIRES},
             )
+        )
 
     return attributes, relationships, legacy_properties
 
@@ -121,38 +125,44 @@ def _flatten_properties_for_mcp(
     """Single list shape expected by older MCP clients."""
     flat: list[dict[str, Any]] = []
     for p in attributes:
-        flat.append({
-            "key": p.get("_key"),
-            "uri": p.get("uri"),
-            "label": p.get("label"),
-            "description": p.get("description"),
-            "property_type": "datatype",
-            "range": p.get("range_datatype", "xsd:string"),
-            "domain_class": None,
-        })
-    for p in relationships:
-        tgt = p.get("target_class") or {}
-        range_uri = tgt.get("uri") or ""
-        flat.append({
-            "key": p.get("_key"),
-            "uri": p.get("uri"),
-            "label": p.get("label"),
-            "description": p.get("description"),
-            "property_type": "object",
-            "range": range_uri,
-            "domain_class": None,
-        })
-    if not flat:
-        for p in legacy_properties:
-            flat.append({
+        flat.append(
+            {
                 "key": p.get("_key"),
                 "uri": p.get("uri"),
                 "label": p.get("label"),
                 "description": p.get("description"),
-                "property_type": p.get("property_type", "datatype"),
-                "range": p.get("range", "xsd:string"),
-                "domain_class": p.get("domain_class"),
-            })
+                "property_type": "datatype",
+                "range": p.get("range_datatype", "xsd:string"),
+                "domain_class": None,
+            }
+        )
+    for p in relationships:
+        tgt = p.get("target_class") or {}
+        range_uri = tgt.get("uri") or ""
+        flat.append(
+            {
+                "key": p.get("_key"),
+                "uri": p.get("uri"),
+                "label": p.get("label"),
+                "description": p.get("description"),
+                "property_type": "object",
+                "range": range_uri,
+                "domain_class": None,
+            }
+        )
+    if not flat:
+        for p in legacy_properties:
+            flat.append(
+                {
+                    "key": p.get("_key"),
+                    "uri": p.get("uri"),
+                    "label": p.get("label"),
+                    "description": p.get("description"),
+                    "property_type": p.get("property_type", "datatype"),
+                    "range": p.get("range", "xsd:string"),
+                    "domain_class": p.get("domain_class"),
+                }
+            )
     return flat
 
 
@@ -175,21 +185,24 @@ def register_ontology_tools(mcp: FastMCP) -> None:
             recent_changes: list[dict[str, Any]] = []
 
             if db.has_collection("ontology_classes"):
-                class_count_result = list(run_aql(
-                    db,
-                    """\
+                class_count_result = list(
+                    run_aql(
+                        db,
+                        """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
   FILTER cls.expired == @never
   COLLECT WITH COUNT INTO cnt
   RETURN cnt""",
-                    bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
-                ))
+                        bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+                    )
+                )
                 class_count = class_count_result[0] if class_count_result else 0
 
-                recent_changes = list(run_aql(
-                    db,
-                    """\
+                recent_changes = list(
+                    run_aql(
+                        db,
+                        """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
   SORT cls.created DESC
@@ -201,8 +214,9 @@ FOR cls IN ontology_classes
     created: cls.created,
     version: cls.version
   }""",
-                    bind_vars={"oid": ontology_id},
-                ))
+                        bind_vars={"oid": ontology_id},
+                    )
+                )
 
             prop_count = _count_ontology_property_vertices(db, ontology_id)
 
@@ -251,31 +265,34 @@ FOR cls IN ontology_classes
             if not db.has_collection("ontology_classes"):
                 return {"error": "ontology_classes collection not found"}
 
-            classes = list(run_aql(
-                db,
-                """\
+            classes = list(
+                run_aql(
+                    db,
+                    """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
   FILTER cls.expired == @never
   RETURN {key: cls._key, id: cls._id, label: cls.label, uri: cls.uri,
           description: cls.description}""",
-                bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
-            ))
+                    bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+                )
+            )
 
             edges: list[dict[str, Any]] = []
             if db.has_collection("subclass_of"):
                 class_ids = {c["id"] for c in classes}
-                all_edges = list(run_aql(
-                    db,
-                    """\
+                all_edges = list(
+                    run_aql(
+                        db,
+                        """\
 FOR e IN subclass_of
   FILTER e.expired == @never
   RETURN {from_id: e._from, to_id: e._to}""",
-                    bind_vars={"never": NEVER_EXPIRES},
-                ))
+                        bind_vars={"never": NEVER_EXPIRES},
+                    )
+                )
                 edges = [
-                    e for e in all_edges
-                    if e["from_id"] in class_ids and e["to_id"] in class_ids
+                    e for e in all_edges if e["from_id"] in class_ids and e["to_id"] in class_ids
                 ]
 
             class_by_id = {c["id"]: c for c in classes}
@@ -331,16 +348,18 @@ FOR e IN subclass_of
             if not db.has_collection("ontology_classes"):
                 return {"error": "ontology_classes collection not found"}
 
-            cls_results = list(run_aql(
-                db,
-                """\
+            cls_results = list(
+                run_aql(
+                    db,
+                    """\
 FOR cls IN ontology_classes
   FILTER cls._key == @key
   FILTER cls.expired == @never
   LIMIT 1
   RETURN cls""",
-                bind_vars={"key": class_key, "never": NEVER_EXPIRES},
-            ))
+                    bind_vars={"key": class_key, "never": NEVER_EXPIRES},
+                )
+            )
             if not cls_results:
                 return {"error": f"Class '{class_key}' not found or expired"}
 
@@ -398,9 +417,10 @@ def _compute_hierarchy_depth(db: Any, ontology_id: str) -> int:
         return 0
 
     try:
-        result = list(run_aql(
-            db,
-            """\
+        result = list(
+            run_aql(
+                db,
+                """\
 LET roots = (
   FOR cls IN ontology_classes
     FILTER cls.ontology_id == @oid
@@ -423,8 +443,9 @@ FOR root IN roots
       RETURN 1
   )
   RETURN depth""",
-            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
-        ))
+                bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+            )
+        )
         return max(result) if result else 0
     except Exception:
         return 0
@@ -455,9 +476,10 @@ def _bm25_search(
     if ontology_id:
         bind_vars["oid"] = ontology_id
 
-    return list(run_aql(
-        db,
-        f"""\
+    return list(
+        run_aql(
+            db,
+            f"""\
 FOR doc IN ontology_classes_search
   SEARCH ANALYZER(
     BOOST(BM25(doc.label, @query), 2) > 0
@@ -476,8 +498,9 @@ FOR doc IN ontology_classes_search
     ontology_id: doc.ontology_id,
     score: BM25(doc)
   }}""",
-        bind_vars=bind_vars,
-    ))
+            bind_vars=bind_vars,
+        )
+    )
 
 
 def _fallback_search(
@@ -496,9 +519,10 @@ def _fallback_search(
     if ontology_id:
         bind_vars["oid"] = ontology_id
 
-    return list(run_aql(
-        db,
-        f"""\
+    return list(
+        run_aql(
+            db,
+            f"""\
 FOR cls IN ontology_classes
   FILTER cls.expired == @never
   {oid_filter}
@@ -511,5 +535,6 @@ FOR cls IN ontology_classes
     description: cls.description,
     ontology_id: cls.ontology_id
   }}""",
-        bind_vars=bind_vars,
-    ))
+            bind_vars=bind_vars,
+        )
+    )

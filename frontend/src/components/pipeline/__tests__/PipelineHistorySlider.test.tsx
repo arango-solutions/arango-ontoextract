@@ -221,4 +221,65 @@ describe("PipelineHistorySlider", () => {
       expect(speedBtn).toHaveTextContent("2x");
     });
   });
+
+  // Regression: a previous version had two effects that sync'd selectedRunId
+  // ↔ currentIndex bidirectionally. They ping-ponged forever whenever the
+  // initial selectedRunId pointed to a run that wasn't the most recent one,
+  // because `fetchAllRuns` always sets currentIndex = runs.length-1. Each
+  // bounce called onSelectRun, which (via the parent) reopened the WebSocket
+  // and re-fetched run metrics — flickering the page and spamming the server.
+  it("does not call onSelectRun when external selectedRunId is non-latest", async () => {
+    stubRuns();
+    const onSelectRun = jest.fn();
+    render(
+      <PipelineHistorySlider
+        onSelectRun={onSelectRun}
+        selectedRunId="run_001"
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("pipeline-history-slider")).toBeInTheDocument();
+    });
+    // Give any pending effects a chance to flush.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    // The slider should sync to position 0 (run_001) without ever calling
+    // onSelectRun — selectedRunId is the source of truth, not the slider.
+    const slider = screen.getByTestId("history-slider") as HTMLInputElement;
+    expect(slider.value).toBe("0");
+    expect(onSelectRun).not.toHaveBeenCalled();
+  });
+
+  // Regression: with the bidirectional sync removed, an unstable
+  // `onSelectRun` prop reference (e.g. inline arrow in the parent) must not
+  // cause the slider to re-emit a selection for the same run.
+  it("does not re-emit onSelectRun when only its prop reference changes", async () => {
+    stubRuns();
+    const calls: string[] = [];
+    const { rerender } = render(
+      <PipelineHistorySlider
+        onSelectRun={(id) => calls.push(id)}
+        selectedRunId="run_002"
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("pipeline-history-slider")).toBeInTheDocument();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    // Re-render with a fresh inline handler reference but unchanged
+    // selectedRunId — this used to trigger the auto-call effect.
+    rerender(
+      <PipelineHistorySlider
+        onSelectRun={(id) => calls.push(id)}
+        selectedRunId="run_002"
+      />,
+    );
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(calls).toEqual([]);
+  });
 });

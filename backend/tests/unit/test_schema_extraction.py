@@ -133,7 +133,10 @@ class TestExtractSchema:
     ):
         mock_get_db.return_value = MagicMock()
         mock_try_mapper.return_value = (object(), object(), object(), object())
-        mock_run_extract.return_value = ("@prefix owl: <> .", {"physical_schema_fingerprint": "fp1"})
+        mock_run_extract.return_value = (
+            "@prefix owl: <> .",
+            {"physical_schema_fingerprint": "fp1"},
+        )
         mock_import.return_value = {"imported": True}
         config = _make_config()
         result = extract_schema(config)
@@ -171,9 +174,11 @@ class TestStubExtractSchema:
     def test_produces_turtle_with_classes_and_properties(self):
         """Test that the stub queries the target DB and creates OWL triples.
 
-        Since this calls ArangoClient directly, we mock it at the arango module level.
+        Patch ``ArangoClient`` at its usage site (the function-local
+        ``from arango.client import ArangoClient``) rather than the
+        ``arango`` package re-export.
         """
-        with patch("arango.ArangoClient") as mock_client_cls:
+        with patch("arango.client.ArangoClient") as mock_client_cls:
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
             mock_db = MagicMock()

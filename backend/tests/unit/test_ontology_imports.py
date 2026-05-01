@@ -50,11 +50,12 @@ def client(_mock_db):
 
 class TestCreateOntology:
     def test_create_minimal(self, client, _mock_db):
-        with patch(
-            "app.db.registry_repo.get_registry_entry", return_value=None
-        ), patch(
-            "app.db.registry_repo.create_registry_entry",
-            return_value=_registry_doc(key="ont_abc123", name="My Ontology"),
+        with (
+            patch("app.db.registry_repo.get_registry_entry", return_value=None),
+            patch(
+                "app.db.registry_repo.create_registry_entry",
+                return_value=_registry_doc(key="ont_abc123", name="My Ontology"),
+            ),
         ):
             resp = client.post(
                 "/api/v1/ontology/create",
@@ -69,11 +70,12 @@ class TestCreateOntology:
         assert body["warnings"] == []
 
     def test_create_with_custom_id(self, client, _mock_db):
-        with patch(
-            "app.db.registry_repo.get_registry_entry", return_value=None
-        ), patch(
-            "app.db.registry_repo.create_registry_entry",
-            return_value=_registry_doc(key="custom_id"),
+        with (
+            patch("app.db.registry_repo.get_registry_entry", return_value=None),
+            patch(
+                "app.db.registry_repo.create_registry_entry",
+                return_value=_registry_doc(key="custom_id"),
+            ),
         ):
             resp = client.post(
                 "/api/v1/ontology/create",
@@ -106,17 +108,15 @@ class TestCreateOntology:
                 return None
             return _registry_doc()
 
-        mock_edge = MagicMock(
-            return_value={"_key": "e1", "_from": "a", "_to": "b"}
-        )
+        mock_edge = MagicMock(return_value={"_key": "e1", "_from": "a", "_to": "b"})
 
-        with patch(
-            "app.db.registry_repo.get_registry_entry", side_effect=mock_get_entry
-        ), patch(
-            "app.db.registry_repo.create_registry_entry",
-            return_value=_registry_doc(key="new_ont"),
-        ), patch(
-            "app.db.ontology_repo.create_edge", mock_edge
+        with (
+            patch("app.db.registry_repo.get_registry_entry", side_effect=mock_get_entry),
+            patch(
+                "app.db.registry_repo.create_registry_entry",
+                return_value=_registry_doc(key="new_ont"),
+            ),
+            patch("app.db.ontology_repo.create_edge", mock_edge),
         ):
             resp = client.post(
                 "/api/v1/ontology/create",
@@ -162,9 +162,7 @@ class TestListImports:
         assert body["imports"][0]["target_id"] == "target_ont"
 
     def test_list_imports_not_found(self, client, _mock_db):
-        with patch(
-            "app.db.registry_repo.get_registry_entry", return_value=None
-        ):
+        with patch("app.db.registry_repo.get_registry_entry", return_value=None):
             resp = client.get("/api/v1/ontology/nope/imports")
 
         assert resp.status_code == 404
@@ -177,12 +175,15 @@ class TestAddImport:
     def test_add_import_ok(self, client, _mock_db):
         _mock_db.aql.execute = MagicMock(return_value=iter([]))
 
-        with patch(
-            "app.db.registry_repo.get_registry_entry",
-            side_effect=lambda k, **kw: _registry_doc(key=k),
-        ), patch(
-            "app.db.ontology_repo.create_edge",
-            return_value={"_key": "edge1", "_from": "a", "_to": "b"},
+        with (
+            patch(
+                "app.db.registry_repo.get_registry_entry",
+                side_effect=lambda k, **kw: _registry_doc(key=k),
+            ),
+            patch(
+                "app.db.ontology_repo.create_edge",
+                return_value={"_key": "edge1", "_from": "a", "_to": "b"},
+            ),
         ):
             resp = client.post(
                 "/api/v1/ontology/src_ont/imports",
@@ -212,9 +213,7 @@ class TestAddImport:
                 return _registry_doc(key="src")
             return None
 
-        with patch(
-            "app.db.registry_repo.get_registry_entry", side_effect=mock_get
-        ):
+        with patch("app.db.registry_repo.get_registry_entry", side_effect=mock_get):
             resp = client.post(
                 "/api/v1/ontology/src/imports",
                 json={"target_ontology_id": "missing"},
@@ -290,9 +289,10 @@ class TestImportOntologyEndpoint:
             await _asyncio.sleep(0.05)
             return {"source": "file_import", "registry_key": "my_onto"}
 
-        with patch(
-            "app.api.ontology.registry_repo.get_registry_entry", return_value=None
-        ), patch("app.api.ontology.asyncio.to_thread", side_effect=slow_to_thread):
+        with (
+            patch("app.api.ontology.registry_repo.get_registry_entry", return_value=None),
+            patch("app.api.ontology.asyncio.to_thread", side_effect=slow_to_thread),
+        ):
             resp = client.post(
                 "/api/v1/ontology/import",
                 params={"ontology_id": "my_onto", "ontology_label": "My"},
@@ -318,10 +318,10 @@ class TestImportOntologyEndpoint:
                 "triple_count": 42,
             }
 
-        with patch(
-            "app.api.ontology.registry_repo.get_registry_entry", return_value=None
-        ), patch("app.api.ontology.import_from_file"), patch(
-            "app.api.ontology.asyncio.to_thread", side_effect=fake_to_thread
+        with (
+            patch("app.api.ontology.registry_repo.get_registry_entry", return_value=None),
+            patch("app.api.ontology.import_from_file"),
+            patch("app.api.ontology.asyncio.to_thread", side_effect=fake_to_thread),
         ):
             resp = client.post(
                 "/api/v1/ontology/import",
@@ -344,10 +344,10 @@ class TestImportOntologyEndpoint:
         async def boom(*_args, **_kwargs):
             raise ValueError("Unsupported file extension")
 
-        with patch(
-            "app.api.ontology.registry_repo.get_registry_entry", return_value=None
-        ), patch("app.api.ontology.import_from_file"), patch(
-            "app.api.ontology.asyncio.to_thread", side_effect=boom
+        with (
+            patch("app.api.ontology.registry_repo.get_registry_entry", return_value=None),
+            patch("app.api.ontology.import_from_file"),
+            patch("app.api.ontology.asyncio.to_thread", side_effect=boom),
         ):
             resp = client.post(
                 "/api/v1/ontology/import",
@@ -370,10 +370,10 @@ class TestImportOntologyEndpoint:
             await _asyncio.sleep(5)
             return {"source": "file_import", "registry_key": "dup"}
 
-        with patch(
-            "app.api.ontology.registry_repo.get_registry_entry", return_value=None
-        ), patch("app.api.ontology.import_from_file"), patch(
-            "app.api.ontology.asyncio.to_thread", side_effect=pending
+        with (
+            patch("app.api.ontology.registry_repo.get_registry_entry", return_value=None),
+            patch("app.api.ontology.import_from_file"),
+            patch("app.api.ontology.asyncio.to_thread", side_effect=pending),
         ):
             first = client.post(
                 "/api/v1/ontology/import",
@@ -423,8 +423,6 @@ class TestImportOntologyEndpoint:
         assert body["result"]["filename"] == "schema.ttl"
 
     def test_import_status_unknown_id_returns_404(self, client):
-        with patch(
-            "app.api.ontology.registry_repo.get_registry_entry", return_value=None
-        ):
+        with patch("app.api.ontology.registry_repo.get_registry_entry", return_value=None):
             resp = client.get("/api/v1/ontology/import/nope/status")
         assert resp.status_code == 404

@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { api, getApiBaseUrl } from "@/lib/api-client";
+import { api, backendUrl } from "@/lib/api-client";
+import { withBasePath } from "@/lib/base-path";
 
 interface UploadResult {
   doc_id: string;
@@ -107,12 +108,11 @@ export default function UploadPage() {
     ontologyId?: string,
   ): Promise<string | null> => {
     try {
-      const baseUrl = getApiBaseUrl();
       const payload: Record<string, unknown> = { document_id: docId };
       if (ontologyId) {
         payload.target_ontology_id = ontologyId;
       }
-      const res = await fetch(`${baseUrl}/api/v1/extraction/run`, {
+      const res = await fetch(backendUrl("/api/v1/extraction/run"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -137,12 +137,11 @@ export default function UploadPage() {
     const id = `import_${Date.now().toString(36)}`;
 
     try {
-      const baseUrl = getApiBaseUrl();
       const params = new URLSearchParams({
         ontology_id: id,
         ontology_label: label,
       });
-      const res = await fetch(`${baseUrl}/api/v1/ontology/import?${params}`, {
+      const res = await fetch(backendUrl(`/api/v1/ontology/import?${params}`), {
         method: "POST",
         body: formData,
       });
@@ -159,7 +158,7 @@ export default function UploadPage() {
       const accepted = await res.json();
       const ontologyId = accepted.ontology_id || id;
 
-      const finalResult = await pollImportStatus(baseUrl, ontologyId);
+      const finalResult = await pollImportStatus(ontologyId);
       setImportResult(finalResult);
       setImportState("success");
       loadDocuments();
@@ -170,7 +169,6 @@ export default function UploadPage() {
   };
 
   const pollImportStatus = async (
-    baseUrl: string,
     ontologyId: string,
     {
       intervalMs = 2000,
@@ -181,7 +179,7 @@ export default function UploadPage() {
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
       const statusRes = await fetch(
-        `${baseUrl}/api/v1/ontology/import/${encodeURIComponent(ontologyId)}/status`,
+        backendUrl(`/api/v1/ontology/import/${encodeURIComponent(ontologyId)}/status`),
       );
       if (!statusRes.ok) {
         if (statusRes.status === 404) continue;
@@ -218,7 +216,7 @@ export default function UploadPage() {
       return next;
     });
     if (runId) {
-      window.location.href = `/pipeline?runId=${runId}`;
+      window.location.href = withBasePath(`/pipeline?runId=${runId}`);
     }
   };
 
@@ -226,13 +224,12 @@ export default function UploadPage() {
     docId: string,
     maxWaitMs = 120_000,
   ): Promise<void> => {
-    const baseUrl = getApiBaseUrl();
     const start = Date.now();
     const pollInterval = 1500;
 
     while (Date.now() - start < maxWaitMs) {
       try {
-        const res = await fetch(`${baseUrl}/api/v1/documents/${docId}`);
+        const res = await fetch(backendUrl(`/api/v1/documents/${docId}`));
         if (res.ok) {
           const doc = await res.json();
           const status = doc.status ?? doc.data?.status;
@@ -262,9 +259,7 @@ export default function UploadPage() {
     formData.append("file", file);
 
     try {
-      const baseUrl =
-        getApiBaseUrl();
-      const res = await fetch(`${baseUrl}/api/v1/documents/upload`, {
+      const res = await fetch(backendUrl("/api/v1/documents/upload"), {
         method: "POST",
         body: formData,
       });
@@ -313,9 +308,10 @@ export default function UploadPage() {
     <main className="min-h-screen bg-gray-50 text-gray-900">
       <header className="bg-white border-b border-gray-200">
         <div className="max-w-4xl mx-auto px-6 py-6 flex items-center gap-4">
-          <Link href="/" className="text-gray-400 hover:text-gray-600 text-sm">
+          {/* Raw <a> so the trailing slash survives — Next <Link href="/"> drops it. */}
+          <a href={withBasePath("/")} className="text-gray-400 hover:text-gray-600 text-sm">
             ← Home
-          </Link>
+          </a>
           <h1 className="text-2xl font-bold">
             {mode === "extract" ? "Upload Document" : "Import Ontology"}
           </h1>
@@ -424,11 +420,11 @@ export default function UploadPage() {
                   )}
                 </div>
                 <div className="mt-3 flex gap-3">
-                  <a href="/library" className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+                  <a href={withBasePath("/library")} className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
                     View in Library
                   </a>
                   {importResult.ontology_id && (
-                    <a href={`/ontology/${importResult.ontology_id}/edit`} className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors">
+                    <a href={withBasePath(`/ontology/edit?ontologyId=${importResult.ontology_id}`)} className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors">
                       Edit Graph
                     </a>
                   )}
@@ -550,13 +546,15 @@ export default function UploadPage() {
             </div>
             <div className="mt-3 flex gap-3">
               <a
-                href={extractionRunId ? `/pipeline?runId=${extractionRunId}` : "/pipeline"}
+                href={withBasePath(
+                  extractionRunId ? `/pipeline?runId=${extractionRunId}` : "/pipeline",
+                )}
                 className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
               >
                 View Extraction Pipeline →
               </a>
               <a
-                href="/library"
+                href={withBasePath("/library")}
                 className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
               >
                 Ontology Library
@@ -604,7 +602,7 @@ export default function UploadPage() {
                           {docOntologies[doc._key].map((ont) => (
                             <a
                               key={ont._key}
-                              href={`/ontology/${ont._key}/edit`}
+                              href={withBasePath(`/ontology/edit?ontologyId=${ont._key}`)}
                               className="inline-flex items-center text-[11px] px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full hover:bg-blue-100 transition-colors"
                               title={`View ontology: ${ont.name}`}
                             >

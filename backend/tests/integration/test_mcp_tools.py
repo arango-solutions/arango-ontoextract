@@ -29,13 +29,23 @@ _TEST_ONTOLOGY_ID = "mcp_test_ontology"
 def mcp_collections(test_db: StandardDatabase):
     """Create all collections needed for MCP tool tests."""
     doc_collections = [
-        "ontology_classes", "ontology_properties", "ontology_registry",
-        "extraction_runs", "documents", "chunks", "curation_decisions",
-        "entity_clusters", "api_keys",
+        "ontology_classes",
+        "ontology_properties",
+        "ontology_registry",
+        "extraction_runs",
+        "documents",
+        "chunks",
+        "curation_decisions",
+        "entity_clusters",
+        "api_keys",
     ]
     edge_collections = [
-        "subclass_of", "has_property", "equivalent_class",
-        "extends_domain", "related_to", "similarTo",
+        "subclass_of",
+        "has_property",
+        "equivalent_class",
+        "extends_domain",
+        "related_to",
+        "similarTo",
     ]
 
     for col in doc_collections:
@@ -58,13 +68,15 @@ def seeded_ontology(test_db: StandardDatabase, mcp_collections):
     """Seed a test ontology with classes, properties, and edges."""
     now = time.time()
 
-    test_db.collection("ontology_registry").insert({
-        "_key": _TEST_ONTOLOGY_ID,
-        "name": "Test Ontology",
-        "tier": "domain",
-        "status": "active",
-        "created_at": "2026-01-01T00:00:00Z",
-    })
+    test_db.collection("ontology_registry").insert(
+        {
+            "_key": _TEST_ONTOLOGY_ID,
+            "name": "Test Ontology",
+            "tier": "domain",
+            "status": "active",
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+    )
 
     class_data = [
         ("cls_animal", "Animal", "http://test.org#Animal", "Top-level animal class"),
@@ -75,88 +87,102 @@ def seeded_ontology(test_db: StandardDatabase, mcp_collections):
 
     class_ids = {}
     for key, label, uri, desc in class_data:
-        result = test_db.collection("ontology_classes").insert({
-            "_key": key,
-            "label": label,
-            "uri": uri,
-            "description": desc,
-            "ontology_id": _TEST_ONTOLOGY_ID,
-            "created": now,
-            "expired": NEVER_EXPIRES,
-            "version": 1,
-            "change_type": "initial",
-            "change_summary": f"Created {label}",
-            "created_by": "test",
-            "tier": "domain",
-            "status": "approved",
-            "ttlExpireAt": None,
-        }, return_new=True)
+        result = test_db.collection("ontology_classes").insert(
+            {
+                "_key": key,
+                "label": label,
+                "uri": uri,
+                "description": desc,
+                "ontology_id": _TEST_ONTOLOGY_ID,
+                "created": now,
+                "expired": NEVER_EXPIRES,
+                "version": 1,
+                "change_type": "initial",
+                "change_summary": f"Created {label}",
+                "created_by": "test",
+                "tier": "domain",
+                "status": "approved",
+                "ttlExpireAt": None,
+            },
+            return_new=True,
+        )
         class_ids[key] = result["new"]["_id"]
 
     # Historical version of Dog (expired)
-    test_db.collection("ontology_classes").insert({
-        "_key": "cls_dog_v0",
-        "label": "Dog (draft)",
-        "uri": "http://test.org#Dog",
-        "description": "A dog",
-        "ontology_id": _TEST_ONTOLOGY_ID,
-        "created": now - 1000,
-        "expired": now - 500,
-        "version": 0,
-        "change_type": "initial",
-        "change_summary": "Draft version",
-        "created_by": "test",
-        "tier": "domain",
-        "ttlExpireAt": None,
-    })
+    test_db.collection("ontology_classes").insert(
+        {
+            "_key": "cls_dog_v0",
+            "label": "Dog (draft)",
+            "uri": "http://test.org#Dog",
+            "description": "A dog",
+            "ontology_id": _TEST_ONTOLOGY_ID,
+            "created": now - 1000,
+            "expired": now - 500,
+            "version": 0,
+            "change_type": "initial",
+            "change_summary": "Draft version",
+            "created_by": "test",
+            "tier": "domain",
+            "ttlExpireAt": None,
+        }
+    )
 
-    prop_result = test_db.collection("ontology_properties").insert({
-        "_key": "prop_name",
-        "label": "name",
-        "uri": "http://test.org#name",
-        "description": "The name of the entity",
-        "ontology_id": _TEST_ONTOLOGY_ID,
-        "property_type": "datatype",
-        "range": "xsd:string",
-        "domain_class": "http://test.org#Animal",
-        "created": now,
-        "expired": NEVER_EXPIRES,
-        "version": 1,
-        "ttlExpireAt": None,
-    }, return_new=True)
+    prop_result = test_db.collection("ontology_properties").insert(
+        {
+            "_key": "prop_name",
+            "label": "name",
+            "uri": "http://test.org#name",
+            "description": "The name of the entity",
+            "ontology_id": _TEST_ONTOLOGY_ID,
+            "property_type": "datatype",
+            "range": "xsd:string",
+            "domain_class": "http://test.org#Animal",
+            "created": now,
+            "expired": NEVER_EXPIRES,
+            "version": 1,
+            "ttlExpireAt": None,
+        },
+        return_new=True,
+    )
     prop_id = prop_result["new"]["_id"]
 
     for child_key in ("cls_dog", "cls_cat", "cls_bird"):
-        test_db.collection("subclass_of").insert({
-            "_from": class_ids[child_key],
-            "_to": class_ids["cls_animal"],
+        test_db.collection("subclass_of").insert(
+            {
+                "_from": class_ids[child_key],
+                "_to": class_ids["cls_animal"],
+                "created": now,
+                "expired": NEVER_EXPIRES,
+                "ttlExpireAt": None,
+            }
+        )
+
+    test_db.collection("has_property").insert(
+        {
+            "_from": class_ids["cls_animal"],
+            "_to": prop_id,
             "created": now,
             "expired": NEVER_EXPIRES,
             "ttlExpireAt": None,
-        })
+        }
+    )
 
-    test_db.collection("has_property").insert({
-        "_from": class_ids["cls_animal"],
-        "_to": prop_id,
-        "created": now,
-        "expired": NEVER_EXPIRES,
-        "ttlExpireAt": None,
-    })
-
-    test_db.collection("extraction_runs").insert({
-        "_key": "run_test001",
-        "doc_id": "doc_test001",
-        "model": "claude-sonnet-4-20250514",
-        "status": "completed",
-        "started_at": now - 60,
-        "completed_at": now,
-        "stats": {
-            "token_usage": {"total_tokens": 1000},
-            "classes_extracted": 4,
-            "errors": [],
-            "step_logs": [],
-        },
-    })
+    test_db.collection("extraction_runs").insert(
+        {
+            "_key": "run_test001",
+            "doc_id": "doc_test001",
+            "model": "claude-sonnet-4-20250514",
+            "status": "completed",
+            "started_at": now - 60,
+            "completed_at": now,
+            "stats": {
+                "token_usage": {"total_tokens": 1000},
+                "classes_extracted": 4,
+                "errors": [],
+                "step_logs": [],
+            },
+        }
+    )
 
     return {
         "ontology_id": _TEST_ONTOLOGY_ID,
@@ -583,9 +609,7 @@ class TestOrgIsolation:
         ]
         filtered = filter_by_org(data, ctx)
         assert len(filtered) == 2
-        assert all(
-            item.get("org_id") in (None, "org1") for item in filtered
-        )
+        assert all(item.get("org_id") in (None, "org1") for item in filtered)
 
     def test_validate_api_key_no_collection(self, patched_db):
         from app.mcp.auth import validate_api_key

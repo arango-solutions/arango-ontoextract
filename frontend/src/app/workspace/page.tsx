@@ -15,6 +15,7 @@ import EmptyCanvasState from "@/components/workspace/EmptyCanvasState";
 import FloatingDetailPanel from "@/components/workspace/FloatingDetailPanel";
 import ContextMenu, { type ContextMenuItem } from "@/components/workspace/ContextMenu";
 import { api, ApiError, type PaginatedResponse } from "@/lib/api-client";
+import { withBasePath } from "@/lib/base-path";
 import {
   buildQualityReportMetrics,
   formatOntologyHealthSummary,
@@ -23,7 +24,7 @@ import type { StepStatus } from "@/types/pipeline";
 import type { AgentDAGApi } from "@/components/pipeline/AgentDAG";
 import { filterStepsByTimestamp } from "@/lib/filterStepsByTimestamp";
 import { buildStepTimelineEvents } from "@/lib/buildStepTimelineEvents";
-import { getApiBaseUrl } from "@/lib/api-client";
+import { backendUrl } from "@/lib/api-client";
 import type {
   OntologyRegistryEntry,
   OntologyClass,
@@ -179,7 +180,7 @@ function WorkspacePageInner() {
 
     async function load() {
       try {
-        const res = await fetch(`${getApiBaseUrl()}/api/v1/extraction/runs/${pipelineRunId}`);
+        const res = await fetch(backendUrl(`/api/v1/extraction/runs/${pipelineRunId}`));
         if (!res.ok || cancelled) return;
         const run = await res.json();
 
@@ -679,7 +680,7 @@ function WorkspacePageInner() {
   const exportOntology = useCallback(async (key: string, format: string) => {
     try {
       const url = `/api/v1/ontology/${key}/export?format=${format}`;
-      window.open(`${window.location.origin}${url}`, "_blank");
+      window.open(`${window.location.origin}${withBasePath(url)}`, "_blank");
     } catch (err) {
       console.error("Failed to export ontology", err);
     }
@@ -1180,7 +1181,7 @@ function WorkspacePageInner() {
             label: "View Run Info", icon: "ℹ️",
             onClick: async () => {
               try {
-                const res = await fetch(`${getApiBaseUrl()}/api/v1/extraction/runs/${pipelineRunId}`);
+                const res = await fetch(backendUrl(`/api/v1/extraction/runs/${pipelineRunId}`));
                 if (res.ok) {
                   const run = await res.json();
                   setInfoPanelItem({ type: "run", data: run });

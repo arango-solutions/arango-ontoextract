@@ -27,9 +27,7 @@ _PROPERTY_VERTEX_COLLECTIONS = (
 )
 
 
-def _load_export_property_vertices(
-    db: Any, ontology_id: str
-) -> list[dict[str, Any]]:
+def _load_export_property_vertices(db: Any, ontology_id: str) -> list[dict[str, Any]]:
     """Load current property vertices from legacy + PGT collections (ADR-006)."""
     rows: list[dict[str, Any]] = []
     for col in _PROPERTY_VERTEX_COLLECTIONS:
@@ -38,9 +36,7 @@ def _load_export_property_vertices(
         part = list(
             run_aql(
                 db,
-                f"FOR p IN {col} "
-                "FILTER p.ontology_id == @oid AND p.expired == @never "
-                "RETURN p",
+                f"FOR p IN {col} FILTER p.ontology_id == @oid AND p.expired == @never RETURN p",
                 bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
             )
         )
@@ -48,9 +44,7 @@ def _load_export_property_vertices(
     return rows
 
 
-def _object_property_range_uris(
-    db: Any, ontology_id: str
-) -> dict[str, str]:
+def _object_property_range_uris(db: Any, ontology_id: str) -> dict[str, str]:
     """Map property document _id -> range class URI from rdfs_range_class edges."""
     if not db.has_collection("rdfs_range_class"):
         return {}
@@ -182,15 +176,17 @@ def register_export_tools(mcp: FastMCP) -> None:
 
             classes: list[dict[str, Any]] = []
             if db.has_collection("ontology_classes"):
-                classes = list(run_aql(
-                    db,
-                    """\
+                classes = list(
+                    run_aql(
+                        db,
+                        """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
   FILTER cls.expired == @never
   RETURN cls""",
-                    bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
-                ))
+                        bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+                    )
+                )
 
             properties = _load_export_property_vertices(db, ontology_id)
             range_by_prop = _object_property_range_uris(db, ontology_id)
@@ -213,14 +209,16 @@ FOR cls IN ontology_classes
 
             subclass_edges: list[dict[str, Any]] = []
             if db.has_collection("subclass_of"):
-                subclass_edges = list(run_aql(
-                    db,
-                    """\
+                subclass_edges = list(
+                    run_aql(
+                        db,
+                        """\
 FOR e IN subclass_of
   FILTER e.expired == @never
   RETURN {from_id: e._from, to_id: e._to}""",
-                    bind_vars={"never": NEVER_EXPIRES},
-                ))
+                        bind_vars={"never": NEVER_EXPIRES},
+                    )
+                )
 
             class_id_to_uri = {}
             for cls in classes:
@@ -298,16 +296,18 @@ def _find_entity(db: Any, key: str) -> dict[str, Any] | None:
     ):
         if not db.has_collection(collection):
             continue
-        results = list(run_aql(
-            db,
-            """\
+        results = list(
+            run_aql(
+                db,
+                """\
 FOR doc IN @@col
   FILTER doc._key == @key
   FILTER doc.expired == @never
   LIMIT 1
   RETURN doc""",
-            bind_vars={"@col": collection, "key": key, "never": NEVER_EXPIRES},
-        ))
+                bind_vars={"@col": collection, "key": key, "never": NEVER_EXPIRES},
+            )
+        )
         if results:
             return results[0]
     return None
@@ -345,16 +345,15 @@ def _get_document_info(db: Any, doc_id: str) -> dict[str, Any] | None:
     }
 
 
-def _get_related_chunks(
-    db: Any, doc_id: str, entity_label: str
-) -> list[dict[str, Any]]:
+def _get_related_chunks(db: Any, doc_id: str, entity_label: str) -> list[dict[str, Any]]:
     """Find chunks from the source document that mention the entity label."""
     if not db.has_collection("chunks") or not entity_label:
         return []
     try:
-        return list(run_aql(
-            db,
-            """\
+        return list(
+            run_aql(
+                db,
+                """\
 FOR chunk IN chunks
   FILTER chunk.doc_id == @doc_id
   FILTER CONTAINS(LOWER(chunk.text), LOWER(@label))
@@ -363,8 +362,9 @@ FOR chunk IN chunks
     chunk_index: chunk.chunk_index,
     text_preview: SUBSTRING(chunk.text, 0, 200)
   }""",
-            bind_vars={"doc_id": doc_id, "label": entity_label},
-        ))
+                bind_vars={"doc_id": doc_id, "label": entity_label},
+            )
+        )
     except Exception:
         return []
 
@@ -374,9 +374,10 @@ def _get_curation_decisions(db: Any, entity_key: str) -> list[dict[str, Any]]:
     if not db.has_collection("curation_decisions"):
         return []
     try:
-        return list(run_aql(
-            db,
-            """\
+        return list(
+            run_aql(
+                db,
+                """\
 FOR d IN curation_decisions
   FILTER d.entity_key == @key
   SORT d.decided_at DESC
@@ -387,7 +388,8 @@ FOR d IN curation_decisions
     decided_by: d.decided_by,
     notes: d.notes
   }""",
-            bind_vars={"key": entity_key},
-        ))
+                bind_vars={"key": entity_key},
+            )
+        )
     except Exception:
         return []

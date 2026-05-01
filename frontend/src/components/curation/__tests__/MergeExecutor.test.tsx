@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import MergeExecutor from "@/components/curation/MergeExecutor";
 import type {
   MergeCandidate,
@@ -104,12 +104,15 @@ describe("MergeExecutor", () => {
     );
 
     expect(screen.getByTestId("merge-executor")).toBeInTheDocument();
-    expect(screen.getByTestId("field-comparison-label")).toBeInTheDocument();
+    const labelRow = screen.getByTestId("field-comparison-label");
+    expect(labelRow).toBeInTheDocument();
     expect(screen.getByTestId("field-comparison-description")).toBeInTheDocument();
     expect(screen.getByTestId("field-comparison-uri")).toBeInTheDocument();
 
-    expect(screen.getByText("Person")).toBeInTheDocument();
-    expect(screen.getByText("Individual")).toBeInTheDocument();
+    // Entity labels appear in both the label row and the edge-list headers, so
+    // scope the comparison-row assertions to the row's own subtree.
+    expect(within(labelRow).getByText("Person")).toBeInTheDocument();
+    expect(within(labelRow).getByText("Individual")).toBeInTheDocument();
     expect(screen.getByText("A human being with consciousness.")).toBeInTheDocument();
     expect(screen.getByText("A single person in society.")).toBeInTheDocument();
   });
@@ -204,8 +207,10 @@ describe("MergeExecutor", () => {
       />,
     );
 
-    expect(screen.getByText("Agent")).toBeInTheDocument();
-    expect(screen.getByText("birthDate")).toBeInTheDocument();
+    // Edge list items render the type, an arrow, and the target label as
+    // sibling text nodes; use substring matching rather than exact text.
+    expect(screen.getByText(/Agent/)).toBeInTheDocument();
+    expect(screen.getByText(/birthDate/)).toBeInTheDocument();
   });
 
   it("shows property comparison when entities have properties", () => {

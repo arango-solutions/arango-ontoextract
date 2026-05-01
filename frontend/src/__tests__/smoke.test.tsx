@@ -10,7 +10,7 @@ beforeEach(() => {
 
 function stubHealthy() {
   mockFetch.mockImplementation((url: string) => {
-    if (url === "/ready") {
+    if (typeof url === "string" && url.endsWith("/ready")) {
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -28,7 +28,7 @@ function stubHealthy() {
 
 function stubDown() {
   mockFetch.mockImplementation((url: string) => {
-    if (url === "/ready") {
+    if (typeof url === "string" && url.endsWith("/ready")) {
       return Promise.resolve({
         ok: false,
         status: 502,
@@ -84,7 +84,11 @@ describe("Home page", () => {
   it("calls /ready and library endpoints on mount", () => {
     stubHealthy();
     render(<Home />);
-    expect(mockFetch).toHaveBeenCalledWith("/ready");
+    expect(
+      mockFetch.mock.calls.some(
+        ([u]) => typeof u === "string" && u.endsWith("/ready"),
+      ),
+    ).toBe(true);
     const libraryCalls = mockFetch.mock.calls.filter(
       ([url]: [string]) =>
         typeof url === "string" && url.includes("/api/v1/ontology/library"),

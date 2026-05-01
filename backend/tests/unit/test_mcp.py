@@ -573,9 +573,7 @@ class TestOntologyStats:
             iter([1]),
             iter([0]),
             iter([1]),
-            iter(
-                ["ontology_classes/c1", "ontology_classes/c2", "ontology_classes/c3"]
-            ),
+            iter(["ontology_classes/c1", "ontology_classes/c2", "ontology_classes/c3"]),
             iter([]),
             iter([]),
             iter([]),
@@ -1280,9 +1278,7 @@ class TestExportOntology:
 
     @patch("app.mcp.tools.export.run_aql")
     @patch("app.mcp.tools.export.get_db")
-    def test_pgt_object_property_domain_and_range_in_turtle(
-        self, mock_get_db, mock_run_aql
-    ):
+    def test_pgt_object_property_domain_and_range_in_turtle(self, mock_get_db, mock_run_aql):
         from app.mcp.tools.export import register_export_tools
 
         db = MagicMock()

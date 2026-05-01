@@ -64,6 +64,36 @@ function shouldUseSameOriginApiProxy(envUrl: string | undefined): boolean {
   }
 }
 
+/** Inlined from ``SERVICE_URL_PATH_PREFIX`` (see ``frontend/next.config.js``). */
+export function nextPublicBasePath(): string {
+  return (process.env.NEXT_PUBLIC_BASE_PATH || "").replace(/\/$/, "");
+}
+
+/**
+ * Resolved API base for HTTP ``fetch`` / relative URLs.
+ *
+ * - Local dev: same-origin ``/api`` proxy (empty string) when applicable.
+ * - Static bundle behind ``SERVICE_URL_PATH_PREFIX``: ``origin + NEXT_PUBLIC_BASE_PATH``.
+ * - Otherwise: ``NEXT_PUBLIC_API_URL`` or default dev origin.
+ */
+function effectiveApiBaseUrl(): string {
+  const envUrl = process.env.NEXT_PUBLIC_API_URL;
+  const trimmed = typeof envUrl === "string" ? envUrl.trim() : "";
+
+  if (shouldUseSameOriginApiProxy(trimmed || undefined)) {
+    return "";
+  }
+
+  const basePath = nextPublicBasePath();
+  if (!trimmed && basePath && typeof window !== "undefined") {
+    return resolveApiBaseUrl(`${window.location.origin}${basePath}`);
+  }
+
+  return resolveApiBaseUrl(
+    trimmed.length > 0 ? trimmed : DEFAULT_BACKEND_ORIGIN,
+  );
+}
+
 function resolveApiBaseUrl(baseUrl: string): string {
   if (typeof window === "undefined") {
     return baseUrl;
@@ -100,12 +130,16 @@ class ApiClient {
   private readonly baseUrl: string;
 
   constructor(baseUrl?: string) {
-    const envUrl = baseUrl ?? process.env.NEXT_PUBLIC_API_URL;
-    if (shouldUseSameOriginApiProxy(envUrl)) {
-      this.baseUrl = "";
-    } else {
-      this.baseUrl = resolveApiBaseUrl(envUrl ?? DEFAULT_BACKEND_ORIGIN);
+    if (baseUrl !== undefined) {
+      const t = baseUrl.trim();
+      if (shouldUseSameOriginApiProxy(t || undefined)) {
+        this.baseUrl = "";
+      } else {
+        this.baseUrl = resolveApiBaseUrl(t.length > 0 ? t : DEFAULT_BACKEND_ORIGIN);
+      }
+      return;
     }
+    this.baseUrl = effectiveApiBaseUrl();
   }
 
   private getHeaders(): Record<string, string> {
@@ -184,11 +218,16 @@ export const api = new ApiClient();
  * `getApiOrigin()` instead.
  */
 export function getApiBaseUrl(): string {
-  const envUrl = process.env.NEXT_PUBLIC_API_URL;
-  if (shouldUseSameOriginApiProxy(envUrl)) {
-    return "";
-  }
-  return resolveApiBaseUrl(envUrl ?? DEFAULT_BACKEND_ORIGIN);
+  return effectiveApiBaseUrl();
+}
+
+/**
+ * Full URL for ``fetch`` / ``<a href>`` to this FastAPI app (``/ready``, ``/health``, ``/api/v1/...``).
+ * Uses ``getApiBaseUrl()`` so paths include ``SERVICE_URL_PATH_PREFIX`` when the static bundle is deployed behind it.
+ */
+export function backendUrl(path: string): string {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return buildApiUrl(getApiBaseUrl(), p);
 }
 
 /**
@@ -197,8 +236,25 @@ export function getApiBaseUrl(): string {
  * Use this when you need a real URL — e.g. building a WebSocket URL — rather
  * than a fetch prefix. Browser HTTP callers should prefer `getApiBaseUrl()`
  * so the Next.js rewrite handles CORS.
+ *
+ * If the configured ``NEXT_PUBLIC_API_URL`` is a relative path (e.g. ``/api/v1``
+ * in the unified Docker image), the URL parser cannot extract an origin; we
+ * fall back to ``window.location.origin`` so callers building ``ws://``/``wss://``
+ * URLs still get a valid host. SSR returns ``""`` (callers handle that).
  */
 export function getApiOrigin(): string {
-  const envUrl = process.env.NEXT_PUBLIC_API_URL;
-  return resolveApiBaseUrl(envUrl ?? DEFAULT_BACKEND_ORIGIN);
+  const direct = effectiveApiBaseUrl();
+  const candidate =
+    direct !== ""
+      ? direct
+      : (process.env.NEXT_PUBLIC_API_URL?.trim() || DEFAULT_BACKEND_ORIGIN);
+
+  try {
+    return new URL(candidate).origin;
+  } catch {
+    if (typeof window !== "undefined") {
+      return window.location.origin;
+    }
+    return "";
+  }
 }

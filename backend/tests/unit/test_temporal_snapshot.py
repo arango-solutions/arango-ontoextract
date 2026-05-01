@@ -269,12 +269,12 @@ class TestRevertToVersion:
             patch("app.services.temporal.get_entity_history", return_value=[]),
             pytest.raises(ValueError, match="No version found"),
         ):
-                revert_to_version(
-                    mock_db,
-                    collection="ontology_classes",
-                    key="k1",
-                    version_created_ts=999.0,
-                )
+            revert_to_version(
+                mock_db,
+                collection="ontology_classes",
+                key="k1",
+                version_created_ts=999.0,
+            )
 
 
 class TestHasDataChanged:

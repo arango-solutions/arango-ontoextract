@@ -1,7 +1,7 @@
 import logging
 from typing import Any, cast
 
-from arango import ArangoClient
+from arango.client import ArangoClient
 from arango.database import StandardDatabase
 
 import app.config as app_config
@@ -66,8 +66,7 @@ def _ensure_database_exists(client: ArangoClient) -> None:
     settings = _get_settings()
     if not settings.can_create_databases:
         log.info(
-            "skipping auto-create database on managed platform — "
-            "database must be pre-provisioned",
+            "skipping auto-create database on managed platform — database must be pre-provisioned",
             extra={"db": settings.arango_db, "mode": settings.test_deployment_mode.value},
         )
         return

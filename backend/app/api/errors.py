@@ -60,7 +60,7 @@ def _error_body(
     code: str,
     message: str,
     details: dict[str, Any] | None = None,
-) -> dict:
+) -> dict[str, Any]:
     return {
         "error": {
             "code": code,
@@ -82,9 +82,7 @@ def install_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(RequestValidationError)
-    async def _validation_handler(
-        _request: Request, exc: RequestValidationError
-    ) -> JSONResponse:
+    async def _validation_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(
             status_code=422,
             content=_error_body(

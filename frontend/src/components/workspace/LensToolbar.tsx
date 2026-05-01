@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { withBasePath } from "@/lib/base-path";
 
 export type LensType = "semantic" | "confidence" | "curation" | "diff" | "source";
 
@@ -27,14 +27,15 @@ export default function LensToolbar({
 }: LensToolbarProps) {
   return (
     <header className="h-11 border-b border-gray-800 bg-[#12121f] flex items-center px-4 gap-4 flex-shrink-0">
-      {/* Logo — left side */}
-      <Link
-        href="/"
+      {/* Logo — left side. Raw <a> + withBasePath('/') so the URL ends with a trailing
+          slash; <Link href="/"> drops it under basePath, which some reverse proxies reject. */}
+      <a
+        href={withBasePath("/")}
         className="flex items-center gap-1.5 text-gray-100 hover:text-white transition-colors"
         title="AOE Home"
       >
         <span className="text-sm font-bold tracking-widest">AOE</span>
-      </Link>
+      </a>
 
       <div className="flex-1" />
 

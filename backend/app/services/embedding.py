@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 import tiktoken
 from openai import AsyncOpenAI
@@ -29,7 +30,7 @@ _TIKTOKEN_MODEL = "cl100k_base"
 
 
 def _get_client() -> AsyncOpenAI:
-    kwargs: dict = {"api_key": settings.openai_api_key, "timeout": 20.0}
+    kwargs: dict[str, Any] = {"api_key": settings.openai_api_key, "timeout": 20.0}
     if settings.openai_base_url:
         kwargs["base_url"] = settings.openai_base_url
     return AsyncOpenAI(**kwargs)
@@ -49,8 +50,7 @@ def _build_batches(
     for text in texts:
         token_count = len(enc.encode(text))
         if current_batch and (
-            current_tokens + token_count > max_tokens
-            or len(current_batch) >= max_inputs
+            current_tokens + token_count > max_tokens or len(current_batch) >= max_inputs
         ):
             batches.append(current_batch)
             current_batch = []
@@ -80,8 +80,13 @@ async def embed_texts(
     model = model or settings.embedding_model
     client = _get_client()
     batches = _build_batches(texts)
-    log.info("[embedding] starting: texts=%d, batches=%d, concurrency=%d, model=%s",
-             len(texts), len(batches), _MAX_CONCURRENCY, model)
+    log.info(
+        "[embedding] starting: texts=%d, batches=%d, concurrency=%d, model=%s",
+        len(texts),
+        len(batches),
+        _MAX_CONCURRENCY,
+        model,
+    )
 
     semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
 
@@ -118,8 +123,13 @@ async def _embed_batch(
             sorted_data = sorted(response.data, key=lambda d: d.index)
             return [d.embedding for d in sorted_data]
         except Exception as exc:
-            log.error("[embedding] API call failed attempt %d/%d: %s: %s",
-                      attempt + 1, _MAX_RETRIES, type(exc).__name__, exc)
+            log.error(
+                "[embedding] API call failed attempt %d/%d: %s: %s",
+                attempt + 1,
+                _MAX_RETRIES,
+                type(exc).__name__,
+                exc,
+            )
             if attempt < _MAX_RETRIES - 1:
                 log.warning("[embedding] retrying in %.1fs", backoff)
                 await asyncio.sleep(backoff)

@@ -90,11 +90,13 @@ class WebSocketBroadcaster:
         subscribers.append(queue)
 
         try:
-            await websocket.send_json({
-                "event": "connected",
-                "data": connected_data or {},
-                "timestamp": time.time(),
-            })
+            await websocket.send_json(
+                {
+                    "event": "connected",
+                    "data": connected_data or {},
+                    "timestamp": time.time(),
+                }
+            )
 
             # Replay missed events
             if self._history is not None:
@@ -109,11 +111,13 @@ class WebSocketBroadcaster:
                     if event.get("event") in terminal_events:
                         break
                 except TimeoutError:
-                    await websocket.send_json({
-                        "event": "heartbeat",
-                        "data": {},
-                        "timestamp": time.time(),
-                    })
+                    await websocket.send_json(
+                        {
+                            "event": "heartbeat",
+                            "data": {},
+                            "timestamp": time.time(),
+                        }
+                    )
 
         except WebSocketDisconnect:
             log.info("WebSocket disconnected", extra={"key": key})

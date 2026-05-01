@@ -8,7 +8,7 @@ import type {
   PipelineStep,
 } from "@/types/pipeline";
 import { PIPELINE_STEPS } from "@/types/pipeline";
-import { getApiBaseUrl, getApiOrigin } from "@/lib/api-client";
+import { backendUrl, getApiOrigin, nextPublicBasePath } from "@/lib/api-client";
 
 interface UseExtractionSocketReturn {
   steps: Map<string, StepStatus>;
@@ -33,19 +33,29 @@ function buildInitialSteps(): Map<string, StepStatus> {
   return map;
 }
 
-function resolveWsUrl(runId: string): string {
+/**
+ * Build the WebSocket URL for an extraction run.
+ *
+ * Uses ``getApiOrigin()`` (origin only — see api-client) so we always get a real
+ * ``ws://``/``wss://`` host even when ``NEXT_PUBLIC_API_URL`` is a relative path
+ * like ``/api/v1`` (unified Docker image). Includes ``NEXT_PUBLIC_BASE_PATH`` so
+ * deployments behind ``SERVICE_URL_PATH_PREFIX`` (Container Manager) reach the
+ * backend's ``StripServicePrefixMiddleware``.
+ */
+export function resolveWsUrl(runId: string): string {
   if (typeof window === "undefined") return "";
   const wsBase = getApiOrigin().replace(/^http/, "ws");
+  const basePath = nextPublicBasePath();
   const token = localStorage.getItem("aoe_auth_token") ?? "";
   const sep = token ? "?" : "";
-  return `${wsBase}/ws/extraction/${runId}${sep}${token ? `token=${encodeURIComponent(token)}` : ""}`;
+  return `${wsBase}${basePath}/ws/extraction/${runId}${sep}${token ? `token=${encodeURIComponent(token)}` : ""}`;
 }
 
 async function fetchStepsFromRest(
   runId: string,
 ): Promise<Map<string, StepStatus> | null> {
   try {
-    const res = await fetch(`${getApiBaseUrl()}/api/v1/extraction/runs/${runId}`);
+    const res = await fetch(backendUrl(`/api/v1/extraction/runs/${runId}`));
     if (!res.ok) return null;
     const run = await res.json();
 

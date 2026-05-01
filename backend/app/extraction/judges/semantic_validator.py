@@ -47,32 +47,40 @@ def _class_fields_for_validation(c: ExtractedClass) -> dict[str, list[dict[str, 
 
     if c.attributes or c.relationships:
         for a in c.attributes:
-            attributes.append({
-                "uri": a.uri,
-                "label": a.label,
-                "range_datatype": a.range_datatype,
-            })
+            attributes.append(
+                {
+                    "uri": a.uri,
+                    "label": a.label,
+                    "range_datatype": a.range_datatype,
+                }
+            )
         for r in c.relationships:
-            relationships.append({
-                "uri": r.uri,
-                "label": r.label,
-                "target_class_uri": r.target_class_uri,
-            })
+            relationships.append(
+                {
+                    "uri": r.uri,
+                    "label": r.label,
+                    "target_class_uri": r.target_class_uri,
+                }
+            )
         return {"attributes": attributes, "relationships": relationships}
 
     for p in c.properties:
         if p.property_type == "object":
-            relationships.append({
-                "uri": p.uri,
-                "label": p.label,
-                "target_class_uri": p.range,
-            })
+            relationships.append(
+                {
+                    "uri": p.uri,
+                    "label": p.label,
+                    "target_class_uri": p.range,
+                }
+            )
         else:
-            attributes.append({
-                "uri": p.uri,
-                "label": p.label,
-                "range_datatype": p.range,
-            })
+            attributes.append(
+                {
+                    "uri": p.uri,
+                    "label": p.label,
+                    "range_datatype": p.range,
+                }
+            )
     return {"attributes": attributes, "relationships": relationships}
 
 
@@ -80,14 +88,16 @@ def _build_user_prompt(classes: list[ExtractedClass]) -> str:
     class_list = []
     for c in classes:
         shapes = _class_fields_for_validation(c)
-        class_list.append({
-            "uri": c.uri,
-            "label": c.label,
-            "description": c.description,
-            "parent_uri": c.parent_uri,
-            "attributes": shapes["attributes"],
-            "relationships": shapes["relationships"],
-        })
+        class_list.append(
+            {
+                "uri": c.uri,
+                "label": c.label,
+                "description": c.description,
+                "parent_uri": c.parent_uri,
+                "attributes": shapes["attributes"],
+                "relationships": shapes["relationships"],
+            }
+        )
 
     return (
         f"Classes:\n{json.dumps(class_list, indent=2)}\n\n"
@@ -148,11 +158,7 @@ async def validate_semantics(
         ]
 
         response = await llm.ainvoke(messages)
-        raw_text = (
-            response.content
-            if isinstance(response.content, str)
-            else str(response.content)
-        )
+        raw_text = response.content if isinstance(response.content, str) else str(response.content)
 
         scores = _parse_response(raw_text, class_uris)
         log.info(

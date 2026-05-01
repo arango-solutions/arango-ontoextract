@@ -4,6 +4,7 @@ Thin route handlers that delegate to the quality_metrics service.
 """
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/api/v1/quality", tags=["quality"])
 
 
 @router.get("/dashboard")
-async def dashboard() -> dict:
+async def dashboard() -> dict[str, Any]:
     """Full dashboard payload: summary + per-ontology scorecards + alerts."""
     try:
         db = get_db()
@@ -33,7 +34,7 @@ async def dashboard() -> dict:
 
 
 @router.get("/{ontology_id}")
-async def quality_for_ontology(ontology_id: str) -> dict:
+async def quality_for_ontology(ontology_id: str) -> dict[str, Any]:
     """Return structural and extraction quality scores for an ontology."""
     try:
         db = get_db()
@@ -47,7 +48,7 @@ async def quality_for_ontology(ontology_id: str) -> dict:
 async def quality_history_for_ontology(
     ontology_id: str,
     limit: int = 50,
-) -> dict:
+) -> dict[str, Any]:
     """Return timestamped quality snapshots for trend views."""
     try:
         db = get_db()
@@ -58,7 +59,7 @@ async def quality_history_for_ontology(
 
 
 @router.get("/{ontology_id}/evaluation")
-async def qualitative_evaluation(ontology_id: str) -> dict:
+async def qualitative_evaluation(ontology_id: str) -> dict[str, Any]:
     """Return the qualitative evaluation (strengths/weaknesses) for an ontology."""
     try:
         db = get_db()
@@ -70,7 +71,7 @@ async def qualitative_evaluation(ontology_id: str) -> dict:
 
 
 @router.get("/{ontology_id}/class-scores")
-async def class_scores(ontology_id: str) -> dict:
+async def class_scores(ontology_id: str) -> dict[str, Any]:
     """Return per-class faithfulness and semantic validity scores for distribution charts."""
     try:
         db = get_db()

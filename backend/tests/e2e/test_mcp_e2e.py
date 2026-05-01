@@ -24,12 +24,20 @@ _TEST_ONTOLOGY_ID = "e2e_mcp_ontology"
 def e2e_collections(test_db: StandardDatabase):
     """Create all collections needed for the E2E MCP test."""
     doc_collections = [
-        "ontology_classes", "ontology_properties", "ontology_registry",
-        "extraction_runs", "documents", "chunks",
+        "ontology_classes",
+        "ontology_properties",
+        "ontology_registry",
+        "extraction_runs",
+        "documents",
+        "chunks",
     ]
     edge_collections = [
-        "subclass_of", "has_property", "equivalent_class",
-        "extends_domain", "related_to", "similarTo",
+        "subclass_of",
+        "has_property",
+        "equivalent_class",
+        "extends_domain",
+        "related_to",
+        "similarTo",
     ]
 
     for col in doc_collections:
@@ -52,13 +60,15 @@ def e2e_seeded_data(test_db: StandardDatabase, e2e_collections):
     """Seed a complete ontology with extraction run for E2E testing."""
     now = time.time()
 
-    test_db.collection("ontology_registry").insert({
-        "_key": _TEST_ONTOLOGY_ID,
-        "name": "E2E Test Ontology",
-        "tier": "domain",
-        "status": "active",
-        "created_at": "2026-03-01T00:00:00Z",
-    })
+    test_db.collection("ontology_registry").insert(
+        {
+            "_key": _TEST_ONTOLOGY_ID,
+            "name": "E2E Test Ontology",
+            "tier": "domain",
+            "status": "active",
+            "created_at": "2026-03-01T00:00:00Z",
+        }
+    )
 
     classes = [
         ("e2e_person", "Person", "http://test.org#Person", "A human being"),
@@ -68,53 +78,62 @@ def e2e_seeded_data(test_db: StandardDatabase, e2e_collections):
 
     class_ids = {}
     for key, label, uri, desc in classes:
-        result = test_db.collection("ontology_classes").insert({
-            "_key": key,
-            "label": label,
-            "uri": uri,
-            "description": desc,
-            "ontology_id": _TEST_ONTOLOGY_ID,
-            "created": now,
-            "expired": NEVER_EXPIRES,
-            "version": 1,
-            "change_type": "initial",
-            "change_summary": f"Created {label}",
-            "created_by": "e2e_test",
-            "tier": "domain",
-            "status": "approved",
-            "ttlExpireAt": None,
-        }, return_new=True)
+        result = test_db.collection("ontology_classes").insert(
+            {
+                "_key": key,
+                "label": label,
+                "uri": uri,
+                "description": desc,
+                "ontology_id": _TEST_ONTOLOGY_ID,
+                "created": now,
+                "expired": NEVER_EXPIRES,
+                "version": 1,
+                "change_type": "initial",
+                "change_summary": f"Created {label}",
+                "created_by": "e2e_test",
+                "tier": "domain",
+                "status": "approved",
+                "ttlExpireAt": None,
+            },
+            return_new=True,
+        )
         class_ids[key] = result["new"]["_id"]
 
-    test_db.collection("subclass_of").insert({
-        "_from": class_ids["e2e_employee"],
-        "_to": class_ids["e2e_person"],
-        "created": now,
-        "expired": NEVER_EXPIRES,
-        "ttlExpireAt": None,
-    })
+    test_db.collection("subclass_of").insert(
+        {
+            "_from": class_ids["e2e_employee"],
+            "_to": class_ids["e2e_person"],
+            "created": now,
+            "expired": NEVER_EXPIRES,
+            "ttlExpireAt": None,
+        }
+    )
 
-    test_db.collection("extraction_runs").insert({
-        "_key": "run_e2e001",
-        "doc_id": "doc_e2e001",
-        "model": "claude-sonnet-4-20250514",
-        "status": "completed",
-        "started_at": now - 120,
-        "completed_at": now - 60,
-        "stats": {
-            "token_usage": {"total_tokens": 2500},
-            "classes_extracted": 3,
-            "errors": [],
-            "step_logs": [],
-        },
-    })
+    test_db.collection("extraction_runs").insert(
+        {
+            "_key": "run_e2e001",
+            "doc_id": "doc_e2e001",
+            "model": "claude-sonnet-4-20250514",
+            "status": "completed",
+            "started_at": now - 120,
+            "completed_at": now - 60,
+            "stats": {
+                "token_usage": {"total_tokens": 2500},
+                "classes_extracted": 3,
+                "errors": [],
+                "step_logs": [],
+            },
+        }
+    )
 
-    test_db.collection("documents").insert({
-        "_key": "doc_e2e001",
-        "filename": "org_policy.pdf",
-        "content_type": "application/pdf",
-        "uploaded_at": now - 200,
-    })
+    test_db.collection("documents").insert(
+        {
+            "_key": "doc_e2e001",
+            "filename": "org_policy.pdf",
+            "content_type": "application/pdf",
+            "uploaded_at": now - 200,
+        }
+    )
 
     return {"ontology_id": _TEST_ONTOLOGY_ID, "timestamp": now}
 
@@ -231,13 +250,24 @@ class TestMCPExternalAgentWorkflow:
         tool_names = set(server._tool_manager._tools.keys())
 
         expected_tools = {
-            "query_collections", "run_aql", "sample_collection",
-            "query_domain_ontology", "get_class_hierarchy",
-            "get_class_properties", "search_similar_classes",
-            "trigger_extraction", "get_extraction_status", "get_merge_candidates",
-            "get_ontology_snapshot", "get_class_history", "get_ontology_diff",
-            "get_provenance", "export_ontology",
-            "run_entity_resolution", "explain_entity_match", "get_entity_clusters",
+            "query_collections",
+            "run_aql",
+            "sample_collection",
+            "query_domain_ontology",
+            "get_class_hierarchy",
+            "get_class_properties",
+            "search_similar_classes",
+            "trigger_extraction",
+            "get_extraction_status",
+            "get_merge_candidates",
+            "get_ontology_snapshot",
+            "get_class_history",
+            "get_ontology_diff",
+            "get_provenance",
+            "export_ontology",
+            "run_entity_resolution",
+            "explain_entity_match",
+            "get_entity_clusters",
         }
 
         missing = expected_tools - tool_names

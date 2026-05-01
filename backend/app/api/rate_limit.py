@@ -10,6 +10,7 @@ expired entries are pruned, and the remaining count is compared against the limi
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from typing import Any
@@ -29,17 +30,56 @@ TIER_LIMITS: dict[str, int] = {
 
 WINDOW_SECONDS = 60
 
+# ``from_url`` does not connect; first ``execute()`` on a pipeline did — noisy tracebacks
+# in k8s without Redis. We ``ping()`` once, cache the client, and back off after failures.
+_redis_client: Any | None = None
+_redis_unavailable_until: float = 0.0
+_REDIS_BACKOFF_SECONDS = 60.0
+
 
 def _get_redis():
-    """Lazy import and connect to Redis. Returns None if unavailable."""
-    try:
-        import redis  # type: ignore[import-untyped]
+    """Lazy import, validate with ``ping``, cache client. Returns None if unavailable."""
+    global _redis_client, _redis_unavailable_until
 
-        return redis.Redis.from_url(
-            settings.redis_url, decode_responses=True, socket_connect_timeout=2,
-        )
+    now = time.time()
+    if now < _redis_unavailable_until:
+        return None
+
+    try:
+        import redis
+        from redis.exceptions import RedisError
     except Exception:
-        log.warning("redis_unavailable — rate limiting will pass-through")
+        log.warning("redis_import_failed_rate_limit_pass_through")
+        _redis_unavailable_until = now + _REDIS_BACKOFF_SECONDS
+        return None
+
+    if _redis_client is not None:
+        try:
+            _redis_client.ping()
+            return _redis_client
+        except RedisError:
+            with contextlib.suppress(Exception):
+                _redis_client.close()
+            _redis_client = None
+            _redis_unavailable_until = now + _REDIS_BACKOFF_SECONDS
+
+    try:
+        client = redis.Redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=2,
+        )
+        client.ping()
+        _redis_client = client
+        _redis_unavailable_until = 0.0
+        return client
+    except Exception as exc:
+        _redis_unavailable_until = now + _REDIS_BACKOFF_SECONDS
+        log.warning(
+            "redis_unavailable_rate_limit_pass_through "
+            "(set REDIS_URL to your Redis service, or RATE_LIMIT_ENABLED=false): %s",
+            exc,
+        )
         return None
 
 
@@ -95,44 +135,65 @@ def check_rate_limit(
 
     key = f"ratelimit:{org_id}"
 
-    pipe = r.pipeline()
-    pipe.zremrangebyscore(key, "-inf", window_start)
-    pipe.zadd(key, {f"{now}": now})
-    pipe.zcard(key)
-    pipe.expire(key, WINDOW_SECONDS + 1)
-    results = pipe.execute()
+    try:
+        pipe = r.pipeline()
+        pipe.zremrangebyscore(key, "-inf", window_start)
+        pipe.zadd(key, {f"{now}": now})
+        pipe.zcard(key)
+        pipe.expire(key, WINDOW_SECONDS + 1)
+        results = pipe.execute()
 
-    current_count: int = results[2]
-    remaining = max(0, limit - current_count)
-    allowed = current_count <= limit
+        current_count: int = results[2]
+        remaining = max(0, limit - current_count)
+        allowed = current_count <= limit
 
-    if not allowed:
-        oldest_in_window = r.zrange(key, 0, 0, withscores=True)
-        if oldest_in_window:
-            retry_after = oldest_in_window[0][1] + WINDOW_SECONDS - now
-            retry_after = max(0.0, retry_after)
+        if not allowed:
+            oldest_in_window = r.zrange(key, 0, 0, withscores=True)
+            if oldest_in_window:
+                retry_after = oldest_in_window[0][1] + WINDOW_SECONDS - now
+                retry_after = max(0.0, retry_after)
+            else:
+                retry_after = float(WINDOW_SECONDS)
         else:
-            retry_after = float(WINDOW_SECONDS)
-    else:
-        retry_after = 0.0
+            retry_after = 0.0
 
-    return allowed, remaining, limit, retry_after
+        return allowed, remaining, limit, retry_after
+    except Exception as exc:
+        # Stale pooled connection or Redis died mid-request — allow traffic; refresh client.
+        global _redis_client, _redis_unavailable_until
+
+        log.warning("redis_pipeline_failed_rate_limit_pass_through: %s", exc)
+        try:
+            if _redis_client is not None:
+                _redis_client.close()
+        except Exception:
+            pass
+        _redis_client = None
+        _redis_unavailable_until = time.time() + _REDIS_BACKOFF_SECONDS
+        return True, limit, limit, 0.0
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """FastAPI middleware that enforces per-org sliding-window rate limits."""
 
     EXEMPT_PATHS: frozenset[str] = frozenset(
-        {"/health", "/ready", "/docs", "/openapi.json", "/redoc"}
+        {"/health", "/ready", "/docs", "/openapi.json", "/redoc", "/login"}
     )
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if not settings.rate_limit_enabled:
             return await call_next(request)
 
-        if request.url.path in self.EXEMPT_PATHS:
+        path = request.url.path
+        if (
+            path in self.EXEMPT_PATHS
+            or path.startswith("/_next/")
+            or path
+            in (
+                "/favicon.svg",
+                "/favicon.ico",
+            )
+        ):
             return await call_next(request)
 
         org_id = _org_id_from_request(request)

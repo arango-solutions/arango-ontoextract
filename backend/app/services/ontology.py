@@ -74,7 +74,8 @@ def get_staging_graph(
 
     if db.has_collection("ontology_classes"):
         classes = list(
-            run_aql(db,
+            run_aql(
+                db,
                 "FOR c IN ontology_classes FILTER c.ontology_id == @oid RETURN c",
                 bind_vars={"oid": ontology_id},
             )
@@ -108,7 +109,8 @@ def get_staging_graph(
     for edge_col in edge_collections:
         if db.has_collection(edge_col):
             col_edges = list(
-                run_aql(db,
+                run_aql(
+                    db,
                     f"FOR e IN {edge_col} RETURN e",
                 )
             )

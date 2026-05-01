@@ -1,8 +1,31 @@
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
-from pydantic import field_validator
-from pydantic_settings import BaseSettings
+from pydantic import AliasChoices, Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.middleware.strip_service_prefix import normalize_service_url_path_prefix
+
+
+def _resolved_env_files() -> tuple[str, ...]:
+    """Paths to optional `.env` files — stable regardless of process cwd.
+
+    - Monorepo: repo-root ``.env`` (backend/app/config → ../../.env).
+    - Flat deploy ``/project``: ``/project/.env`` beside ``app/``.
+
+    A cwd-relative ``../.env`` breaks when cwd is ``/project`` (becomes ``/.env``).
+    """
+    here = Path(__file__).resolve()
+    bundle = here.parents[1] / ".env"
+    paths: list[Path] = []
+    if len(here.parents) >= 3:
+        repo = here.parents[2] / ".env"
+        if here.parents[2] != Path("/") and repo.is_file():
+            paths.append(repo)
+    if bundle.is_file() and bundle.resolve() not in {p.resolve() for p in paths}:
+        paths.append(bundle)
+    return tuple(str(p) for p in paths)
 
 
 class DeploymentMode(StrEnum):
@@ -12,7 +35,11 @@ class DeploymentMode(StrEnum):
 
 
 class Settings(BaseSettings):
-    model_config = {"env_file": "../.env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config = SettingsConfigDict(
+        env_file=_resolved_env_files() or None,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     app_env: str = "development"
     app_log_level: str = "INFO"
@@ -43,6 +70,9 @@ class Settings(BaseSettings):
     gae_deployment_mode: str = ""
 
     # -- Redis -------------------------------------------------------------
+    #: In k8s set ``REDIS_URL`` to your Redis Service (not localhost). If Redis is
+    #: unreachable, rate limiting degrades to pass-through (see ``rate_limit.py``).
+    #: To disable limits entirely: ``RATE_LIMIT_ENABLED=false``.
     redis_url: str = "redis://localhost:6379/0"
 
     # -- LLM ---------------------------------------------------------------
@@ -68,6 +98,21 @@ class Settings(BaseSettings):
     # -- CORS ---------------------------------------------------------------
     cors_origins: str = "http://localhost:3000"
 
+    # -- Public URL (reverse proxy / Container Manager) --------------------
+    #: External path prefix before routes (env ``SERVICE_URL_PATH_PREFIX``).
+    #: Must match the frontend static bundle / Next ``basePath`` (same env in repo ``.env``).
+    service_url_path_prefix: str = ""
+
+    #: Next.js static export root (directory containing ``index.html`` and ``_next/``).
+    #: Use in k8s when the UI is copied or mounted at a known path. If unset, the app
+    #: looks for ``<bundle>/frontend/out``, monorepo ``frontend/out``, or ``/app/static``.
+    #: Build the export with ``AOE_STATIC_EXPORT=1`` and ``SERVICE_URL_PATH_PREFIX`` (see
+    #: ``scripts/package-arango-manual.sh`` with ``PACKAGE_INCLUDE_FRONTEND=1``).
+    frontend_static_root: str = Field(
+        default="",
+        validation_alias=AliasChoices("AOE_FRONTEND_OUT_DIR", "FRONTEND_STATIC_ROOT"),
+    )
+
     # -- Rate Limiting -----------------------------------------------------
     rate_limit_enabled: bool = True
     rate_limit_default: int = 100
@@ -81,9 +126,7 @@ class Settings(BaseSettings):
     def _validate_secret_key(cls, v: str, info: Any) -> str:
         env = info.data.get("app_env", "development")
         if env == "production" and v in ("change-this", ""):
-            raise ValueError(
-                "APP_SECRET_KEY must be set to a strong random value in production"
-            )
+            raise ValueError("APP_SECRET_KEY must be set to a strong random value in production")
         return v
 
     @field_validator("test_deployment_mode", mode="before")
@@ -92,6 +135,11 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return v.strip().lower()
         return v
+
+    @field_validator("service_url_path_prefix", mode="after")
+    @classmethod
+    def _normalize_service_url_path_prefix_setting(cls, v: str) -> str:
+        return normalize_service_url_path_prefix(v)
 
     # -- Deployment-mode-derived properties --------------------------------
 

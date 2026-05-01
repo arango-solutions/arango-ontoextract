@@ -22,3 +22,6 @@
 - `backend/AGENTS.md` — backend module boundaries
 - `PRD.md` — product requirements
 - `docs/REMAINING_WORK_PLAN.md` — backlog streams
+- `docs/container-manager-deployment.md` — manual-packaging deployment via Arango Container Manager (`make package-arango-manual[-all]`)
+- `docs/path-prefix-routing.md` — `SERVICE_URL_PATH_PREFIX` end-to-end (frontend `basePath` / `withBasePath` / `backendUrl`, backend strip middleware, `NextStaticExportApp`)
+- `docs/adr/007-spa-html-fallback.md` — why `NextStaticExportApp` exists

@@ -205,13 +205,11 @@ class TestImportOwlToGraph:
         mock_ensure_rdf.return_value = MagicMock()
         mock_tag.return_value = 0
 
-        ttl = '@prefix owl: <http://www.w3.org/2002/07/owl#> . <http://x> a owl:Class .'
+        ttl = "@prefix owl: <http://www.w3.org/2002/07/owl#> . <http://x> a owl:Class ."
 
         with patch("app.services.arangordf_bridge.get_db") as mock_get_db:
             mock_get_db.return_value = MagicMock()
-            import_owl_to_graph(
-                ttl_content=ttl, graph_name="g", ontology_id="o"
-            )
+            import_owl_to_graph(ttl_content=ttl, graph_name="g", ontology_id="o")
 
         mock_get_db.assert_called_once()
 
@@ -230,7 +228,7 @@ class TestImportOwlToGraph:
         mock_ensure_rdf.side_effect = ImportError("missing")
         mock_tag.return_value = 0
 
-        ttl = '@prefix owl: <http://www.w3.org/2002/07/owl#> . <http://x> a owl:Class .'
+        ttl = "@prefix owl: <http://www.w3.org/2002/07/owl#> . <http://x> a owl:Class ."
 
         result = import_owl_to_graph(
             db,
@@ -320,7 +318,6 @@ class TestFallbackImporter:
 class TestSyncOwlImportsEdges:
     def test_creates_imports_edge_when_target_in_registry(self):
         from rdflib import OWL, URIRef
-
         from rdflib import Graph as RDFGraph
 
         g = RDFGraph()
@@ -347,7 +344,6 @@ class TestSyncOwlImportsEdges:
 
     def test_warns_when_import_target_not_in_registry(self):
         from rdflib import OWL, URIRef
-
         from rdflib import Graph as RDFGraph
 
         g = RDFGraph()
@@ -391,8 +387,8 @@ class TestImportFromFile:
         mock_sync_imports.return_value = {"created": 0, "skipped": 0, "warnings": []}
 
         ttl = (
-            '@prefix owl: <http://www.w3.org/2002/07/owl#> .\n'
-            '<http://example.org/Person> a owl:Class .\n'
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+            "<http://example.org/Person> a owl:Class .\n"
         )
 
         result = import_from_file(
@@ -429,8 +425,8 @@ class TestImportFromFile:
         mock_registry.return_value = {"_key": "a"}
 
         ttl = (
-            '@prefix owl: <http://www.w3.org/2002/07/owl#> .\n'
-            '@prefix ex: <http://example.org/> .\n'
+            "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+            "@prefix ex: <http://example.org/> .\n"
             "ex:MyOnto a owl:Ontology ; owl:imports ex:OtherOnto .\n"
             "ex:OtherOnto a owl:Ontology .\n"
         )
@@ -474,7 +470,11 @@ class TestImportFromFile:
     @patch("app.services.arangordf_bridge.create_registry_entry")
     @patch("app.services.arangordf_bridge.import_owl_to_graph")
     def test_import_does_not_collide_with_reserved_logrecord_keys(
-        self, mock_import, mock_registry, mock_sync_imports, caplog,
+        self,
+        mock_import,
+        mock_registry,
+        mock_sync_imports,
+        caplog,
     ):
         """Regression: passing a reserved attribute name (e.g. 'filename') inside
         ``log.<level>(..., extra={...})`` raises ``KeyError: Attempt to overwrite
@@ -504,7 +504,10 @@ class TestImportFromFile:
     @patch("app.services.arangordf_bridge.create_registry_entry")
     @patch("app.services.arangordf_bridge.import_owl_to_graph")
     def test_import_uses_owl_ontology_rdfs_label_when_no_param_label(
-        self, mock_import, mock_registry, mock_sync_imports,
+        self,
+        mock_import,
+        mock_registry,
+        mock_sync_imports,
     ):
         db = MagicMock()
         mock_import.return_value = {"imported": True, "ontology_id": "fin", "graph_name": "fin"}
@@ -535,7 +538,10 @@ class TestImportFromFile:
     @patch("app.services.arangordf_bridge.create_registry_entry")
     @patch("app.services.arangordf_bridge.import_owl_to_graph")
     def test_import_title_from_filename_when_no_ontology_label(
-        self, mock_import, mock_registry, mock_sync_imports,
+        self,
+        mock_import,
+        mock_registry,
+        mock_sync_imports,
     ):
         db = MagicMock()
         mock_import.return_value = {"imported": True, "ontology_id": "x", "graph_name": "x"}

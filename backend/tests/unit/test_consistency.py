@@ -229,10 +229,12 @@ class TestConsistencyChecker:
             "Customer",
             parent_uri="http://ex.org#Party",
             properties=[prop_a],
-        ).model_copy(update={
-            "evidence": [evidence_a],
-            "parent_evidence": [parent_evidence],
-        })
+        ).model_copy(
+            update={
+                "evidence": [evidence_a],
+                "parent_evidence": [parent_evidence],
+            }
+        )
         cls2 = _make_class(
             "http://ex.org#Customer",
             "Customer",

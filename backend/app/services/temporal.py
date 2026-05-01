@@ -53,18 +53,15 @@ def _snapshot_cache_put(key: str, data: dict[str, Any]) -> None:
 
 def invalidate_snapshot_cache(ontology_id: str) -> int:
     """Remove all cached snapshots for an ontology.  Called on any write."""
-    to_remove = [
-        k for k, (_, v) in _snapshot_cache.items()
-        if v.get("ontology_id") == ontology_id
-    ]
+    to_remove = [k for k, (_, v) in _snapshot_cache.items() if v.get("ontology_id") == ontology_id]
     for k in to_remove:
         _snapshot_cache.pop(k, None)
     removed = len(to_remove)
     if removed:
         log.info(
-        "snapshot_cache_invalidated",
-        extra={"ontology_id": ontology_id, "evicted": removed},
-    )
+            "snapshot_cache_invalidated",
+            extra={"ontology_id": ontology_id, "evicted": removed},
+        )
     return removed
 
 
@@ -131,10 +128,13 @@ def expire_entity(
         update_data["ttlExpireAt"] = now + ttl_seconds
 
     try:
-        result = cast("dict[str, Any]", db.collection(collection).update(
-            {"_key": key, **update_data},
-            return_new=True,
-        ))
+        result = cast(
+            "dict[str, Any]",
+            db.collection(collection).update(
+                {"_key": key, **update_data},
+                return_new=True,
+            ),
+        )
         log.info(
             "temporal entity expired",
             extra={"collection": collection, "key": key},
@@ -233,7 +233,8 @@ FOR e IN @@col
   FILTER e._from == @old_id AND e.expired == @never
   RETURN e"""
     outbound_edges = list(
-        run_aql(db,
+        run_aql(
+            db,
             outbound_query,
             bind_vars={"@col": edge_collection, "old_id": old_id, "never": NEVER_EXPIRES},
         )
@@ -260,7 +261,8 @@ FOR e IN @@col
   FILTER e._to == @old_id AND e.expired == @never
   RETURN e"""
     inbound_edges = list(
-        run_aql(db,
+        run_aql(
+            db,
             inbound_query,
             bind_vars={"@col": edge_collection, "old_id": old_id, "never": NEVER_EXPIRES},
         )
@@ -337,7 +339,7 @@ FOR doc IN @@col
   {filter_block}
   RETURN doc"""
 
-    return list(run_aql(db,query, bind_vars=bind_vars))
+    return list(run_aql(db, query, bind_vars=bind_vars))
 
 
 def get_current(
@@ -358,7 +360,8 @@ FOR doc IN @@col
   RETURN doc"""
 
     results = list(
-        run_aql(db,
+        run_aql(
+            db,
             query,
             bind_vars={"@col": collection, "key": key, "never": NEVER_EXPIRES},
         )
@@ -442,7 +445,8 @@ FOR doc IN @@col
 
     if db.has_collection("ontology_classes"):
         classes = list(
-            run_aql(db,
+            run_aql(
+                db,
                 vertex_query,
                 bind_vars={"@col": "ontology_classes", "oid": ontology_id, "ts": timestamp},
             )
@@ -476,9 +480,7 @@ FOR e IN @@col
     for edge_col in _ONTOLOGY_TEMPORAL_EDGE_COLLECTIONS:
         if not db.has_collection(edge_col):
             continue
-        col_edges = list(
-            run_aql(db,edge_query, bind_vars={"@col": edge_col, "ts": timestamp})
-        )
+        col_edges = list(run_aql(db, edge_query, bind_vars={"@col": edge_col, "ts": timestamp}))
         for e in col_edges:
             if e.get("_from") in active_ids or e.get("_to") in active_ids:
                 edges.append(e)
@@ -518,9 +520,7 @@ FOR doc IN @@col
   LIMIT 1
   RETURN doc.uri"""
 
-    uri_results = list(
-        run_aql(db,uri_query, bind_vars={"@col": collection, "key": key})
-    )
+    uri_results = list(run_aql(db, uri_query, bind_vars={"@col": collection, "key": key}))
     if not uri_results or uri_results[0] is None:
         return []
 
@@ -532,9 +532,7 @@ FOR doc IN @@col
   SORT doc.created DESC
   RETURN doc"""
 
-    return list(
-        run_aql(db,history_query, bind_vars={"@col": collection, "uri": uri})
-    )
+    return list(run_aql(db, history_query, bind_vars={"@col": collection, "uri": uri}))
 
 
 def get_diff(
@@ -569,13 +567,15 @@ FOR doc IN @@col
             continue
 
         at_t1 = list(
-            run_aql(db,
+            run_aql(
+                db,
                 snapshot_query,
                 bind_vars={"@col": col_name, "oid": ontology_id, "ts": t1},
             )
         )
         at_t2 = list(
-            run_aql(db,
+            run_aql(
+                db,
                 snapshot_query,
                 bind_vars={"@col": col_name, "oid": ontology_id, "ts": t2},
             )
@@ -590,9 +590,7 @@ FOR doc IN @@col
             else:
                 old_doc = t1_by_uri[uri]
                 if _has_data_changed(old_doc, doc):
-                    changed.append(
-                        {"before": old_doc, "after": doc, "collection": col_name}
-                    )
+                    changed.append({"before": old_doc, "after": doc, "collection": col_name})
 
         for uri, doc in t1_by_uri.items():
             if uri not in t2_by_uri:
@@ -655,7 +653,8 @@ FOR doc IN @@col
         if not db.has_collection(col_name):
             continue
         col_events = list(
-            run_aql(db,
+            run_aql(
+                db,
                 event_query,
                 bind_vars={
                     "@col": col_name,
@@ -696,7 +695,8 @@ FOR doc IN @@col
   RETURN doc"""
 
     results = list(
-        run_aql(db,
+        run_aql(
+            db,
             historical_query,
             bind_vars={"@col": collection, "key": key, "ts": version_created_ts},
         )
@@ -749,7 +749,8 @@ FOR doc IN @@col
   RETURN doc._key"""
 
     results = list(
-        run_aql(db,
+        run_aql(
+            db,
             query,
             bind_vars={"@col": collection, "uri": uri, "never": NEVER_EXPIRES},
         )

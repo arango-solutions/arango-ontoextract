@@ -93,9 +93,9 @@ class TestExpireEntity:
 class TestGetCurrent:
     def test_returns_current_version(self):
         mock_aql = MagicMock()
-        mock_aql.execute.return_value = iter([
-            {"_key": "abc", "label": "Foo", "expired": NEVER_EXPIRES}
-        ])
+        mock_aql.execute.return_value = iter(
+            [{"_key": "abc", "label": "Foo", "expired": NEVER_EXPIRES}]
+        )
         mock_db = MagicMock()
         mock_db.aql = mock_aql
 

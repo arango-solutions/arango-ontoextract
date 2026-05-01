@@ -2,7 +2,8 @@
 name = "aoe-backend"
 version = "0.1.0"
 description = "Arango-OntoExtract — LLM-driven ontology extraction and curation platform"
-requires-python = ">=3.11"
+# Arango manual packaging / uv: must match the Container Manager base image (e.g. py13base → Python 3.13).
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
@@ -47,6 +48,10 @@ line-length = 100
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
 ignore = ["B008"]
 
+# Arango entrypoint: line 1 must be `entrypoint = __file__` (platform uses awk '{print $1}'); imports follow.
+[tool.ruff.lint.per-file-ignores]
+"entrypoint" = ["E402"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
@@ -64,3 +69,5 @@ packages = ["app"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# Arango Container Manager installs deps with `uv` during containerization; keep all runtime deps above.

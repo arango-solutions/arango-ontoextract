@@ -48,12 +48,7 @@ def compute_topological_similarity(
     all_neighbors_2 = neighbors_2["properties"] | neighbors_2["parents"] | neighbors_2["children"]
     overall_sim = _jaccard(all_neighbors_1, all_neighbors_2)
 
-    score = (
-        0.35 * prop_sim
-        + 0.30 * parent_sim
-        + 0.15 * child_sim
-        + 0.20 * overall_sim
-    )
+    score = 0.35 * prop_sim + 0.30 * parent_sim + 0.15 * child_sim + 0.20 * overall_sim
 
     return round(min(max(score, 0.0), 1.0), 4)
 
@@ -104,9 +99,7 @@ def _jaccard(set_a: set[str], set_b: set[str]) -> float:
     return len(intersection) / len(union)
 
 
-def _get_class_neighborhood(
-    db: StandardDatabase, class_key: str
-) -> dict[str, set[str]]:
+def _get_class_neighborhood(db: StandardDatabase, class_key: str) -> dict[str, set[str]]:
     """Get the graph neighborhood of a class: properties, parents, children."""
     class_id = f"ontology_classes/{class_key}"
     result: dict[str, set[str]] = {
@@ -120,7 +113,8 @@ def _get_class_neighborhood(
     # PGT (ADR-006): domain edges point property vertex → class (_to is the class).
     if db.has_collection("rdfs_domain"):
         props = list(
-            run_aql(db,
+            run_aql(
+                db,
                 """\
 FOR v, e IN 1..1 INBOUND @cls_id rdfs_domain
   FILTER e.expired == @never
@@ -132,7 +126,8 @@ FOR v, e IN 1..1 INBOUND @cls_id rdfs_domain
 
     if db.has_collection("has_property"):
         props = list(
-            run_aql(db,
+            run_aql(
+                db,
                 """\
 FOR v, e IN 1..1 OUTBOUND @cls_id has_property
   FILTER e.expired == @never
@@ -146,7 +141,8 @@ FOR v, e IN 1..1 OUTBOUND @cls_id has_property
 
     if db.has_collection("subclass_of"):
         parents = list(
-            run_aql(db,
+            run_aql(
+                db,
                 """\
 FOR v, e IN 1..1 OUTBOUND @cls_id subclass_of
   FILTER e.expired == @never
@@ -157,7 +153,8 @@ FOR v, e IN 1..1 OUTBOUND @cls_id subclass_of
         result["parents"] = {p for p in parents if p}
 
         children = list(
-            run_aql(db,
+            run_aql(
+                db,
                 """\
 FOR v, e IN 1..1 INBOUND @cls_id subclass_of
   FILTER e.expired == @never

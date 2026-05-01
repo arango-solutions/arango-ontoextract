@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
-import Link from "next/link";
 import dynamic from "next/dynamic";
 import { api, ApiError } from "@/lib/api-client";
+import { withBasePath } from "@/lib/base-path";
 import type { PaginatedResponse } from "@/lib/api-client";
 import type {
   OntologyClass,
@@ -243,12 +243,13 @@ export default function EntityResolutionPage() {
                 </button>
               ))}
             </div>
-            <Link
-              href="/"
+            {/* Raw <a> so the trailing slash survives — Next <Link href="/"> drops it. */}
+            <a
+              href={withBasePath("/")}
               className="text-sm text-gray-500 hover:text-gray-700"
             >
               Home
-            </Link>
+            </a>
           </div>
         </div>
       </header>

@@ -70,7 +70,7 @@ def list_decisions(
     status: str | None = None,
     cursor: str | None = None,
     limit: int = 25,
-) -> PaginatedResponse[dict]:
+) -> PaginatedResponse[dict[str, Any]]:
     """List curation decisions with optional filters and cursor pagination."""
     if db is None:
         db = get_db()

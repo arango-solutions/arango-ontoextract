@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { api } from "@/lib/api-client";
+import { withBasePath } from "@/lib/base-path";
 import RunList from "@/components/pipeline/RunList";
 import RunMetrics from "@/components/pipeline/RunMetrics";
 import ErrorLog from "@/components/pipeline/ErrorLog";
@@ -67,6 +68,15 @@ function PipelineMonitorInner() {
       setResetBusy(false);
     }
   }
+
+  // Stable handler so child components (RunList, PipelineHistorySlider) don't
+  // see a new reference on every parent render — which would re-fire their
+  // dependent effects and (combined with bidirectional sync) used to spin the
+  // page into a render loop.
+  const handleSelectRun = useCallback((id: string) => {
+    setSelectedRunId(id);
+    setSidebarOpen(false);
+  }, []);
 
   const tabs: { key: DetailTab; label: string }[] = [
     { key: "metrics", label: "Metrics" },
@@ -147,12 +157,13 @@ function PipelineMonitorInner() {
             >
               Dashboard
             </Link>
-            <Link
-              href="/"
+            {/* Raw <a> so the trailing slash survives — Next <Link href="/"> drops it. */}
+            <a
+              href={withBasePath("/")}
               className="text-sm text-gray-500 hover:text-gray-700"
             >
               Home
-            </Link>
+            </a>
           </div>
         </div>
       </header>
@@ -164,10 +175,7 @@ function PipelineMonitorInner() {
         >
           <RunList
             key={runListKey}
-            onSelectRun={(id) => {
-              setSelectedRunId(id);
-              setSidebarOpen(false);
-            }}
+            onSelectRun={handleSelectRun}
             selectedRunId={selectedRunId}
           />
         </aside>
@@ -176,10 +184,7 @@ function PipelineMonitorInner() {
         <div className="flex-1 flex flex-col min-h-[calc(100vh-73px)]">
           {/* Pipeline history slider — always visible */}
           <PipelineHistorySlider
-            onSelectRun={(id) => {
-              setSelectedRunId(id);
-              setSidebarOpen(false);
-            }}
+            onSelectRun={handleSelectRun}
             selectedRunId={selectedRunId}
           />
 
@@ -218,13 +223,13 @@ function PipelineMonitorInner() {
                         {selectedRunId}
                       </span>
                       <a
-                        href={`/workspace?ontologyId=${selectedRunId}`}
+                        href={withBasePath(`/workspace?ontologyId=${selectedRunId}`)}
                         className="text-xs px-3 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
                       >
                         Open in Workspace
                       </a>
                       <a
-                        href={`/curation/${selectedRunId}`}
+                        href={withBasePath(`/curation?runId=${selectedRunId}`)}
                         className="text-xs px-3 py-1 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
                       >
                         Curate (Legacy)

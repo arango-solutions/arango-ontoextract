@@ -22,6 +22,8 @@ build/
 venv/
 env/
 .python-version
+uv.lock
+!backend/uv.lock
 
 # Testing / Coverage
 .pytest_cache/
@@ -60,3 +62,4 @@ logs/
 # Data (local uploads, temp files)
 data/uploads/
 data/tmp/
+*.tar.gz

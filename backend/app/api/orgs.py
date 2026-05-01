@@ -7,6 +7,7 @@ Routes delegate to ``db.orgs_repo`` and enforce RBAC via dependencies.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
@@ -30,12 +31,12 @@ VALID_ROLES = {"admin", "ontology_engineer", "domain_expert", "viewer"}
 class CreateOrgRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
     display_name: str = Field(default="", max_length=256)
-    settings: dict | None = None
+    settings: dict[str, Any] | None = None
 
 
 class UpdateOrgRequest(BaseModel):
     display_name: str | None = None
-    settings: dict | None = None
+    settings: dict[str, Any] | None = None
 
 
 class AddUserRequest(BaseModel):
@@ -56,7 +57,7 @@ class UpdateRoleRequest(BaseModel):
 async def create_organization(
     body: CreateOrgRequest,
     _user: AuthenticatedUser = Depends(require_role("admin")),
-) -> dict:
+) -> dict[str, Any]:
     """Create a new organization."""
     org = orgs_repo.create_organization(
         name=body.name,
@@ -73,7 +74,7 @@ async def list_organizations(
     sort: str = Query(default="created_at"),
     order: str = Query(default="desc"),
     _user: AuthenticatedUser = Depends(require_role("admin")),
-) -> PaginatedResponse[dict]:
+) -> PaginatedResponse[dict[str, Any]]:
     """List all organizations (admin only)."""
     return orgs_repo.list_organizations(
         limit=limit,
@@ -87,7 +88,7 @@ async def list_organizations(
 async def get_organization(
     org_id: str,
     _user: AuthenticatedUser = Depends(get_current_user),
-) -> dict:
+) -> dict[str, Any]:
     """Get organization details and settings."""
     return get_or_404(orgs_repo.get_organization(org_id), "Organization", org_id)
 
@@ -97,11 +98,11 @@ async def update_organization(
     org_id: str,
     body: UpdateOrgRequest,
     _user: AuthenticatedUser = Depends(require_role("admin")),
-) -> dict:
+) -> dict[str, Any]:
     """Update organization settings."""
     org = get_or_404(orgs_repo.get_organization(org_id), "Organization", org_id)
 
-    updates: dict = {}
+    updates: dict[str, Any] = {}
     if body.display_name is not None:
         updates["display_name"] = body.display_name
     if body.settings is not None:
@@ -122,7 +123,7 @@ async def add_user_to_org(
     org_id: str,
     body: AddUserRequest,
     _user: AuthenticatedUser = Depends(require_role("admin")),
-) -> dict:
+) -> dict[str, Any]:
     """Add a user to an organization with a role."""
     get_or_404(orgs_repo.get_organization(org_id), "Organization", org_id)
 
@@ -155,7 +156,7 @@ async def list_org_users(
     limit: int = Query(default=25, ge=1, le=100),
     cursor: str | None = Query(default=None),
     _user: AuthenticatedUser = Depends(get_current_user),
-) -> PaginatedResponse[dict]:
+) -> PaginatedResponse[dict[str, Any]]:
     """List users in an organization."""
     get_or_404(orgs_repo.get_organization(org_id), "Organization", org_id)
     return orgs_repo.list_org_users(org_id, limit=limit, cursor=cursor)
@@ -167,7 +168,7 @@ async def update_user_role(
     user_id: str,
     body: UpdateRoleRequest,
     _user: AuthenticatedUser = Depends(require_role("admin")),
-) -> dict:
+) -> dict[str, Any]:
     """Update a user's role within an organization."""
     if body.role not in VALID_ROLES:
         raise ValidationError(
@@ -189,7 +190,7 @@ async def remove_user_from_org(
     org_id: str,
     user_id: str,
     _user: AuthenticatedUser = Depends(require_role("admin")),
-) -> dict:
+) -> dict[str, Any]:
     """Remove a user from an organization."""
     removed = orgs_repo.remove_user_from_org(org_id, user_id)
     if not removed:

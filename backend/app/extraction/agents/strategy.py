@@ -81,7 +81,7 @@ def _classify_document(chunks: list[dict[str, Any]]) -> str:
     return "default"
 
 
-def strategy_selector_node(state: ExtractionPipelineState) -> dict:
+def strategy_selector_node(state: ExtractionPipelineState) -> dict[str, Any]:
     """LangGraph node: select extraction strategy based on document characteristics.
 
     When domain_context is present in the state (Tier 2 extraction), the

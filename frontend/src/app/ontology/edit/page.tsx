@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import dynamic from "next/dynamic";
-import { api, ApiError, getApiBaseUrl, type PaginatedResponse } from "@/lib/api-client";
+import { api, ApiError, backendUrl, type PaginatedResponse } from "@/lib/api-client";
+import { withBasePath } from "@/lib/base-path";
 import type {
   OntologyClass,
   OntologyProperty,
@@ -43,8 +45,20 @@ interface OntologyGraphData {
 }
 
 export default function OntologyEditorPage() {
-  const params = useParams();
-  const ontologyId = params.ontologyId as string;
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-screen">
+        <p className="text-gray-400 animate-pulse">Loading ontology editor...</p>
+      </div>
+    }>
+      <OntologyEditorPageInner />
+    </Suspense>
+  );
+}
+
+function OntologyEditorPageInner() {
+  const searchParams = useSearchParams();
+  const ontologyId = searchParams.get("ontologyId") || "";
 
   const [graph, setGraph] = useState<OntologyGraphData | null>(null);
   const [ontologyMeta, setOntologyMeta] = useState<OntologyRegistryEntry | null>(null);
@@ -65,6 +79,10 @@ export default function OntologyEditorPage() {
   const [addPropertyOpen, setAddPropertyOpen] = useState(false);
 
   const fetchGraph = useCallback(async () => {
+    if (!ontologyId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -186,7 +204,18 @@ export default function OntologyEditorPage() {
 
   const ontologyName = ontologyMeta?.name ?? ontologyId;
   const ontologyDescription = ontologyMeta?.description ?? "";
-  const baseUrl = getApiBaseUrl();
+
+  if (!ontologyId && !loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <h1 className="text-xl font-bold mb-2">No Ontology Selected</h1>
+          <p className="text-gray-500 mb-4">Please provide an ontologyId parameter.</p>
+          <Link href="/library" className="text-blue-600 hover:underline">Back to Library</Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-gray-50 text-gray-900">
@@ -278,7 +307,7 @@ export default function OntologyEditorPage() {
                     return (
                       <a
                         key={fmt}
-                        href={`${baseUrl}/api/v1/ontology/${ontologyId}/export?format=${fmt}`}
+                        href={backendUrl(`/api/v1/ontology/${ontologyId}/export?format=${fmt}`)}
                         target="_blank"
                         rel="noopener noreferrer"
                         onMouseDown={(e) => e.preventDefault()}
@@ -294,24 +323,26 @@ export default function OntologyEditorPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              <a
+              <Link
                 href={`/workspace?ontologyId=${ontologyId}`}
                 className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
               >
                 Open in Workspace
-              </a>
-              <a
+              </Link>
+              <Link
                 href="/library"
                 className="text-sm text-gray-500 hover:text-gray-700"
               >
                 &larr; Library
-              </a>
+              </Link>
+              {/* Raw <a> so the trailing slash survives — Next <Link href="/"> drops it. */}
               <a
-                href="/"
+                href={withBasePath("/")}
                 className="text-sm text-gray-500 hover:text-gray-700"
               >
                 Home
               </a>
+
             </div>
           </div>
         </div>
@@ -388,12 +419,12 @@ export default function OntologyEditorPage() {
                     >
                       Add First Class
                     </button>
-                    <a
+                    <Link
                       href="/library"
                       className="text-sm px-4 py-2 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50"
                     >
                       Back to Library
-                    </a>
+                    </Link>
                   </div>
                 </div>
               </div>

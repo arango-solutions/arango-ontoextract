@@ -1,37 +1,63 @@
 import { render, screen } from "@testing-library/react";
+import React from "react";
+import BoxArrowCanvas from "../BoxArrowCanvas";
+import type { OntologyClass, OntologyEdge } from "@/types/curation";
+import type { SigmaViewportApi } from "../SigmaCanvas";
+
+// Fix for ResizeObserver which is required by ReactFlow but missing in JSDOM
+global.ResizeObserver = class ResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 
 jest.mock("reactflow", () => {
   const React = require("react");
+
+  // 1. Name the component with a Capital letter to satisfy "rules-of-hooks"
+  const MockReactFlow = ({
+    nodes,
+    edges,
+    onInit,
+    children,
+  }: {
+    nodes: unknown[];
+    edges: unknown[];
+    onInit?: (instance: unknown) => void;
+    children?: React.ReactNode;
+  }) => {
+    React.useEffect(() => {
+      onInit?.({
+        fitView: () => {},
+        setCenter: () => {},
+        getNode: () => null,
+        getEdges: () => [],
+      });
+    }, [onInit]);
+
+    return React.createElement(
+      "div",
+      { "data-testid": "mock-reactflow" },
+      React.createElement(
+        "span",
+        { "data-testid": "node-count" },
+        nodes.length,
+      ),
+      React.createElement(
+        "span",
+        { "data-testid": "edge-count" },
+        edges.length,
+      ),
+      children,
+    );
+  };
+
+  // 2. Assign a display name to satisfy "react/display-name"
+  MockReactFlow.displayName = "MockReactFlow";
+
   return {
     __esModule: true,
-    default: ({
-      nodes,
-      edges,
-      onInit,
-      children,
-    }: {
-      nodes: unknown[];
-      edges: unknown[];
-      onInit?: (instance: unknown) => void;
-      children?: React.ReactNode;
-    }) => {
-      React.useEffect(() => {
-        onInit?.({
-          fitView: () => {},
-          setCenter: () => {},
-          getNode: () => null,
-          getEdges: () => [],
-        });
-      }, [onInit]);
-
-      return React.createElement(
-        "div",
-        { "data-testid": "mock-reactflow" },
-        React.createElement("span", { "data-testid": "node-count" }, nodes.length),
-        React.createElement("span", { "data-testid": "edge-count" }, edges.length),
-        children,
-      );
-    },
+    default: MockReactFlow,
     Background: () => null,
     BackgroundVariant: { Dots: "dots" },
     MarkerType: { ArrowClosed: "arrowclosed" },
@@ -48,7 +74,12 @@ jest.mock("dagre", () => {
     setGraph() {}
     setDefaultEdgeLabel() {}
     setNode(id: string, opts: { width: number; height: number }) {
-      this._nodes.set(id, { x: 0, y: 0, width: opts.width, height: opts.height });
+      this._nodes.set(id, {
+        x: 0,
+        y: 0,
+        width: opts.width,
+        height: opts.height,
+      });
     }
     setEdge() {}
     node(id: string) {
@@ -66,11 +97,15 @@ jest.mock("dagre", () => {
 
 jest.mock("@/components/workspace/ClassBoxNode", () => {
   const React = require("react");
+
+  const MockClassBoxNode = ({ data }: { data: { label: string } }) =>
+    React.createElement("div", { "data-testid": "class-box" }, data.label);
+
+  MockClassBoxNode.displayName = "MockClassBoxNode";
+
   return {
     __esModule: true,
-    default: React.memo(({ data }: { data: { label: string } }) =>
-      React.createElement("div", { "data-testid": "class-box" }, data.label),
-    ),
+    default: React.memo(MockClassBoxNode),
   };
 });
 
@@ -79,10 +114,7 @@ jest.mock("@/components/workspace/confidenceLensPalette", () => ({
   normalizeConfidence01: (v: number) => v,
 }));
 
-import BoxArrowCanvas from "../BoxArrowCanvas";
-import type { OntologyClass, OntologyEdge } from "@/types/curation";
-import type { SigmaViewportApi } from "../SigmaCanvas";
-
+// Mock Data
 const SAMPLE_CLASSES: OntologyClass[] = [
   {
     _key: "Person",
@@ -161,7 +193,9 @@ describe("BoxArrowCanvas", () => {
         onNodeSelect={() => {}}
         onEdgeSelect={() => {}}
         onContextMenu={() => {}}
-        onViewportApi={(a) => { api = a; }}
+        onViewportApi={(a) => {
+          api = a;
+        }}
       />,
     );
     expect(api).not.toBeNull();

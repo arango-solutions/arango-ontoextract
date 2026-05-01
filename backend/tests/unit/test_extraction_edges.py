@@ -62,9 +62,16 @@ class TestHasChunkEdges:
         mock_db.has_collection.return_value = True
 
         collections = {}
-        for name in ("ontology_classes", "ontology_properties",
-                     "has_property", "subclass_of", "related_to",
-                     "extracted_from", "has_chunk", "produced_by"):
+        for name in (
+            "ontology_classes",
+            "ontology_properties",
+            "has_property",
+            "subclass_of",
+            "related_to",
+            "extracted_from",
+            "has_chunk",
+            "produced_by",
+        ):
             col = MagicMock()
             col.insert.return_value = {}
             collections[name] = col
@@ -110,9 +117,16 @@ class TestHasChunkEdges:
         from app.services.extraction import _materialize_to_graph
 
         mock_db = MagicMock()
-        existing = {"ontology_classes", "ontology_properties",
-                    "has_property", "subclass_of", "related_to",
-                    "extracted_from", "has_chunk", "produced_by"}
+        existing = {
+            "ontology_classes",
+            "ontology_properties",
+            "has_property",
+            "subclass_of",
+            "related_to",
+            "extracted_from",
+            "has_chunk",
+            "produced_by",
+        }
         mock_db.has_collection.side_effect = lambda name: name in existing
 
         cols = {}

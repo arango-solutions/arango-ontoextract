@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -59,16 +59,18 @@ def _ensure_all_collections(db) -> None:
 
 def _seed_document_and_chunks(db, doc_id: str = "e2e_full_doc") -> str:
     """Seed a document and its chunks for extraction."""
-    db.collection("documents").insert({
-        "_key": doc_id,
-        "filename": "enterprise_structure.md",
-        "mime_type": "text/markdown",
-        "upload_date": time.time(),
-        "status": "ready",
-        "org_id": "test_org",
-        "chunk_count": 3,
-        "file_hash": "sha256:e2e_test_hash",
-    })
+    db.collection("documents").insert(
+        {
+            "_key": doc_id,
+            "filename": "enterprise_structure.md",
+            "mime_type": "text/markdown",
+            "upload_date": time.time(),
+            "status": "ready",
+            "org_id": "test_org",
+            "chunk_count": 3,
+            "file_hash": "sha256:e2e_test_hash",
+        }
+    )
 
     chunks = [
         {
@@ -111,28 +113,38 @@ def _seed_document_and_chunks(db, doc_id: str = "e2e_full_doc") -> str:
 
 def _seed_registry_entry(db, ontology_id: str = "e2e_test_ontology") -> str:
     """Create a registry entry for the ontology."""
-    db.collection("ontology_registry").insert({
-        "_key": ontology_id,
-        "ontology_uri": f"http://example.org/ontology/{ontology_id}",
-        "label": "E2E Test Ontology",
-        "description": "Ontology created during E2E test",
-        "ontology_type": "owl",
-        "source_type": "extraction",
-        "status": "draft",
-        "created_at": time.time(),
-    })
+    db.collection("ontology_registry").insert(
+        {
+            "_key": ontology_id,
+            "ontology_uri": f"http://example.org/ontology/{ontology_id}",
+            "label": "E2E Test Ontology",
+            "description": "Ontology created during E2E test",
+            "ontology_type": "owl",
+            "source_type": "extraction",
+            "status": "draft",
+            "created_at": time.time(),
+        }
+    )
     return ontology_id
 
 
 def _make_mock_llm_response(fixture_name: str):
-    """Create a mock LLM response from a fixture file."""
+    """Create a mock LLM response from a fixture file.
+
+    ``usage_metadata`` is a real ``dict`` — the extractor calls
+    ``usage.get("input_tokens", 0)`` on it.  Using a ``MagicMock`` would
+    return another ``MagicMock`` from ``.get()`` and silently poison the
+    token-usage counters with non-msgpack-serializable values, breaking
+    LangGraph checkpointing.
+    """
     fixture = _load_fixture(fixture_name)
     mock_response = MagicMock()
     mock_response.content = json.dumps(fixture)
-    mock_response.usage_metadata = MagicMock()
-    mock_response.usage_metadata.total_tokens = 1000
-    mock_response.usage_metadata.input_tokens = 800
-    mock_response.usage_metadata.output_tokens = 200
+    mock_response.usage_metadata = {
+        "input_tokens": 800,
+        "output_tokens": 200,
+        "total_tokens": 1000,
+    }
     return mock_response
 
 
@@ -213,18 +225,22 @@ def _insert_staging_classes(db, run_id: str) -> list[str]:
         keys.append(result["_key"])
 
     subclass_col = db.collection("subclass_of")
-    subclass_col.insert({
-        "_from": f"ontology_classes/{keys[1]}",
-        "_to": f"ontology_classes/{keys[0]}",
-        "created": now,
-        "expired": NEVER_EXPIRES,
-    })
-    subclass_col.insert({
-        "_from": f"ontology_classes/{keys[2]}",
-        "_to": f"ontology_classes/{keys[0]}",
-        "created": now,
-        "expired": NEVER_EXPIRES,
-    })
+    subclass_col.insert(
+        {
+            "_from": f"ontology_classes/{keys[1]}",
+            "_to": f"ontology_classes/{keys[0]}",
+            "created": now,
+            "expired": NEVER_EXPIRES,
+        }
+    )
+    subclass_col.insert(
+        {
+            "_from": f"ontology_classes/{keys[2]}",
+            "_to": f"ontology_classes/{keys[0]}",
+            "created": now,
+            "expired": NEVER_EXPIRES,
+        }
+    )
 
     return keys
 
@@ -246,10 +262,12 @@ class TestFullWorkflow:
         assert doc is not None
         assert doc["status"] == "ready"
 
-        chunks_count = list(test_db.aql.execute(
-            "FOR c IN chunks FILTER c.doc_id == @did COLLECT WITH COUNT INTO cnt RETURN cnt",
-            bind_vars={"did": doc_id},
-        ))
+        chunks_count = list(
+            test_db.aql.execute(
+                "FOR c IN chunks FILTER c.doc_id == @did COLLECT WITH COUNT INTO cnt RETURN cnt",
+                bind_vars={"did": doc_id},
+            )
+        )
         assert chunks_count[0] == 3
 
         # --- Step 2: Run extraction (mock LLM) ---
@@ -268,10 +286,23 @@ class TestFullWorkflow:
 
         mock_llm = MagicMock()
         mock_llm.invoke = mock_invoke
+        mock_llm.ainvoke = AsyncMock(side_effect=mock_invoke)
 
+        # Each judge module re-binds `_get_llm` via `from ... import _get_llm`,
+        # so patching the source alone does not affect them.
         with (
             patch("app.services.extraction.get_db", return_value=test_db),
             patch("app.extraction.agents.extractor._get_llm", return_value=mock_llm),
+            patch(
+                "app.extraction.judges.faithfulness._get_llm", return_value=mock_llm
+            ),
+            patch(
+                "app.extraction.judges.semantic_validator._get_llm", return_value=mock_llm
+            ),
+            patch(
+                "app.extraction.judges.qualitative_eval_node._get_llm",
+                return_value=mock_llm,
+            ),
             patch(
                 "app.extraction.agents.extractor._retrieve_relevant_chunks",
                 side_effect=lambda *a, **k: [],
@@ -320,10 +351,12 @@ class TestFullWorkflow:
             assert reject_result is not None
             assert reject_result.get("action") == "reject"
 
-        decisions = list(test_db.aql.execute(
-            "FOR d IN curation_decisions FILTER d.run_id == @rid RETURN d",
-            bind_vars={"rid": run_id},
-        ))
+        decisions = list(
+            test_db.aql.execute(
+                "FOR d IN curation_decisions FILTER d.run_id == @rid RETURN d",
+                bind_vars={"rid": run_id},
+            )
+        )
         assert len(decisions) == 4
 
         approved = [d for d in decisions if d["action"] == "approve"]
@@ -346,12 +379,14 @@ class TestFullWorkflow:
         assert report.get("promoted_count", 0) >= 0
 
         # --- Step 6: Verify production classes ---
-        production_classes = list(test_db.aql.execute(
-            "FOR c IN ontology_classes "
-            "FILTER c.ontology_id == @oid AND c.expired == @never "
-            "RETURN c",
-            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
-        ))
+        production_classes = list(
+            test_db.aql.execute(
+                "FOR c IN ontology_classes "
+                "FILTER c.ontology_id == @oid AND c.expired == @never "
+                "RETURN c",
+                bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+            )
+        )
 
         production_labels = {c["label"] for c in production_classes}
 
@@ -414,17 +449,17 @@ class TestFullWorkflow:
                 edited_data={"label": "Updated Department"},
             )
 
-        all_decisions = list(test_db.aql.execute(
-            "FOR d IN curation_decisions FILTER d.run_id == @rid "
-            "SORT d.created_at ASC RETURN d",
-            bind_vars={"rid": run_id},
-        ))
+        all_decisions = list(
+            test_db.aql.execute(
+                "FOR d IN curation_decisions FILTER d.run_id == @rid "
+                "SORT d.created_at ASC RETURN d",
+                bind_vars={"rid": run_id},
+            )
+        )
 
         assert len(all_decisions) >= 2
 
-        approve_dec = next(
-            (d for d in all_decisions if d["action"] == "approve"), None
-        )
+        approve_dec = next((d for d in all_decisions if d["action"] == "approve"), None)
         assert approve_dec is not None
         assert approve_dec["curator_id"] == "auditor"
         assert approve_dec["entity_key"] == staging_keys[0]
@@ -459,12 +494,12 @@ class TestFullWorkflow:
                 edited_data={"label": "Renamed Organization"},
             )
 
-        all_versions = list(test_db.aql.execute(
-            "FOR c IN ontology_classes "
-            "FILTER c.uri == @uri "
-            "SORT c.created ASC RETURN c",
-            bind_vars={"uri": "http://example.org/ontology#Organization"},
-        ))
+        all_versions = list(
+            test_db.aql.execute(
+                "FOR c IN ontology_classes FILTER c.uri == @uri SORT c.created ASC RETURN c",
+                bind_vars={"uri": "http://example.org/ontology#Organization"},
+            )
+        )
 
         if len(all_versions) >= 2:
             old = all_versions[0]

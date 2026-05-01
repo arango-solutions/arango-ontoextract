@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import type { OntologyScorecard } from "@/types/curation";
+import { withBasePath } from "@/lib/base-path";
 
 interface Props {
   ontologies: OntologyScorecard[];
@@ -146,7 +147,7 @@ export default function OntologyScoreTable({ ontologies, selectedId, onSelect }:
                 </td>
                 <td className="px-3 py-2.5 text-center">
                   <a
-                    href={`/workspace?ontologyId=${o.ontology_id}`}
+                    href={withBasePath(`/workspace?ontologyId=${o.ontology_id}`)}
                     onClick={(e) => e.stopPropagation()}
                     className="text-xs px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-md transition-colors font-medium"
                   >

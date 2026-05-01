@@ -47,7 +47,7 @@ def paginate(
     filters: dict[str, Any] | None = None,
     extra_aql: str = "",
     bind_vars: dict[str, Any] | None = None,
-) -> PaginatedResponse[dict]:
+) -> PaginatedResponse[dict[str, Any]]:
     """Execute a paginated AQL query on a collection.
 
     Parameters

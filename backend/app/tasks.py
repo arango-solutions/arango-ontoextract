@@ -170,9 +170,9 @@ def _build_chunk_dicts(
     doc_id: str,
     chunks: list[Chunk],
     embeddings: list[list[float]],
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Convert Chunk dataclasses + embeddings into dicts for storage."""
-    result: list[dict] = []
+    result: list[dict[str, Any]] = []
     for chunk, emb in zip(chunks, embeddings, strict=True):
         result.append(
             {

@@ -205,8 +205,11 @@ class TestTemporalSnapshot:
         _ensure_collection(test_db, "ontology_classes")
         _ensure_collection(test_db, "ontology_properties")
         for edge_name in (
-            "subclass_of", "has_property", "equivalent_class",
-            "extends_domain", "related_to",
+            "subclass_of",
+            "has_property",
+            "equivalent_class",
+            "extends_domain",
+            "related_to",
         ):
             _ensure_collection(test_db, edge_name, edge=True)
 
@@ -276,9 +279,7 @@ class TestTemporalSnapshot:
             },
         )
 
-        history = get_entity_history(
-            test_db, collection="ontology_classes", key=v1["_key"]
-        )
+        history = get_entity_history(test_db, collection="ontology_classes", key=v1["_key"])
 
         assert len(history) == 3
         assert history[0]["label"] == "V3"
@@ -350,8 +351,9 @@ class TestTemporalSnapshot:
 
         events = get_timeline_events(test_db, ontology_id="tl_test")
 
-        tl_events = [e for e in events if e.get("collection") == "ontology_classes"
-                      and "tl_test" in str(e)]
+        tl_events = [
+            e for e in events if e.get("collection") == "ontology_classes" and "tl_test" in str(e)
+        ]
         assert len(tl_events) >= 2
         for i in range(len(tl_events) - 1):
             assert tl_events[i]["timestamp"] <= tl_events[i + 1]["timestamp"]
@@ -395,7 +397,5 @@ class TestTemporalSnapshot:
         assert reverted["version"] == 3
         assert reverted["change_type"] == "revert"
 
-        history = get_entity_history(
-            test_db, collection="ontology_classes", key=v1["_key"]
-        )
+        history = get_entity_history(test_db, collection="ontology_classes", key=v1["_key"])
         assert len(history) == 3

@@ -6,6 +6,7 @@ Paginated listing, mark-as-read, and unread count for the current user.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 
@@ -25,7 +26,7 @@ async def list_notifications(
     limit: int = Query(default=25, ge=1, le=100),
     cursor: str | None = Query(default=None),
     user: AuthenticatedUser = Depends(get_current_user),
-) -> PaginatedResponse[dict]:
+) -> PaginatedResponse[dict[str, Any]]:
     """Paginated list of notifications for the current user."""
     return notif_svc.list_notifications(user.user_id, limit=limit, cursor=cursor)
 
@@ -34,7 +35,7 @@ async def list_notifications(
 async def mark_notification_read(
     notification_id: str,
     user: AuthenticatedUser = Depends(get_current_user),
-) -> dict:
+) -> dict[str, Any]:
     """Mark a notification as read."""
     updated = notif_svc.mark_as_read(notification_id, user.user_id)
     if updated is None:
@@ -48,7 +49,7 @@ async def mark_notification_read(
 @router.get("/unread-count")
 async def get_unread_count(
     user: AuthenticatedUser = Depends(get_current_user),
-) -> dict:
+) -> dict[str, Any]:
     """Get the count of unread notifications for the current user."""
     count = notif_svc.get_unread_count(user.user_id)
     return {"unread_count": count}

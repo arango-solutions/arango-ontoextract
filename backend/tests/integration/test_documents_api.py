@@ -135,8 +135,13 @@ class TestGetChunks:
         mock_repo.get_document.return_value = _make_mock_doc()
         mock_repo.get_chunks_for_document.return_value = PaginatedResponse(
             data=[
-                {"_key": "c1", "doc_id": "doc1", "text": "chunk text", "chunk_index": 0,
-                 "token_count": 5}
+                {
+                    "_key": "c1",
+                    "doc_id": "doc1",
+                    "text": "chunk text",
+                    "chunk_index": 0,
+                    "token_count": 5,
+                }
             ],
             cursor=None,
             has_more=False,

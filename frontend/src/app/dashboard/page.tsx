@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { QualityDashboard, OntologyScorecard } from "@/types/curation";
 import { api, ApiError } from "@/lib/api-client";
+import { withBasePath } from "@/lib/base-path";
 import SummaryCards from "@/components/dashboard/SummaryCards";
 import OntologyScoreTable from "@/components/dashboard/OntologyScoreTable";
 import MetricCards from "@/components/dashboard/MetricCards";
@@ -152,9 +153,10 @@ function DashboardPageInner() {
               <Link href="/library" className="text-sm text-gray-500 hover:text-gray-700">
                 Library
               </Link>
-              <Link href="/" className="text-sm text-gray-500 hover:text-gray-700">
+              {/* Raw <a> so the trailing slash survives — Next <Link href="/"> drops it. */}
+              <a href={withBasePath("/")} className="text-sm text-gray-500 hover:text-gray-700">
                 Home
-              </Link>
+              </a>
             </div>
           </div>
 

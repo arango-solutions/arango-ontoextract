@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, ApiError } from "@/lib/api-client";
+import { api, ApiError, backendUrl } from "@/lib/api-client";
+import { withBasePath } from "@/lib/base-path";
 
 interface HealthStatus {
   status: string;
@@ -21,8 +22,7 @@ export default function Home() {
   const [statsError, setStatsError] = useState(false);
 
   useEffect(() => {
-    // Same-origin `/ready` → `app/ready/route.ts` proxies to FastAPI (avoids CORS).
-    fetch("/ready")
+    fetch(backendUrl("/ready"))
       .then(async (r) => {
         const data = (await r.json().catch(() => ({}))) as HealthStatus & {
           detail?: string;
@@ -178,7 +178,7 @@ function ActionCard({
 }) {
   return (
     <a
-      href={href}
+      href={withBasePath(href)}
       className="group block bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow overflow-hidden"
     >
       <div className={`${accentColor} h-1`} />

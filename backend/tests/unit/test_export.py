@@ -79,9 +79,7 @@ class TestExportOntology:
     @patch("app.services.export.list_properties", return_value=_MOCK_PROPERTIES)
     @patch("app.services.export.list_classes", return_value=_MOCK_CLASSES)
     @patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY)
-    def test_turtle_produces_valid_rdf(
-        self, mock_reg, mock_cls, mock_props, mock_get_db
-    ):
+    def test_turtle_produces_valid_rdf(self, mock_reg, mock_cls, mock_props, mock_get_db):
         mock_get_db.return_value = _mock_db()
         from app.services.export import export_ontology
 
@@ -98,9 +96,7 @@ class TestExportOntology:
     @patch("app.services.export.list_properties", return_value=_MOCK_PROPERTIES)
     @patch("app.services.export.list_classes", return_value=_MOCK_CLASSES)
     @patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY)
-    def test_turtle_contains_owl_classes(
-        self, mock_reg, mock_cls, mock_props, mock_get_db
-    ):
+    def test_turtle_contains_owl_classes(self, mock_reg, mock_cls, mock_props, mock_get_db):
         mock_get_db.return_value = _mock_db()
         from app.services.export import export_ontology
 
@@ -118,9 +114,7 @@ class TestExportOntology:
     @patch("app.services.export.list_properties", return_value=_MOCK_PROPERTIES)
     @patch("app.services.export.list_classes", return_value=_MOCK_CLASSES)
     @patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY)
-    def test_turtle_contains_properties(
-        self, mock_reg, mock_cls, mock_props, mock_get_db
-    ):
+    def test_turtle_contains_properties(self, mock_reg, mock_cls, mock_props, mock_get_db):
         mock_get_db.return_value = _mock_db()
         from app.services.export import export_ontology
 
@@ -155,9 +149,7 @@ class TestExportOntology:
     @patch("app.services.export.list_properties", return_value=_MOCK_PROPERTIES)
     @patch("app.services.export.list_classes", return_value=_MOCK_CLASSES)
     @patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY)
-    def test_turtle_contains_labels_and_comments(
-        self, mock_reg, mock_cls, mock_props, mock_get_db
-    ):
+    def test_turtle_contains_labels_and_comments(self, mock_reg, mock_cls, mock_props, mock_get_db):
         mock_get_db.return_value = _mock_db()
         from app.services.export import export_ontology
 
@@ -194,9 +186,7 @@ class TestExportJsonld:
     @patch("app.services.export.list_properties", return_value=_MOCK_PROPERTIES)
     @patch("app.services.export.list_classes", return_value=_MOCK_CLASSES)
     @patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY)
-    def test_jsonld_returns_dict(
-        self, mock_reg, mock_cls, mock_props, mock_get_db
-    ):
+    def test_jsonld_returns_dict(self, mock_reg, mock_cls, mock_props, mock_get_db):
         mock_get_db.return_value = _mock_db()
         from app.services.export import export_jsonld
 
@@ -208,9 +198,7 @@ class TestExportJsonld:
     @patch("app.services.export.list_properties", return_value=_MOCK_PROPERTIES)
     @patch("app.services.export.list_classes", return_value=_MOCK_CLASSES)
     @patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY)
-    def test_jsonld_is_serializable(
-        self, mock_reg, mock_cls, mock_props, mock_get_db
-    ):
+    def test_jsonld_is_serializable(self, mock_reg, mock_cls, mock_props, mock_get_db):
         mock_get_db.return_value = _mock_db()
         from app.services.export import export_jsonld
 
@@ -222,9 +210,7 @@ class TestExportJsonld:
     @patch("app.services.export.list_properties", return_value=_MOCK_PROPERTIES)
     @patch("app.services.export.list_classes", return_value=_MOCK_CLASSES)
     @patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY)
-    def test_jsonld_roundtrips_through_rdflib(
-        self, mock_reg, mock_cls, mock_props, mock_get_db
-    ):
+    def test_jsonld_roundtrips_through_rdflib(self, mock_reg, mock_cls, mock_props, mock_get_db):
         mock_get_db.return_value = _mock_db()
         from app.services.export import export_jsonld
 

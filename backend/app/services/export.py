@@ -174,7 +174,7 @@ def export_ontology(ontology_id: str, fmt: str = "turtle") -> str:
     return serialized
 
 
-def export_jsonld(ontology_id: str) -> dict:
+def export_jsonld(ontology_id: str) -> dict[str, Any]:
     """Export an ontology as JSON-LD.
 
     Returns:
@@ -206,32 +206,43 @@ def export_csv(ontology_id: str) -> str:
     writer.writerow(["# Classes"])
     writer.writerow(["uri", "label", "description", "parent_uri", "status", "tier"])
     for cls in classes:
-        writer.writerow([
-            cls.get("uri", ""),
-            cls.get("label", ""),
-            cls.get("description", ""),
-            cls.get("parent_uri", ""),
-            cls.get("status", ""),
-            cls.get("tier", ""),
-        ])
+        writer.writerow(
+            [
+                cls.get("uri", ""),
+                cls.get("label", ""),
+                cls.get("description", ""),
+                cls.get("parent_uri", ""),
+                cls.get("status", ""),
+                cls.get("tier", ""),
+            ]
+        )
 
     writer.writerow([])
 
     writer.writerow(["# Properties"])
-    writer.writerow([
-        "uri", "label", "description", "property_type",
-        "domain_class", "range", "status",
-    ])
+    writer.writerow(
+        [
+            "uri",
+            "label",
+            "description",
+            "property_type",
+            "domain_class",
+            "range",
+            "status",
+        ]
+    )
     for prop in properties:
-        writer.writerow([
-            prop.get("uri", ""),
-            prop.get("label", ""),
-            prop.get("description", ""),
-            prop.get("property_type", ""),
-            prop.get("domain_class", ""),
-            prop.get("range", ""),
-            prop.get("status", ""),
-        ])
+        writer.writerow(
+            [
+                prop.get("uri", ""),
+                prop.get("label", ""),
+                prop.get("description", ""),
+                prop.get("property_type", ""),
+                prop.get("domain_class", ""),
+                prop.get("range", ""),
+                prop.get("status", ""),
+            ]
+        )
 
     log.info(
         "exported ontology as CSV",

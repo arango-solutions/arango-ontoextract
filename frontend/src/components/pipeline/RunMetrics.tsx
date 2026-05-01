@@ -103,20 +103,22 @@ export default function RunMetrics({ runId }: RunMetricsProps) {
     );
   }
 
+  // Error must win over the no-metrics loading fallback, otherwise a failed
+  // first fetch leaves users staring at perpetual skeletons.
+  if (error) {
+    return (
+      <div className="text-sm text-red-500 p-4" data-testid="metrics-error">
+        {error}
+      </div>
+    );
+  }
+
   if (loading || !metrics) {
     return (
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 p-4" data-testid="metrics-loading">
         {Array.from({ length: 5 }).map((_, i) => (
           <SkeletonCard key={i} />
         ))}
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="text-sm text-red-500 p-4" data-testid="metrics-error">
-        {error}
       </div>
     );
   }

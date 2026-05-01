@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import Any
 
 from fastapi import APIRouter, Query
 
@@ -35,7 +36,7 @@ router = APIRouter(prefix="/api/v1/curation", tags=["curation"])
 
 
 @router.post("/decide", response_model=CurationDecisionResponse)
-async def record_decision(body: CurationDecisionCreate) -> dict:
+async def record_decision(body: CurationDecisionCreate) -> dict[str, Any]:
     """Record a single curation decision (approve/reject/edit/merge)."""
     result = curation_svc.record_decision(
         run_id=body.run_id,
@@ -51,7 +52,7 @@ async def record_decision(body: CurationDecisionCreate) -> dict:
 
 
 @router.post("/batch", response_model=BatchDecisionResponse)
-async def batch_decide(body: BatchDecisionRequest) -> dict:
+async def batch_decide(body: BatchDecisionRequest) -> dict[str, Any]:
     """Batch approve/reject/edit multiple entities in one call."""
     decisions = [
         {
@@ -76,7 +77,7 @@ async def list_decisions(
     status: str | None = Query(None, description="Filter by action (approve|reject|edit|merge)"),
     cursor: str | None = Query(None, description="Pagination cursor"),
     limit: int = Query(25, ge=1, le=100, description="Page size"),
-) -> dict:
+) -> dict[str, Any]:
     """List curation decisions (audit trail), filterable and paginated."""
     return curation_svc.get_decisions(
         run_id=run_id,
@@ -87,7 +88,7 @@ async def list_decisions(
 
 
 @router.get("/decisions/{decision_id}", response_model=CurationDecisionResponse)
-async def get_decision(decision_id: str) -> dict:
+async def get_decision(decision_id: str) -> dict[str, Any]:
     """Get a single curation decision by ID."""
     result = curation_svc.get_decision(decision_id=decision_id)
     if result is None:
@@ -99,7 +100,7 @@ async def get_decision(decision_id: str) -> dict:
 
 
 @router.post("/merge", response_model=MergeResponse)
-async def execute_merge(body: MergeRequest) -> dict:
+async def execute_merge(body: MergeRequest) -> dict[str, Any]:
     """Merge multiple entities into one target entity."""
     if body.target_key in body.source_keys:
         raise ValidationError(
@@ -118,7 +119,7 @@ async def execute_merge(body: MergeRequest) -> dict:
 
 
 @router.post("/promote/{run_id}", response_model=PromotionReport)
-async def promote_staging(run_id: str, body: PromotionRequest | None = None) -> dict:
+async def promote_staging(run_id: str, body: PromotionRequest | None = None) -> dict[str, Any]:
     """Promote approved staging entities to production graph."""
     ontology_id = body.ontology_id if body else None
     report = promotion_svc.promote_staging(
@@ -132,7 +133,7 @@ async def promote_staging(run_id: str, body: PromotionRequest | None = None) -> 
 async def get_curation_diff(
     run_id: str,
     ontology_id: str = Query("", description="Ontology to diff against"),
-) -> dict:
+) -> dict[str, Any]:
     """Compare staging extraction results against the current ontology state.
 
     Returns classes that are new (in staging but not in ontology),
@@ -140,7 +141,7 @@ async def get_curation_diff(
     """
     db = get_db()
 
-    staging_classes: list[dict] = []
+    staging_classes: list[dict[str, Any]] = []
     if db.has_collection("extraction_runs"):
         results_key = f"results_{run_id}"
         col = db.collection("extraction_runs")
@@ -154,27 +155,40 @@ async def get_curation_diff(
                 elif hasattr(c, "model_dump"):
                     staging_classes.append(c.model_dump())
 
-    current_classes: list[dict] = []
+    current_classes: list[dict[str, Any]] = []
     if ontology_id and db.has_collection("ontology_classes"):
-        current_classes = list(run_aql(db,
-            "FOR c IN ontology_classes "
-            "FILTER c.ontology_id == @oid AND c.expired == @never "
-            "RETURN c",
-            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
-        ))
+        current_classes = list(
+            run_aql(
+                db,
+                "FOR c IN ontology_classes "
+                "FILTER c.ontology_id == @oid AND c.expired == @never "
+                "RETURN c",
+                bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+            )
+        )
 
     staging_by_uri = {c.get("uri", ""): c for c in staging_classes if c.get("uri")}
     current_by_uri = {c.get("uri", ""): c for c in current_classes if c.get("uri")}
 
     added = [
-        {"entity_key": c.get("uri", ""), "entity_type": "class",
-         "label": c.get("label", ""), "new_value": c}
-        for uri, c in staging_by_uri.items() if uri not in current_by_uri
+        {
+            "entity_key": c.get("uri", ""),
+            "entity_type": "class",
+            "label": c.get("label", ""),
+            "new_value": c,
+        }
+        for uri, c in staging_by_uri.items()
+        if uri not in current_by_uri
     ]
     removed = [
-        {"entity_key": c.get("uri", ""), "entity_type": "class",
-         "label": c.get("label", ""), "old_value": c}
-        for uri, c in current_by_uri.items() if uri not in staging_by_uri
+        {
+            "entity_key": c.get("uri", ""),
+            "entity_type": "class",
+            "label": c.get("label", ""),
+            "old_value": c,
+        }
+        for uri, c in current_by_uri.items()
+        if uri not in staging_by_uri
     ]
     changed = []
     for uri in staging_by_uri:
@@ -182,13 +196,16 @@ async def get_curation_diff(
             s, cur = staging_by_uri[uri], current_by_uri[uri]
             diffs = [k for k in ("label", "description", "parent_uri") if s.get(k) != cur.get(k)]
             if diffs:
-                changed.append({
-                    "entity_key": uri, "entity_type": "class",
-                    "label": s.get("label", ""),
-                    "fields_changed": diffs,
-                    "old_value": {k: cur.get(k) for k in diffs},
-                    "new_value": {k: s.get(k) for k in diffs},
-                })
+                changed.append(
+                    {
+                        "entity_key": uri,
+                        "entity_type": "class",
+                        "label": s.get("label", ""),
+                        "fields_changed": diffs,
+                        "old_value": {k: cur.get(k) for k in diffs},
+                        "new_value": {k: s.get(k) for k in diffs},
+                    }
+                )
 
     return {
         "t1": "current",
@@ -200,7 +217,7 @@ async def get_curation_diff(
 
 
 @router.get("/promote/{run_id}/status", response_model=PromotionStatusResponse)
-async def get_promotion_status(run_id: str) -> dict:
+async def get_promotion_status(run_id: str) -> dict[str, Any]:
     """Get the promotion status for a run."""
     report = promotion_svc.get_promotion_status(run_id)
     if report is None:

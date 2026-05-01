@@ -143,11 +143,10 @@ describe("MergeCandidates", () => {
 
     fireEvent.click(screen.getByTestId("explain-btn-pair_001"));
 
-    await waitFor(() => {
-      expect(screen.getByTestId("explanation-pair_001")).toBeInTheDocument();
-    });
-
-    expect(screen.getByTestId("explanation-table")).toBeInTheDocument();
+    expect(await screen.findByTestId("explanation-pair_001")).toBeInTheDocument();
+    // Table only renders after the explain fetch resolves (the wrapper appears
+    // immediately on click but shows the loading state first).
+    expect(await screen.findByTestId("explanation-table")).toBeInTheDocument();
     expect(screen.getByText("label")).toBeInTheDocument();
     expect(screen.getByText("description")).toBeInTheDocument();
   });

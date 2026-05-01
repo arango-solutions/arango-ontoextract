@@ -75,12 +75,14 @@ def _cls_with_props(uri: str = "http://ex.org#A") -> ExtractedClass:
 
 class TestFaithfulnessParseResponse:
     def test_parses_valid_json(self):
-        raw = json.dumps({
-            "results": [
-                {"uri": "http://ex.org#A", "rating": "EXPLICIT", "reason": "ok"},
-                {"uri": "http://ex.org#B", "rating": "HALLUCINATED", "reason": "bad"},
-            ]
-        })
+        raw = json.dumps(
+            {
+                "results": [
+                    {"uri": "http://ex.org#A", "rating": "EXPLICIT", "reason": "ok"},
+                    {"uri": "http://ex.org#B", "rating": "HALLUCINATED", "reason": "bad"},
+                ]
+            }
+        )
         scores = faith_parse_response(raw, {"http://ex.org#A", "http://ex.org#B"})
         assert scores["http://ex.org#A"] == 1.0
         assert scores["http://ex.org#B"] == 0.1
@@ -138,9 +140,7 @@ class TestJudgeFaithfulness:
     async def test_calls_llm_and_parses(self):
         mock_llm = AsyncMock()
         mock_llm.ainvoke.return_value = MagicMock(
-            content=json.dumps({
-                "results": [{"uri": "u1", "rating": "EXPLICIT"}]
-            })
+            content=json.dumps({"results": [{"uri": "u1", "rating": "EXPLICIT"}]})
         )
         with patch("app.extraction.judges.faithfulness._get_llm", return_value=mock_llm):
             result = await judge_faithfulness(
@@ -167,12 +167,14 @@ class TestJudgeFaithfulness:
 
 class TestSemanticParseResponse:
     def test_parses_valid_json(self):
-        raw = json.dumps({
-            "results": [
-                {"uri": "u1", "score": 0.95, "issues": []},
-                {"uri": "u2", "score": 0.3, "issues": ["bad range"]},
-            ]
-        })
+        raw = json.dumps(
+            {
+                "results": [
+                    {"uri": "u1", "score": 0.95, "issues": []},
+                    {"uri": "u2", "score": 0.3, "issues": ["bad range"]},
+                ]
+            }
+        )
         scores = sem_parse_response(raw, {"u1", "u2"})
         assert scores["u1"] == 0.95
         assert scores["u2"] == 0.3
@@ -365,15 +367,23 @@ class TestQualitativeEvaluation:
             call_count += 1
             # First call(s) = map phase, last call = reduce phase
             if "Source Text" in messages[0].content:
-                return MagicMock(content=json.dumps({
-                    "observations": [
-                        "ClassA is well-grounded in the text about ontologies",
-                    ],
-                }))
-            return MagicMock(content=json.dumps({
-                "strengths": ["- Strong grounding in source text"],
-                "weaknesses": ["- Missing some concepts"],
-            }))
+                return MagicMock(
+                    content=json.dumps(
+                        {
+                            "observations": [
+                                "ClassA is well-grounded in the text about ontologies",
+                            ],
+                        }
+                    )
+                )
+            return MagicMock(
+                content=json.dumps(
+                    {
+                        "strengths": ["- Strong grounding in source text"],
+                        "weaknesses": ["- Missing some concepts"],
+                    }
+                )
+            )
 
         mock_llm = MagicMock()
         mock_llm.with_structured_output.side_effect = ValueError("Unsupported")

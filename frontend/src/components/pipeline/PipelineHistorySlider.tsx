@@ -85,70 +85,95 @@ export default function PipelineHistorySlider({
     fetchAllRuns();
   }, [fetchAllRuns]);
 
+  // One-way sync: external selectedRunId → slider currentIndex.
+  // We intentionally omit `currentIndex` from the deps so this effect cannot
+  // ping-pong with user-driven slider changes (which used to cause an infinite
+  // render loop that flickered the page and reopened the WebSocket every
+  // render — see git blame for the original two-effect bidirectional sync).
   useEffect(() => {
-    if (selectedRunId && runs.length > 0) {
-      const idx = runs.findIndex((r) => r._key === selectedRunId);
-      if (idx >= 0 && idx !== currentIndex) {
-        setCurrentIndex(idx);
-      }
+    if (!selectedRunId || runs.length === 0) return;
+    const idx = runs.findIndex((r) => r._key === selectedRunId);
+    if (idx >= 0) {
+      setCurrentIndex((prev) => (prev === idx ? prev : idx));
     }
-  }, [selectedRunId, runs, currentIndex]);
+  }, [selectedRunId, runs]);
+
+  // Mirror of currentIndex for use inside setInterval callbacks (which capture
+  // a stale value otherwise).
+  const currentIndexRef = useRef(currentIndex);
+  useEffect(() => {
+    currentIndexRef.current = currentIndex;
+  }, [currentIndex]);
+
+  // Look up a run by index and emit onSelectRun if it differs from the current
+  // selection. Used by every user-initiated index change (slider, VCR, play).
+  const emitSelection = useCallback(
+    (idx: number) => {
+      const run = runs[idx];
+      if (run && run._key !== selectedRunId) {
+        onSelectRun(run._key);
+      }
+    },
+    [runs, selectedRunId, onSelectRun],
+  );
 
   useEffect(() => {
-    if (playing && runs.length > 0) {
-      intervalRef.current = setInterval(() => {
-        setCurrentIndex((prev) => {
-          if (prev >= runs.length - 1) {
-            setPlaying(false);
-            return prev;
-          }
-          return prev + 1;
-        });
-      }, 1500 / speed);
-    }
+    if (!playing || runs.length === 0) return;
+    intervalRef.current = setInterval(() => {
+      const prev = currentIndexRef.current;
+      if (prev >= runs.length - 1) {
+        setPlaying(false);
+        return;
+      }
+      const next = prev + 1;
+      setCurrentIndex(next);
+      emitSelection(next);
+    }, 1500 / speed);
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
     };
-  }, [playing, speed, runs.length]);
-
-  useEffect(() => {
-    if (runs.length > 0 && runs[currentIndex]) {
-      const run = runs[currentIndex];
-      if (run._key !== selectedRunId) {
-        onSelectRun(run._key);
-      }
-    }
-  }, [currentIndex, runs, selectedRunId, onSelectRun]);
+  }, [playing, speed, runs.length, emitSelection]);
 
   const handleSliderChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      setCurrentIndex(parseInt(e.target.value, 10));
+      const idx = parseInt(e.target.value, 10);
+      setCurrentIndex(idx);
       setPlaying(false);
+      emitSelection(idx);
     },
-    [],
+    [emitSelection],
   );
 
   const handleRewind = useCallback(() => {
-    setCurrentIndex((prev) => Math.max(0, prev - 1));
+    const next = Math.max(0, currentIndex - 1);
     setPlaying(false);
-  }, []);
+    if (next !== currentIndex) {
+      setCurrentIndex(next);
+      emitSelection(next);
+    }
+  }, [currentIndex, emitSelection]);
 
   const handleFastForward = useCallback(() => {
-    setCurrentIndex((prev) => Math.min(runs.length - 1, prev + 1));
+    const next = Math.min(runs.length - 1, currentIndex + 1);
     setPlaying(false);
-  }, [runs.length]);
+    if (next !== currentIndex) {
+      setCurrentIndex(next);
+      emitSelection(next);
+    }
+  }, [currentIndex, runs.length, emitSelection]);
 
   const handlePlayPause = useCallback(() => {
     if (currentIndex >= runs.length - 1) {
       setCurrentIndex(0);
+      emitSelection(0);
       setPlaying(true);
     } else {
       setPlaying((prev) => !prev);
     }
-  }, [currentIndex, runs.length]);
+  }, [currentIndex, runs.length, emitSelection]);
 
   const cycleSpeed = useCallback(() => {
     setSpeedIdx((prev) => (prev + 1) % PLAYBACK_SPEEDS.length);

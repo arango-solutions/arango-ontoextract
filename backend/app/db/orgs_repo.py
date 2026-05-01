@@ -30,9 +30,9 @@ def create_organization(
     *,
     name: str,
     display_name: str = "",
-    settings: dict | None = None,
+    settings: dict[str, Any] | None = None,
     db: StandardDatabase | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Insert a new organization. Returns the full stored document."""
     db = db or get_db()
     col = db.collection(ORGANIZATIONS_COLLECTION)
@@ -47,7 +47,7 @@ def create_organization(
     return result["new"]
 
 
-def get_organization(org_id: str, *, db: StandardDatabase | None = None) -> dict | None:
+def get_organization(org_id: str, *, db: StandardDatabase | None = None) -> dict[str, Any] | None:
     """Return a single organization by ``_key``, or ``None``."""
     db = db or get_db()
     col = db.collection(ORGANIZATIONS_COLLECTION)
@@ -64,7 +64,7 @@ def list_organizations(
     sort_field: str = "created_at",
     sort_order: str = "desc",
     db: StandardDatabase | None = None,
-) -> PaginatedResponse[dict]:
+) -> PaginatedResponse[dict[str, Any]]:
     """Paginated listing of all organizations."""
     db = db or get_db()
     return paginate(
@@ -82,7 +82,7 @@ def update_organization(
     *,
     updates: dict[str, Any],
     db: StandardDatabase | None = None,
-) -> dict | None:
+) -> dict[str, Any] | None:
     """Update an organization. Returns the updated document."""
     db = db or get_db()
     col = db.collection(ORGANIZATIONS_COLLECTION)
@@ -102,7 +102,7 @@ def add_user_to_org(
     email: str = "",
     display_name: str = "",
     db: StandardDatabase | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Add a user to an organization with a role."""
     db = db or get_db()
     col = db.collection(USERS_COLLECTION)
@@ -125,7 +125,7 @@ def list_org_users(
     limit: int = 25,
     cursor: str | None = None,
     db: StandardDatabase | None = None,
-) -> PaginatedResponse[dict]:
+) -> PaginatedResponse[dict[str, Any]]:
     """Paginated listing of users in an organization."""
     db = db or get_db()
     return paginate(
@@ -140,8 +140,11 @@ def list_org_users(
 
 
 def get_org_user(
-    org_id: str, user_id: str, *, db: StandardDatabase | None = None
-) -> dict | None:
+    org_id: str,
+    user_id: str,
+    *,
+    db: StandardDatabase | None = None,
+) -> dict[str, Any] | None:
     """Find a user record by org_id and user_id."""
     db = db or get_db()
     query = """\
@@ -166,17 +169,20 @@ def update_user_role(
     role: str,
     *,
     db: StandardDatabase | None = None,
-) -> dict | None:
+) -> dict[str, Any] | None:
     """Update a user's role within an organization."""
     db = db or get_db()
     user = get_org_user(org_id, user_id, db=db)
     if user is None:
         return None
     col = db.collection(USERS_COLLECTION)
-    result = cast("dict[str, Any]", col.update(
-        {"_key": user["_key"], "role": role, "updated_at": _now_iso()},
-        return_new=True,
-    ))
+    result = cast(
+        "dict[str, Any]",
+        col.update(
+            {"_key": user["_key"], "role": role, "updated_at": _now_iso()},
+            return_new=True,
+        ),
+    )
     return result["new"]
 
 
@@ -198,7 +204,7 @@ def remove_user_from_org(
 
 def find_user_by_email(
     email: str, org_id: str, *, db: StandardDatabase | None = None
-) -> dict | None:
+) -> dict[str, Any] | None:
     """Find a user by email within an organization."""
     db = db or get_db()
     query = """\

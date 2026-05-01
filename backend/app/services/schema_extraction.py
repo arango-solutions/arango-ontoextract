@@ -46,7 +46,9 @@ class SchemaExtractionConfig(BaseModel):
     )
     extraction_source: Literal["arango_graph_schema"] = Field(
         default="arango_graph_schema",
-        description="Reverse-engineer from live graph schema; document-based extraction uses other APIs.",
+        description=(
+            "Reverse-engineer from live graph schema; document-based extraction uses other APIs."
+        ),
     )
     sample_limit_per_collection: int = Field(
         default=5,
@@ -131,8 +133,8 @@ def _run_schema_mapper_extract(
     config: SchemaExtractionConfig,
     mapper: tuple[Any, ...],
 ) -> tuple[str, dict[str, Any]]:
-    AnalyzerCls, export_owl, fingerprint_fn, snapshot_fn = mapper
-    from arango import ArangoClient
+    analyzer_cls, export_owl, fingerprint_fn, snapshot_fn = mapper
+    from arango.client import ArangoClient
 
     client = ArangoClient(hosts=config.target_host, verify_override=config.verify_tls)
     try:
@@ -149,11 +151,11 @@ def _run_schema_mapper_extract(
         phys_fp = fingerprint_fn(snap, include_samples=False)
 
         if config.use_llm_inference and config.llm_provider:
-            analyzer = AnalyzerCls(llm_provider=config.llm_provider, model=config.llm_model)
+            analyzer = analyzer_cls(llm_provider=config.llm_provider, model=config.llm_model)
         elif config.use_llm_inference:
-            analyzer = AnalyzerCls(llm_provider="openai", model=config.llm_model)
+            analyzer = analyzer_cls(llm_provider="openai", model=config.llm_model)
         else:
-            analyzer = AnalyzerCls(llm_provider=None, api_key=None)
+            analyzer = analyzer_cls(llm_provider=None, api_key=None)
 
         analysis = analyzer.analyze_physical_schema(
             db,
@@ -179,7 +181,7 @@ def _stub_extract_schema(config: SchemaExtractionConfig) -> str:
     Connects to the target ArangoDB, lists collections and edges,
     and produces a basic OWL Turtle representation.
     """
-    from arango import ArangoClient
+    from arango.client import ArangoClient
     from rdflib import OWL, RDF, RDFS, Graph, Literal, Namespace, URIRef
 
     client = ArangoClient(hosts=config.target_host, verify_override=config.verify_tls)

@@ -128,7 +128,10 @@ class TestUpdateExistingOntology:
         ]
 
         oid = _update_existing_ontology(
-            MagicMock(), ontology_id="onto_1", run_id="run_new", result=result_mock,
+            MagicMock(),
+            ontology_id="onto_1",
+            run_id="run_new",
+            result=result_mock,
         )
 
         assert oid == "onto_1"
@@ -148,7 +151,10 @@ class TestUpdateExistingOntology:
         mock_get.return_value = None
 
         oid = _update_existing_ontology(
-            MagicMock(), ontology_id="missing", run_id="run_x", result=MagicMock(),
+            MagicMock(),
+            ontology_id="missing",
+            run_id="run_x",
+            result=MagicMock(),
         )
 
         assert oid is None

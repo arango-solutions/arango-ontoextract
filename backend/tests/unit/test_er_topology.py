@@ -175,9 +175,7 @@ class TestComputeTopologicalSimilarity:
             "app.services.er_topology._get_class_neighborhood",
             return_value=empty,
         ):
-            score = compute_topological_similarity(
-                mock_db, class_key_1="a", class_key_2="b"
-            )
+            score = compute_topological_similarity(mock_db, class_key_1="a", class_key_2="b")
         assert score == 0.0
 
     def test_score_is_clamped_and_rounded(self):
@@ -216,9 +214,7 @@ class TestBatchTopologicalSimilarity:
                 side_effect=fake_neighborhood,
             ),
         ):
-            results = compute_batch_topological_similarity(
-                pairs=[("a", "b"), ("a", "c")]
-            )
+            results = compute_batch_topological_similarity(pairs=[("a", "b"), ("a", "c")])
 
         assert ("a", "b") in results
         assert ("a", "c") in results
@@ -242,9 +238,7 @@ class TestBatchTopologicalSimilarity:
                 side_effect=mock_get,
             ),
         ):
-            compute_batch_topological_similarity(
-                pairs=[("a", "b"), ("a", "c")]
-            )
+            compute_batch_topological_similarity(pairs=[("a", "b"), ("a", "c")])
 
         # "a" appears twice but should only be fetched once via caching
         keys_fetched = [c.args[1] for c in mock_get.call_args_list]

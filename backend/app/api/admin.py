@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -70,7 +71,7 @@ def _require_reset_enabled() -> None:
 
 
 @router.post("/reset")
-async def reset_ontology_data() -> dict:
+async def reset_ontology_data() -> dict[str, Any]:
     """Purge extracted ontology data while keeping documents and chunks."""
     _require_reset_enabled()
     db = get_db()
@@ -85,7 +86,7 @@ async def reset_ontology_data() -> dict:
 
 
 @router.post("/reset/full")
-async def reset_all_data() -> dict:
+async def reset_all_data() -> dict[str, Any]:
     """Full purge including documents and chunks."""
     _require_reset_enabled()
     db = get_db()
@@ -111,7 +112,7 @@ async def feedback_learning_artifacts(
         le=1000,
         description="Maximum number of curation decisions to convert into artifacts.",
     ),
-) -> dict:
+) -> dict[str, Any]:
     """Return gated HITL learning artifacts for offline review/export."""
     try:
         db = get_db()

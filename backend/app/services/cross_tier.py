@@ -63,9 +63,7 @@ def create_cross_tier_edges(
     result = CrossTierResult()
     staging_ontology_id = f"extraction_{run_id}"
 
-    staging_classes = _get_classes_by_classification(
-        db, staging_ontology_id, "extension"
-    )
+    staging_classes = _get_classes_by_classification(db, staging_ontology_id, "extension")
 
     for cls in staging_classes:
         parent_domain_uri = cls.get("parent_domain_uri") or cls.get("parent_uri")
@@ -148,7 +146,8 @@ def _get_classes_by_classification(
         return []
 
     return list(
-        run_aql(db,
+        run_aql(
+            db,
             """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
@@ -173,7 +172,8 @@ def _find_domain_class_by_uri(
         return None
 
     results = list(
-        run_aql(db,
+        run_aql(
+            db,
             """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @oid
@@ -198,7 +198,8 @@ def _detect_same_uri_conflicts(
         return
 
     results = list(
-        run_aql(db,
+        run_aql(
+            db,
             """\
 FOR local IN ontology_classes
   FILTER local.ontology_id == @staging_oid
@@ -245,12 +246,8 @@ def _detect_range_conflicts(
     _detect_range_conflicts_legacy_properties(
         db, staging_ontology_id, domain_ontology_id, conflicts
     )
-    _detect_range_conflicts_pgt_datatype(
-        db, staging_ontology_id, domain_ontology_id, conflicts
-    )
-    _detect_range_conflicts_pgt_object(
-        db, staging_ontology_id, domain_ontology_id, conflicts
-    )
+    _detect_range_conflicts_pgt_datatype(db, staging_ontology_id, domain_ontology_id, conflicts)
+    _detect_range_conflicts_pgt_object(db, staging_ontology_id, domain_ontology_id, conflicts)
 
 
 def _append_range_conflicts(
@@ -282,7 +279,8 @@ def _detect_range_conflicts_legacy_properties(
         return
 
     results = list(
-        run_aql(db,
+        run_aql(
+            db,
             """\
 FOR local_prop IN ontology_properties
   FILTER local_prop.ontology_id == @staging_oid
@@ -411,7 +409,8 @@ def _detect_hierarchy_conflicts(
         return
 
     domain_edges = list(
-        run_aql(db,
+        run_aql(
+            db,
             """\
 FOR e IN subclass_of
   FILTER e.expired == @never
@@ -431,7 +430,8 @@ FOR e IN subclass_of
     }
 
     staging_classes = list(
-        run_aql(db,
+        run_aql(
+            db,
             """\
 FOR cls IN ontology_classes
   FILTER cls.ontology_id == @staging_oid
@@ -451,9 +451,7 @@ FOR cls IN ontology_classes
             domain_parent = domain_parent_map[uri]
             local_parent = cls.get("parent_uri", "")
             if local_parent and local_parent != domain_parent:
-                domain_class = _find_domain_class_by_uri(
-                    db, domain_ontology_id, uri
-                )
+                domain_class = _find_domain_class_by_uri(db, domain_ontology_id, uri)
                 domain_key = domain_class["_key"] if domain_class else "unknown"
                 conflicts.append(
                     ConflictReport(

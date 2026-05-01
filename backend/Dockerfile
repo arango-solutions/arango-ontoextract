@@ -23,6 +23,7 @@ RUN apt-get update && \
 COPY --from=builder /install /usr/local
 
 COPY app/ ./app/
+COPY migrations/ ./migrations/
 
 USER aoe
 

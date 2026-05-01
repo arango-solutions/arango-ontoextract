@@ -11,6 +11,7 @@ import pytest
 from app.api.auth import (
     _MOCK_USER,
     AuthenticatedUser,
+    _is_public_http_path,
     decode_jwt,
     user_from_claims,
 )
@@ -102,6 +103,27 @@ class TestUserFromClaims:
         assert user.user_id == ""
 
 
+class TestIsPublicHttpPath:
+    """JWT middleware: HTML/static without Bearer; APIs mostly require auth."""
+
+    def test_static_and_health_without_api_prefix(self):
+        assert _is_public_http_path("/") is True
+        assert _is_public_http_path("/login") is True
+        assert _is_public_http_path("/health") is True
+        assert _is_public_http_path("/docs") is True
+        assert _is_public_http_path("/favicon.svg") is True
+
+    def test_next_assets(self):
+        assert _is_public_http_path("/_next/static/chunks/foo.js") is True
+
+    def test_public_api_routes(self):
+        assert _is_public_http_path("/api/v1/auth/login") is True
+        assert _is_public_http_path("/api/v1/metrics") is True
+
+    def test_protected_api_routes(self):
+        assert _is_public_http_path("/api/v1/ontology/library") is False
+
+
 class TestMockUser:
     """Tests for the dev-mode mock user."""
 
@@ -119,9 +141,7 @@ class TestGetCurrentUser:
     """Tests for ``get_current_user`` dependency."""
 
     def test_returns_user_when_present(self):
-        user = AuthenticatedUser(
-            user_id="u1", org_id="o1", roles=["viewer"]
-        )
+        user = AuthenticatedUser(user_id="u1", org_id="o1", roles=["viewer"])
 
         class FakeRequest:
             class State:
@@ -150,25 +170,19 @@ class TestRequireRole:
 
     def test_allows_matching_role(self):
         guard = require_role("admin")
-        user = AuthenticatedUser(
-            user_id="u1", org_id="o1", roles=["admin"]
-        )
+        user = AuthenticatedUser(user_id="u1", org_id="o1", roles=["admin"])
         result = guard(user)
         assert result.user_id == "u1"
 
     def test_allows_one_of_multiple_roles(self):
         guard = require_role("admin", "ontology_engineer")
-        user = AuthenticatedUser(
-            user_id="u1", org_id="o1", roles=["ontology_engineer"]
-        )
+        user = AuthenticatedUser(user_id="u1", org_id="o1", roles=["ontology_engineer"])
         result = guard(user)
         assert result.user_id == "u1"
 
     def test_denies_wrong_role(self):
         guard = require_role("admin")
-        user = AuthenticatedUser(
-            user_id="u1", org_id="o1", roles=["viewer"]
-        )
+        user = AuthenticatedUser(user_id="u1", org_id="o1", roles=["viewer"])
         from app.api.errors import ForbiddenError
 
         with pytest.raises(ForbiddenError):
