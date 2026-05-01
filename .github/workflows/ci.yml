@@ -136,6 +136,99 @@ jobs:
         run: npm test -- --ci --coverage=false
         working-directory: frontend
 
+  unified-image:
+    name: Unified Docker image build + smoke
+    runs-on: ubuntu-latest
+    needs: [lint-backend, lint-frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build unified image
+        run: docker build -t aoe:ci -f Dockerfile .
+
+      - name: Create CI network
+        run: docker network create aoe-ci
+
+      - name: Start ArangoDB
+        run: |
+          docker run -d --name arangodb --network aoe-ci \
+            -e ARANGO_ROOT_PASSWORD=changeme \
+            arangodb:3.12 \
+            arangod --server.endpoint tcp://0.0.0.0:8529
+          for i in $(seq 1 60); do
+            if docker exec arangodb curl -fsS -u root:changeme http://localhost:8529/_api/version >/dev/null 2>&1; then
+              echo "ArangoDB ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Start unified AOE container
+        run: |
+          docker run -d --name aoe --network aoe-ci -p 8000:8000 \
+            -e ARANGO_HOST=http://arangodb:8529 \
+            -e ARANGO_DB=OntoExtract \
+            -e ARANGO_USER=root \
+            -e ARANGO_PASSWORD=changeme \
+            -e APP_SECRET_KEY=ci-only-secret-${{ github.run_id }} \
+            -e APP_ENV=development \
+            -e APP_LOG_LEVEL=DEBUG \
+            -e RATE_LIMIT_ENABLED=false \
+            -e ANTHROPIC_API_KEY=ci-stub \
+            -e OPENAI_API_KEY=ci-stub \
+            aoe:ci
+          for i in $(seq 1 90); do
+            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+              echo "AOE health OK"
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8000/health || (echo "AOE never became healthy" && exit 1)
+
+      - name: Smoke - backend health proxied through nginx
+        run: |
+          body=$(curl -fsS http://localhost:8000/health)
+          echo "$body"
+          echo "$body" | grep -q '"status":"ok"'
+
+      - name: Smoke - frontend root served via nginx
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/)
+          echo "GET / -> $code"
+          # Login redirect (302/307) or HTML (200) are both acceptable; only fail on 5xx / 404.
+          test "$code" -lt 400 || test "$code" -eq 401
+
+      - name: "Smoke - WebSocket /ws/extraction handshake (regression for finding 1)"
+        run: |
+          # Without the /ws/ nginx block + corrected frontend WS URL, this would
+          # 404 (nginx falls through to Next.js, which has no such route).
+          # With the fix, FastAPI's WS handler must respond HTTP/1.1 101.
+          response=$(curl -s -i -m 5 \
+              -H 'Connection: Upgrade' \
+              -H 'Upgrade: websocket' \
+              -H 'Sec-WebSocket-Version: 13' \
+              -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+              "http://localhost:8000/ws/extraction/ci-smoke" || true)
+          echo "$response" | head -20
+          status=$(echo "$response" | head -1)
+          echo "Status: $status"
+          echo "$status" | grep -q '101' || (echo "Expected 101 Switching Protocols, got: $status" && exit 1)
+
+      - name: Container logs on failure
+        if: failure()
+        run: |
+          echo "=== aoe logs ==="
+          docker logs aoe || true
+          echo "=== arangodb logs ==="
+          docker logs arangodb || true
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker rm -f aoe arangodb 2>/dev/null || true
+          docker network rm aoe-ci 2>/dev/null || true
+
   test-e2e-backend:
     name: Backend E2E tests
     runs-on: ubuntu-latest
