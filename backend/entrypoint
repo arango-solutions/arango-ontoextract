@@ -1,0 +1,157 @@
+entrypoint = __file__
+
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+def _find_uv() -> str | None:
+    """Resolve uv binary. PATH may be minimal when the platform starts entrypoint."""
+    env_uv = os.environ.get("UV_BINARY", "").strip()
+    if env_uv and os.path.isfile(env_uv) and os.access(env_uv, os.X_OK):
+        return env_uv
+    found = shutil.which("uv")
+    if found:
+        return found
+    home = Path.home()
+    for candidate in (
+        Path("/usr/local/bin/uv"),
+        Path("/usr/bin/uv"),
+        home / ".local" / "bin" / "uv",
+        home / ".cargo" / "bin" / "uv",
+    ):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def _ensure_dependencies(root: str) -> None:
+    """Install deps into this interpreter (migrations / uvicorn).
+
+    Prefer ``uv pip install`` — target venvs often have no ``pip`` module; uv installs without it.
+    """
+    if os.environ.get("AOE_SKIP_UV_SYNC", "").lower() in ("1", "true", "yes"):
+        return
+    uv = _find_uv()
+    lock = os.path.join(root, "uv.lock")
+    if uv:
+        print(f"==> using uv: {uv}", flush=True)
+        if os.path.isfile(lock):
+            print("==> uv sync (lockfile)...", flush=True)
+            subprocess.run(
+                [uv, "sync", "--no-dev", "-p", sys.executable, "--frozen"],
+                cwd=root,
+                check=True,
+                env=os.environ,
+            )
+        print(
+            "==> uv pip install -e . (no pip module needed in target venv)...",
+            flush=True,
+        )
+        subprocess.run(
+            [
+                uv,
+                "pip",
+                "install",
+                "-e",
+                ".",
+                "--python",
+                sys.executable,
+            ],
+            cwd=root,
+            check=True,
+            env=os.environ,
+        )
+        return
+
+    print(
+        "==> uv not on PATH (set UV_BINARY if needed); bootstrapping pip then editable install...",
+        flush=True,
+    )
+    subprocess.run(
+        [sys.executable, "-m", "ensurepip", "--upgrade", "--default-pip"],
+        cwd=root,
+        check=True,
+        env=os.environ,
+    )
+    print("==> pip install -e . ...", flush=True)
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade-strategy",
+            "only-if-needed",
+            "-e",
+            ".",
+        ],
+        cwd=root,
+        check=True,
+        env=os.environ,
+    )
+
+
+def _fail_if_arango_points_at_loopback(url: str) -> None:
+    """Hosted Container Manager has no Arango on localhost; fail fast with a clear message."""
+    if os.environ.get("AOE_ALLOW_LOOPBACK_ARANGO", "").lower() in ("1", "true", "yes"):
+        return
+    u = url.lower()
+    if "localhost" in u or "127.0.0.1" in u:
+        print(
+            "ERROR: Arango URL points at loopback — unreachable from this container.\n"
+            "Use Container Manager env vars or a ``.env`` beside ``app/`` in the package.\n"
+            "Example: TEST_DEPLOYMENT_MODE=self_managed_platform, "
+            "ARANGO_ENDPOINT=https://host:8529\n"
+            "Optional bypass (debug only): AOE_ALLOW_LOOPBACK_ARANGO=1",
+            flush=True,
+        )
+        sys.exit(2)
+
+
+def main() -> None:
+    root = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(root)
+    _ensure_dependencies(root)
+    prev = os.environ.get("PYTHONPATH", "")
+    os.environ["PYTHONPATH"] = root + (os.pathsep + prev if prev else "")
+
+    # Settings reads ``.env`` from disk (path stable vs cwd); not only ``os.environ``.
+    from app.config import settings
+
+    _fail_if_arango_points_at_loopback(settings.effective_arango_host)
+    print(f"==> Arango coordinator: {settings.effective_arango_host}", flush=True)
+
+    listen_port = os.environ.get("PORT") or os.environ.get("BACKEND_PORT") or "8000"
+    workers = os.environ.get("BACKEND_WORKERS", "1")
+
+    print(f"==> AOE backend starting ({root})", flush=True)
+    print(f"==> Listening on 0.0.0.0:{listen_port} (workers={workers})", flush=True)
+
+    print("==> Running database migrations...", flush=True)
+    subprocess.run(
+        [sys.executable, "-m", "migrations.runner"],
+        cwd=root,
+        check=True,
+    )
+
+    print("==> Starting uvicorn...", flush=True)
+    argv = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        str(listen_port),
+        "--workers",
+        str(workers),
+    ]
+    os.execvp(sys.executable, argv)
+
+
+if __name__ == "__main__":
+    main()

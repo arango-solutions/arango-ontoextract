@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Thin wrapper so deployment tools that scan the repo for a root "entrypoint"
+# find this file; runtime image delegates to the full bootstrap script.
+set -euo pipefail
+exec /docker-entrypoint.sh "$@"
