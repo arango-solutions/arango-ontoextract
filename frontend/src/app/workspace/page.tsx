@@ -781,33 +781,6 @@ function WorkspacePageInner() {
     }
 
     switch (type) {
-      case "edge": {
-        const edgeKey = (data._key ?? data.key) as string;
-        const edgeLabel = (data.label ?? data.edgeType ?? edgeKey) as string;
-        return [
-          {
-            label: `${edgeLabel}`, icon: "🔍",
-            onClick: () => {
-              handleEdgeSelect(edgeKey);
-              setDetailPanelOpen(true);
-            },
-          },
-          { label: "separator0", separator: true },
-          {
-            label: "Approve edge", icon: "✅",
-            onClick: () => { approveEdge(edgeKey); },
-          },
-          {
-            label: "Reject edge", icon: "❌",
-            onClick: () => { rejectEdge(edgeKey); },
-          },
-          { label: "separator1", separator: true },
-          {
-            label: "Delete", icon: "🗑️", danger: true,
-            disabled: true,
-          },
-        ];
-      }
       case "property": {
         const propKey = (data._key ?? data.key) as string;
         const propLabel = (data.label ?? propKey) as string;
