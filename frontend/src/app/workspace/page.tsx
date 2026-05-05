@@ -781,51 +781,6 @@ function WorkspacePageInner() {
     }
 
     switch (type) {
-      case "property": {
-        const propKey = (data._key ?? data.key) as string;
-        const propLabel = (data.label ?? propKey) as string;
-        const propOntologyId = (data.ontology_id ?? selectedOntologyId) as string;
-        const propRange = (data.range_datatype ?? data.range ?? (data.target_class as Record<string, unknown> | undefined)?.label ?? "") as string;
-        const propStatus = data.status as string | undefined;
-
-        return [
-          {
-            label: propLabel, icon: "🔍",
-            onClick: () => {
-              setInfoPanelItem({
-                type: "run",
-                data: {
-                  _key: propKey,
-                  name: propLabel,
-                  status: propStatus,
-                  range: propRange,
-                  ontology_id: propOntologyId,
-                  ...data,
-                },
-              });
-            },
-          },
-          { label: "separator0", separator: true },
-          {
-            label: "Approve", icon: "✅",
-            disabled: propStatus === "approved",
-            onClick: () => { approveProperty(propKey, propOntologyId); },
-          },
-          {
-            label: "Reject", icon: "❌",
-            disabled: propStatus === "rejected",
-            onClick: () => { rejectProperty(propKey, propOntologyId); },
-          },
-          { label: "separator1", separator: true },
-          {
-            label: "Copy URI", icon: "📋",
-            disabled: !data.uri,
-            onClick: () => {
-              if (data.uri) navigator.clipboard.writeText(data.uri as string).catch(() => {});
-            },
-          },
-        ];
-      }
       case "document": {
         const docKey = (data._key) as string;
         return [
