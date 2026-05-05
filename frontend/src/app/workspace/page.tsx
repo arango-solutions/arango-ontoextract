@@ -14,6 +14,10 @@ import CanvasLensLegend from "@/components/workspace/CanvasLensLegend";
 import EmptyCanvasState from "@/components/workspace/EmptyCanvasState";
 import FloatingDetailPanel from "@/components/workspace/FloatingDetailPanel";
 import ContextMenu, { type ContextMenuItem } from "@/components/workspace/ContextMenu";
+import {
+  CONTEXT_MENU_BUILDERS,
+  type WorkspaceContextMenuActions,
+} from "@/components/workspace/contextMenus";
 import { api, ApiError, type PaginatedResponse } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
 import {
@@ -718,73 +722,65 @@ function WorkspacePageInner() {
     [],
   );
 
+  /**
+   * Context-menu action bundle handed to per-entity builders under
+   * ``components/workspace/contextMenus/``. Built fresh on every menu open so
+   * each builder closes over the latest state values (``activeLens``,
+   * ``graphViewMode``, ``pipelineRunId``, ``selectedOntologyId``); the
+   * function references inside are stable ``useCallback`` results from above.
+   */
+  const buildContextMenuActions = (): WorkspaceContextMenuActions => ({
+    handleNodeSelect,
+    handleEdgeSelect,
+    handleSelectOntology,
+    handleSelectRun,
+    setInfoPanelItem,
+    setDetailPanelOpen,
+    setQualityOverlay,
+    fetchOntologyQualityReport,
+    approveClass,
+    rejectClass,
+    approveEdge,
+    rejectEdge,
+    approveProperty,
+    rejectProperty,
+    deleteClass,
+    deleteOntology,
+    deleteDocument,
+    deleteRun,
+    setRenameOntology,
+    setReleaseOntology,
+    setShowCreateOntology,
+    setManageImports,
+    setFeedbackLearning,
+    exportOntology,
+    retryRun,
+    pipelineRunId,
+    activeLens,
+    setActiveLens,
+    graphViewMode,
+    setGraphViewMode,
+    fitAllNodes: () => viewportApiRef.current?.fitAll(),
+    centerView: () => viewportApiRef.current?.centerView(),
+    relayout: (mode) => viewportApiRef.current?.relayout(mode),
+    setEdgeStyle: (style) => viewportApiRef.current?.setEdgeStyle(style),
+    fitPipelineView: () => dagApiRef.current?.fitView(),
+    centerPipelineView: () => dagApiRef.current?.centerView(),
+    closeContextMenu,
+    selectedOntologyId,
+  });
+
   function getContextMenuItems(): ContextMenuItem[] {
     if (!contextMenu) return [];
 
     const { type, data } = contextMenu;
 
+    const builder = CONTEXT_MENU_BUILDERS[type];
+    if (builder) {
+      return builder(data, buildContextMenuActions());
+    }
+
     switch (type) {
-      case "class": {
-        const classKey = (data._key ?? data.key) as string;
-        const classLabel = (data.label ?? classKey) as string;
-        return [
-          {
-            label: "View Details", icon: "🔍",
-            onClick: () => { handleNodeSelect(classKey); },
-          },
-          { label: "separator0", separator: true },
-          {
-            label: "Approve", icon: "✅",
-            onClick: () => { approveClass(classKey); },
-          },
-          {
-            label: "Reject", icon: "❌",
-            onClick: () => { rejectClass(classKey); },
-          },
-          { label: "separator1", separator: true },
-          {
-            label: "View Version History", icon: "📜",
-            onClick: async () => {
-              try {
-                const history = await api.get<Record<string, unknown>[]>(
-                  `/api/v1/ontology/class/${classKey}/history`,
-                );
-                setInfoPanelItem({
-                  type: "ontology",
-                  data: { _key: classKey, name: classLabel, _history: history },
-                });
-              } catch {
-                handleNodeSelect(classKey);
-              }
-            },
-          },
-          {
-            label: "View Provenance", icon: "🔗",
-            onClick: async () => {
-              try {
-                const prov = await api.get<{ data: Record<string, unknown>[] }>(
-                  `/api/v1/ontology/class/${classKey}/provenance`,
-                );
-                setInfoPanelItem({
-                  type: "ontology",
-                  data: { _key: classKey, name: classLabel, _provenance: prov.data },
-                });
-              } catch {
-                handleNodeSelect(classKey);
-              }
-            },
-          },
-          { label: "separator2", separator: true },
-          {
-            label: "Delete", icon: "🗑️", danger: true,
-            onClick: () => {
-              if (confirm(`Delete class "${classLabel}"? This will expire the class and all connected edges.`)) {
-                deleteClass(classKey);
-              }
-            },
-          },
-        ];
-      }
       case "edge": {
         const edgeKey = (data._key ?? data.key) as string;
         const edgeLabel = (data.label ?? data.edgeType ?? edgeKey) as string;
