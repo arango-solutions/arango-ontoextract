@@ -781,20 +781,6 @@ function WorkspacePageInner() {
     }
 
     switch (type) {
-      case "document": {
-        const docKey = (data._key) as string;
-        return [
-          {
-            label: "View Info", icon: "📋",
-            onClick: () => { setInfoPanelItem({ type: "document", data }); },
-          },
-          { label: "separator1", separator: true },
-          {
-            label: "Delete", icon: "🗑️", danger: true,
-            onClick: () => { deleteDocument(docKey); },
-          },
-        ];
-      }
       case "ontology": {
         const ontKey = String(data._key ?? data.ontology_id ?? "").trim();
         return [

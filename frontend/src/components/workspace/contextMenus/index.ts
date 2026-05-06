@@ -18,6 +18,7 @@
 import type { ContextMenuItem } from "@/components/workspace/ContextMenu";
 
 import { buildClassContextMenu } from "./class";
+import { buildDocumentContextMenu } from "./document";
 import { buildEdgeContextMenu } from "./edge";
 import { buildPropertyContextMenu } from "./property";
 import type { WorkspaceContextMenuActions } from "./types";
@@ -33,11 +34,13 @@ export type ContextMenuBuilder = (
  *  falls back to its inline switch for kinds not registered here yet. */
 export const CONTEXT_MENU_BUILDERS: Partial<Record<string, ContextMenuBuilder>> = {
   class: buildClassContextMenu,
+  document: buildDocumentContextMenu,
   edge: buildEdgeContextMenu,
   property: buildPropertyContextMenu,
 };
 
 export { buildClassContextMenu } from "./class";
+export { buildDocumentContextMenu } from "./document";
 export { buildEdgeContextMenu } from "./edge";
 export { buildPropertyContextMenu } from "./property";
 export type { WorkspaceContextMenuActions } from "./types";
