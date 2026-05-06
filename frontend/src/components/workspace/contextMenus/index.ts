@@ -20,6 +20,7 @@ import type { ContextMenuItem } from "@/components/workspace/ContextMenu";
 import { buildClassContextMenu } from "./class";
 import { buildDocumentContextMenu } from "./document";
 import { buildEdgeContextMenu } from "./edge";
+import { buildOntologyContextMenu } from "./ontology";
 import { buildPropertyContextMenu } from "./property";
 import type { WorkspaceContextMenuActions } from "./types";
 
@@ -36,11 +37,13 @@ export const CONTEXT_MENU_BUILDERS: Partial<Record<string, ContextMenuBuilder>> 
   class: buildClassContextMenu,
   document: buildDocumentContextMenu,
   edge: buildEdgeContextMenu,
+  ontology: buildOntologyContextMenu,
   property: buildPropertyContextMenu,
 };
 
 export { buildClassContextMenu } from "./class";
 export { buildDocumentContextMenu } from "./document";
 export { buildEdgeContextMenu } from "./edge";
+export { buildOntologyContextMenu } from "./ontology";
 export { buildPropertyContextMenu } from "./property";
 export type { WorkspaceContextMenuActions } from "./types";
