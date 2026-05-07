@@ -781,61 +781,6 @@ function WorkspacePageInner() {
     }
 
     switch (type) {
-      case "run": {
-        const runKey = (data._key) as string;
-        return [
-          {
-            label: "View Pipeline & Metrics", icon: "⚡",
-            onClick: () => { handleSelectRun(runKey); },
-          },
-          {
-            label: "Copy Run ID", icon: "📋",
-            onClick: () => { navigator.clipboard.writeText(runKey).catch(() => {}); },
-          },
-          {
-            label: "View Run Info", icon: "ℹ️",
-            onClick: async () => {
-              try {
-                const run = await api.get<Record<string, unknown>>(
-                  `/api/v1/extraction/runs/${runKey}`,
-                );
-                setInfoPanelItem({ type: "run", data: run });
-              } catch (err) {
-                console.error("Failed to load run info", err);
-              }
-            },
-          },
-          {
-            label: "View Extracted Entities", icon: "📊",
-            onClick: async () => {
-              try {
-                const results = await api.get<Record<string, unknown>>(
-                  `/api/v1/extraction/runs/${runKey}/results`,
-                );
-                setInfoPanelItem({
-                  type: "run",
-                  data: { _key: runKey, name: "Extracted Entities", ...results },
-                });
-              } catch (err) {
-                console.error("Failed to load run results", err);
-              }
-            },
-          },
-          { label: "separator", separator: true },
-          {
-            label: "Retry Run", icon: "🔄",
-            onClick: () => { retryRun(runKey); },
-          },
-          {
-            label: "Delete Run", icon: "🗑️", danger: true,
-            onClick: () => {
-              if (confirm(`Delete run ${runKey}? This cannot be undone.`)) {
-                deleteRun(runKey);
-              }
-            },
-          },
-        ];
-      }
       case "canvas":
         return [
           {
