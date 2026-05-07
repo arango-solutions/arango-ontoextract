@@ -14,6 +14,10 @@ import CanvasLensLegend from "@/components/workspace/CanvasLensLegend";
 import EmptyCanvasState from "@/components/workspace/EmptyCanvasState";
 import FloatingDetailPanel from "@/components/workspace/FloatingDetailPanel";
 import ContextMenu, { type ContextMenuItem } from "@/components/workspace/ContextMenu";
+import {
+  CONTEXT_MENU_BUILDERS,
+  type WorkspaceContextMenuActions,
+} from "@/components/workspace/contextMenus";
 import { api, ApiError, type PaginatedResponse } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
 import {
@@ -93,14 +97,6 @@ interface ContextMenuState {
 const MIN_PANEL_WIDTH = 200;
 const MAX_PANEL_WIDTH = 480;
 const DEFAULT_PANEL_WIDTH = 280;
-
-const LENS_OPTIONS: { id: LensType; label: string }[] = [
-  { id: "semantic", label: "Semantic" },
-  { id: "confidence", label: "Confidence" },
-  { id: "curation", label: "Curation Status" },
-  { id: "diff", label: "Diff (vs timeline)" },
-  { id: "source", label: "Source Type" },
-];
 
 export default function WorkspacePage() {
   return (
@@ -718,518 +714,65 @@ function WorkspacePageInner() {
     [],
   );
 
+  /**
+   * Context-menu action bundle handed to per-entity builders under
+   * ``components/workspace/contextMenus/``. Built fresh on every menu open so
+   * each builder closes over the latest state values (``activeLens``,
+   * ``graphViewMode``, ``pipelineRunId``, ``selectedOntologyId``); the
+   * function references inside are stable ``useCallback`` results from above.
+   */
+  const buildContextMenuActions = (): WorkspaceContextMenuActions => ({
+    handleNodeSelect,
+    handleEdgeSelect,
+    handleSelectOntology,
+    handleSelectRun,
+    setInfoPanelItem,
+    setDetailPanelOpen,
+    setQualityOverlay,
+    fetchOntologyQualityReport,
+    approveClass,
+    rejectClass,
+    approveEdge,
+    rejectEdge,
+    approveProperty,
+    rejectProperty,
+    deleteClass,
+    deleteOntology,
+    deleteDocument,
+    deleteRun,
+    setRenameOntology,
+    setReleaseOntology,
+    setShowCreateOntology,
+    setManageImports,
+    setFeedbackLearning,
+    exportOntology,
+    retryRun,
+    pipelineRunId,
+    activeLens,
+    setActiveLens,
+    graphViewMode,
+    setGraphViewMode,
+    fitAllNodes: () => viewportApiRef.current?.fitAll(),
+    centerView: () => viewportApiRef.current?.centerView(),
+    relayout: (mode) => viewportApiRef.current?.relayout(mode),
+    setEdgeStyle: (style) => viewportApiRef.current?.setEdgeStyle(style),
+    fitPipelineView: () => dagApiRef.current?.fitView(),
+    centerPipelineView: () => dagApiRef.current?.centerView(),
+    closeContextMenu,
+    selectedOntologyId,
+  });
+
   function getContextMenuItems(): ContextMenuItem[] {
     if (!contextMenu) return [];
 
     const { type, data } = contextMenu;
 
-    switch (type) {
-      case "class": {
-        const classKey = (data._key ?? data.key) as string;
-        const classLabel = (data.label ?? classKey) as string;
-        return [
-          {
-            label: "View Details", icon: "🔍",
-            onClick: () => { handleNodeSelect(classKey); },
-          },
-          { label: "separator0", separator: true },
-          {
-            label: "Approve", icon: "✅",
-            onClick: () => { approveClass(classKey); },
-          },
-          {
-            label: "Reject", icon: "❌",
-            onClick: () => { rejectClass(classKey); },
-          },
-          { label: "separator1", separator: true },
-          {
-            label: "View Version History", icon: "📜",
-            onClick: async () => {
-              try {
-                const history = await api.get<Record<string, unknown>[]>(
-                  `/api/v1/ontology/class/${classKey}/history`,
-                );
-                setInfoPanelItem({
-                  type: "ontology",
-                  data: { _key: classKey, name: classLabel, _history: history },
-                });
-              } catch {
-                handleNodeSelect(classKey);
-              }
-            },
-          },
-          {
-            label: "View Provenance", icon: "🔗",
-            onClick: async () => {
-              try {
-                const prov = await api.get<{ data: Record<string, unknown>[] }>(
-                  `/api/v1/ontology/class/${classKey}/provenance`,
-                );
-                setInfoPanelItem({
-                  type: "ontology",
-                  data: { _key: classKey, name: classLabel, _provenance: prov.data },
-                });
-              } catch {
-                handleNodeSelect(classKey);
-              }
-            },
-          },
-          { label: "separator2", separator: true },
-          {
-            label: "Delete", icon: "🗑️", danger: true,
-            onClick: () => {
-              if (confirm(`Delete class "${classLabel}"? This will expire the class and all connected edges.`)) {
-                deleteClass(classKey);
-              }
-            },
-          },
-        ];
-      }
-      case "edge": {
-        const edgeKey = (data._key ?? data.key) as string;
-        const edgeLabel = (data.label ?? data.edgeType ?? edgeKey) as string;
-        return [
-          {
-            label: `${edgeLabel}`, icon: "🔍",
-            onClick: () => {
-              handleEdgeSelect(edgeKey);
-              setDetailPanelOpen(true);
-            },
-          },
-          { label: "separator0", separator: true },
-          {
-            label: "Approve edge", icon: "✅",
-            onClick: () => { approveEdge(edgeKey); },
-          },
-          {
-            label: "Reject edge", icon: "❌",
-            onClick: () => { rejectEdge(edgeKey); },
-          },
-          { label: "separator1", separator: true },
-          {
-            label: "Delete", icon: "🗑️", danger: true,
-            disabled: true,
-          },
-        ];
-      }
-      case "property": {
-        const propKey = (data._key ?? data.key) as string;
-        const propLabel = (data.label ?? propKey) as string;
-        const propOntologyId = (data.ontology_id ?? selectedOntologyId) as string;
-        const propRange = (data.range_datatype ?? data.range ?? (data.target_class as Record<string, unknown> | undefined)?.label ?? "") as string;
-        const propStatus = data.status as string | undefined;
-
-        return [
-          {
-            label: propLabel, icon: "🔍",
-            onClick: () => {
-              setInfoPanelItem({
-                type: "run",
-                data: {
-                  _key: propKey,
-                  name: propLabel,
-                  status: propStatus,
-                  range: propRange,
-                  ontology_id: propOntologyId,
-                  ...data,
-                },
-              });
-            },
-          },
-          { label: "separator0", separator: true },
-          {
-            label: "Approve", icon: "✅",
-            disabled: propStatus === "approved",
-            onClick: () => { approveProperty(propKey, propOntologyId); },
-          },
-          {
-            label: "Reject", icon: "❌",
-            disabled: propStatus === "rejected",
-            onClick: () => { rejectProperty(propKey, propOntologyId); },
-          },
-          { label: "separator1", separator: true },
-          {
-            label: "Copy URI", icon: "📋",
-            disabled: !data.uri,
-            onClick: () => {
-              if (data.uri) navigator.clipboard.writeText(data.uri as string).catch(() => {});
-            },
-          },
-        ];
-      }
-      case "document": {
-        const docKey = (data._key) as string;
-        return [
-          {
-            label: "View Info", icon: "📋",
-            onClick: () => { setInfoPanelItem({ type: "document", data }); },
-          },
-          { label: "separator1", separator: true },
-          {
-            label: "Delete", icon: "🗑️", danger: true,
-            onClick: () => { deleteDocument(docKey); },
-          },
-        ];
-      }
-      case "ontology": {
-        const ontKey = String(data._key ?? data.ontology_id ?? "").trim();
-        return [
-          {
-            label: "Open in Canvas", icon: "🔷",
-            onClick: () => {
-              if (ontKey) handleSelectOntology(ontKey);
-            },
-          },
-          {
-            label: "View Info", icon: "ℹ️",
-            onClick: () => { setInfoPanelItem({ type: "ontology", data }); },
-          },
-          {
-            label: "Edit name & description", icon: "✏️",
-            onClick: () => {
-              if (!ontKey) return;
-              const n = String(data.name ?? data.label ?? ontKey).trim();
-              const d = typeof data.description === "string" ? data.description : "";
-              setRenameOntology({ key: ontKey, name: n || ontKey, description: d });
-            },
-          },
-          {
-            label: "Release",
-            icon: "🚀",
-            disabled: data.status === "deprecated",
-            onClick: () => {
-              if (!ontKey || data.status === "deprecated") return;
-              const cur =
-                typeof data.current_release_version === "string"
-                  ? data.current_release_version
-                  : null;
-              setReleaseOntology({ key: ontKey, currentReleaseVersion: cur });
-            },
-          },
-          {
-            label: "Manage Imports", icon: "🔗",
-            onClick: () => {
-              if (!ontKey) return;
-              const n = String(data.name ?? data.label ?? ontKey).trim();
-              setManageImports({ key: ontKey, name: n });
-            },
-          },
-          {
-            label: "View Quality Report", icon: "📊",
-            onClick: () => fetchOntologyQualityReport(data),
-          },
-          {
-            label: "View Feedback Learning", icon: "📊",
-            onClick: () => {
-              setFeedbackLearning({
-                ontologyId: ontKey || null,
-                ontologyName: String(data.name ?? data.label ?? ontKey),
-              });
-            },
-          },
-          {
-            label: "Export",
-            icon: "📤",
-            submenu: [
-              { label: "Turtle (.ttl)", onClick: () => { if (ontKey) exportOntology(ontKey, "turtle"); } },
-              { label: "JSON-LD", onClick: () => { if (ontKey) exportOntology(ontKey, "jsonld"); } },
-              { label: "CSV", onClick: () => { if (ontKey) exportOntology(ontKey, "csv"); } },
-            ],
-          },
-          { label: "separator1", separator: true },
-          {
-            label: "Delete", icon: "🗑️", danger: true,
-            onClick: () => { if (ontKey) deleteOntology(ontKey); },
-          },
-        ];
-      }
-      case "run": {
-        const runKey = (data._key) as string;
-        return [
-          {
-            label: "View Pipeline & Metrics", icon: "⚡",
-            onClick: () => { handleSelectRun(runKey); },
-          },
-          {
-            label: "Copy Run ID", icon: "📋",
-            onClick: () => { navigator.clipboard.writeText(runKey).catch(() => {}); },
-          },
-          {
-            label: "View Run Info", icon: "ℹ️",
-            onClick: async () => {
-              try {
-                const run = await api.get<Record<string, unknown>>(
-                  `/api/v1/extraction/runs/${runKey}`,
-                );
-                setInfoPanelItem({ type: "run", data: run });
-              } catch (err) {
-                console.error("Failed to load run info", err);
-              }
-            },
-          },
-          {
-            label: "View Extracted Entities", icon: "📊",
-            onClick: async () => {
-              try {
-                const results = await api.get<Record<string, unknown>>(
-                  `/api/v1/extraction/runs/${runKey}/results`,
-                );
-                setInfoPanelItem({
-                  type: "run",
-                  data: { _key: runKey, name: "Extracted Entities", ...results },
-                });
-              } catch (err) {
-                console.error("Failed to load run results", err);
-              }
-            },
-          },
-          { label: "separator", separator: true },
-          {
-            label: "Retry Run", icon: "🔄",
-            onClick: () => { retryRun(runKey); },
-          },
-          {
-            label: "Delete Run", icon: "🗑️", danger: true,
-            onClick: () => {
-              if (confirm(`Delete run ${runKey}? This cannot be undone.`)) {
-                deleteRun(runKey);
-              }
-            },
-          },
-        ];
-      }
-      case "canvas":
-        return [
-          {
-            label: "View As",
-            icon: "👁",
-            submenu: LENS_OPTIONS.map((opt) => ({
-              label: opt.label,
-              checked: activeLens === opt.id,
-              onClick: () => setActiveLens(opt.id),
-            })),
-          },
-          {
-            label: "Graph Style",
-            icon: "📐",
-            submenu: [
-              {
-                label: "Network (circles)",
-                checked: graphViewMode === "network",
-                onClick: () => setGraphViewMode("network"),
-              },
-              {
-                label: "Box & Arrow (UML)",
-                checked: graphViewMode === "box-arrow",
-                onClick: () => setGraphViewMode("box-arrow"),
-              },
-            ],
-          },
-          ...(graphViewMode === "network" ? [
-            {
-              label: "Layout",
-              icon: "🔄",
-              submenu: [
-                { label: "Force-Directed", onClick: () => { viewportApiRef.current?.relayout("force"); } },
-                { label: "Circular", onClick: () => { viewportApiRef.current?.relayout("circular"); } },
-                { label: "Grid", onClick: () => { viewportApiRef.current?.relayout("grid"); } },
-                { label: "Random", onClick: () => { viewportApiRef.current?.relayout("random"); } },
-              ],
-            },
-            {
-              label: "Edge Style",
-              icon: "〰",
-              submenu: [
-                { label: "Curved", onClick: () => { viewportApiRef.current?.setEdgeStyle("curved"); } },
-                { label: "Straight", onClick: () => { viewportApiRef.current?.setEdgeStyle("straight"); } },
-              ],
-            },
-          ] as ContextMenuItem[] : []),
-          { label: "separator1", separator: true },
-          {
-            label: "Fit All Nodes",
-            icon: "⬜",
-            onClick: () => {
-              closeContextMenu();
-              viewportApiRef.current?.fitAll();
-            },
-          },
-          {
-            label: "Center View",
-            icon: "🎯",
-            onClick: () => {
-              closeContextMenu();
-              viewportApiRef.current?.centerView();
-            },
-          },
-          { label: "sep-new-ont", separator: true },
-          {
-            label: "New Ontology…",
-            icon: "➕",
-            onClick: () => setShowCreateOntology(true),
-          },
-          {
-            label: "Review Feedback Learning",
-            icon: "📊",
-            onClick: () => setFeedbackLearning({ ontologyId: null, ontologyName: null }),
-          },
-        ];
-      case "step": {
-        const stepKey = data.stepKey as string;
-        const stepLabel = data.label as string;
-        const stepStatus = data.status as string;
-        const stepError = data.error as string | undefined;
-        const stepStartedAt = data.startedAt as string | undefined;
-        const stepCompletedAt = data.completedAt as string | undefined;
-        const stepData = data.data as Record<string, unknown> | undefined;
-        const durationMs = stepData?.duration_ms as number | undefined;
-
-        const items: ContextMenuItem[] = [
-          {
-            label: "View Step Details", icon: "🔍",
-            onClick: () => {
-              setInfoPanelItem({
-                type: "run",
-                data: {
-                  _key: `step:${stepKey}`,
-                  name: stepLabel,
-                  status: stepStatus,
-                  started_at: stepStartedAt,
-                  completed_at: stepCompletedAt,
-                  duration_ms: durationMs,
-                  ...stepData,
-                },
-              });
-            },
-          },
-        ];
-
-        if (stepError) {
-          items.push({
-            label: "Copy Error", icon: "📋",
-            onClick: () => {
-              navigator.clipboard.writeText(stepError).catch(() => {});
-            },
-          });
-        }
-
-        items.push({ label: "sep0", separator: true });
-
-        if (pipelineRunId) {
-          items.push({
-            label: "View Run Results", icon: "📊",
-            onClick: async () => {
-              try {
-                const results = await api.get<Record<string, unknown>>(
-                  `/api/v1/extraction/runs/${pipelineRunId}/results`,
-                );
-                setInfoPanelItem({
-                  type: "run",
-                  data: {
-                    _key: pipelineRunId,
-                    name: `Results — ${stepLabel}`,
-                    ...results,
-                  },
-                });
-              } catch (err) {
-                console.error("Failed to load run results", err);
-              }
-            },
-          });
-
-          items.push({ label: "sep1", separator: true });
-
-          items.push({
-            label: "Retry Run", icon: "🔄",
-            disabled: stepStatus !== "failed",
-            onClick: () => { if (pipelineRunId) retryRun(pipelineRunId); },
-          });
-        }
-
-        return items;
-      }
-
-      case "pipeline_canvas": {
-        const items: ContextMenuItem[] = [
-          {
-            label: "Fit All Nodes", icon: "⬜",
-            onClick: () => {
-              closeContextMenu();
-              dagApiRef.current?.fitView();
-            },
-          },
-          {
-            label: "Center View", icon: "🎯",
-            onClick: () => {
-              closeContextMenu();
-              dagApiRef.current?.centerView();
-            },
-          },
-        ];
-
-        if (pipelineRunId) {
-          items.push({ label: "sep0", separator: true });
-          items.push({
-            label: "Copy Run ID", icon: "📋",
-            onClick: () => {
-              if (pipelineRunId) {
-                navigator.clipboard.writeText(pipelineRunId).catch(() => {});
-              }
-            },
-          });
-          items.push({
-            label: "View Run Info", icon: "ℹ️",
-            onClick: async () => {
-              try {
-                const res = await fetch(backendUrl(`/api/v1/extraction/runs/${pipelineRunId}`));
-                if (res.ok) {
-                  const run = await res.json();
-                  setInfoPanelItem({ type: "run", data: run });
-                }
-              } catch (err) {
-                console.error("Failed to load run info", err);
-              }
-            },
-          });
-          items.push({
-            label: "View Extracted Entities", icon: "📊",
-            onClick: async () => {
-              try {
-                const results = await api.get<Record<string, unknown>>(
-                  `/api/v1/extraction/runs/${pipelineRunId}/results`,
-                );
-                setInfoPanelItem({
-                  type: "run",
-                  data: { _key: pipelineRunId, name: "Extracted Entities", ...results },
-                });
-              } catch (err) {
-                console.error("Failed to load run results", err);
-              }
-            },
-          });
-
-          items.push({ label: "sep1", separator: true });
-
-          items.push({
-            label: "Retry Run", icon: "🔄",
-            onClick: () => { if (pipelineRunId) retryRun(pipelineRunId); },
-          });
-          items.push({
-            label: "Delete Run", icon: "🗑️", danger: true,
-            onClick: () => {
-              if (pipelineRunId && confirm(`Delete run ${pipelineRunId}? This cannot be undone.`)) {
-                deleteRun(pipelineRunId);
-              }
-            },
-          });
-        }
-
-        return items;
-      }
-
-      default:
-        return [];
+    const builder = CONTEXT_MENU_BUILDERS[type];
+    if (builder) {
+      return builder(data, buildContextMenuActions());
     }
+
+    return [];
   }
 
   return (
