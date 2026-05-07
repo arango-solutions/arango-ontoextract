@@ -14,7 +14,6 @@ jest.mock("@/lib/api-client", () => ({
     del: jest.fn(),
   },
   ApiError: class ApiError extends Error {},
-  backendUrl: (p: string) => `http://api.test${p}`,
 }));
 
 const mockedApi = apiClient.api as jest.Mocked<typeof apiClient.api>;
@@ -68,7 +67,6 @@ function makeActions(
 describe("buildPipelineCanvasContextMenu", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn();
   });
 
   it("only shows Fit / Center when no run is loaded", () => {
@@ -131,19 +129,15 @@ describe("buildPipelineCanvasContextMenu", () => {
     expect(writeText).toHaveBeenCalledWith("run-1");
   });
 
-  it("View Run Info uses raw fetch + backendUrl and opens the panel on res.ok", async () => {
+  it("View Run Info uses api.get and opens the panel with the fetched run", async () => {
     const actions = makeActions({ pipelineRunId: "run-1" });
-    const fetchMock = global.fetch as jest.Mock;
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ _key: "run-1", status: "succeeded" }),
-    });
+    mockedApi.get.mockResolvedValueOnce({ _key: "run-1", status: "succeeded" });
 
     const items = buildPipelineCanvasContextMenu({}, actions);
     await items.find((it) => it.label === "View Run Info")!.onClick!();
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://api.test/api/v1/extraction/runs/run-1",
+    expect(mockedApi.get).toHaveBeenCalledWith(
+      "/api/v1/extraction/runs/run-1",
     );
     expect(actions.setInfoPanelItem).toHaveBeenCalledWith({
       type: "run",
@@ -151,15 +145,17 @@ describe("buildPipelineCanvasContextMenu", () => {
     });
   });
 
-  it("View Run Info silently skips the panel when res.ok is false (raw-fetch quirk)", async () => {
+  it("View Run Info logs and skips the panel on fetch error (matches run menu)", async () => {
     const actions = makeActions({ pipelineRunId: "run-1" });
-    const fetchMock = global.fetch as jest.Mock;
-    fetchMock.mockResolvedValueOnce({ ok: false, json: async () => ({}) });
+    mockedApi.get.mockRejectedValueOnce(new Error("403 Forbidden"));
+    const errSpy = jest.spyOn(console, "error").mockImplementation(() => {});
 
     const items = buildPipelineCanvasContextMenu({}, actions);
     await items.find((it) => it.label === "View Run Info")!.onClick!();
 
     expect(actions.setInfoPanelItem).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 
   it("View Extracted Entities uses api.get and merges results into the panel payload", async () => {
