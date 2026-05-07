@@ -8,7 +8,8 @@ import type {
   PipelineStep,
 } from "@/types/pipeline";
 import { PIPELINE_STEPS } from "@/types/pipeline";
-import { backendUrl, getApiOrigin, nextPublicBasePath } from "@/lib/api-client";
+import { backendUrl, getApiOrigin } from "@/lib/api-client";
+import { getBasePath } from "@/lib/base-path";
 
 interface UseExtractionSocketReturn {
   steps: Map<string, StepStatus>;
@@ -45,7 +46,7 @@ function buildInitialSteps(): Map<string, StepStatus> {
 export function resolveWsUrl(runId: string): string {
   if (typeof window === "undefined") return "";
   const wsBase = getApiOrigin().replace(/^http/, "ws");
-  const basePath = nextPublicBasePath();
+  const basePath = getBasePath();
   const token = localStorage.getItem("aoe_auth_token") ?? "";
   const sep = token ? "?" : "";
   return `${wsBase}${basePath}/ws/extraction/${runId}${sep}${token ? `token=${encodeURIComponent(token)}` : ""}`;

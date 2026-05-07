@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock
 
-NEVER_EXPIRES: int = sys.maxsize
+from app.db.temporal_constants import NEVER_EXPIRES
 
 
 class TestCreateProducedByEdge:

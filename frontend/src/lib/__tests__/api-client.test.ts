@@ -3,7 +3,6 @@ import {
   buildApiUrl,
   getApiBaseUrl,
   getApiOrigin,
-  nextPublicBasePath,
 } from "@/lib/api-client";
 
 describe("buildApiUrl", () => {
@@ -56,20 +55,5 @@ describe("getApiOrigin", () => {
   });
 });
 
-describe("nextPublicBasePath", () => {
-  const prev = process.env.NEXT_PUBLIC_BASE_PATH;
-
-  afterEach(() => {
-    process.env.NEXT_PUBLIC_BASE_PATH = prev;
-  });
-
-  it("returns empty string when NEXT_PUBLIC_BASE_PATH is unset or empty", () => {
-    process.env.NEXT_PUBLIC_BASE_PATH = "";
-    expect(nextPublicBasePath()).toBe("");
-  });
-
-  it("strips trailing slash from configured prefix", () => {
-    process.env.NEXT_PUBLIC_BASE_PATH = "/_service/uds/_db/ontoextract/aoe/";
-    expect(nextPublicBasePath()).toBe("/_service/uds/_db/ontoextract/aoe");
-  });
-});
+// `getBasePath` (formerly duplicated as `nextPublicBasePath` here) lives in
+// `frontend/src/lib/base-path.ts`; see `__tests__/base-path.test.ts`.

@@ -6,13 +6,13 @@ All routes delegate to the curation and promotion services.
 from __future__ import annotations
 
 import logging
-import sys
 from typing import Any
 
 from fastapi import APIRouter, Query
 
 from app.api.errors import NotFoundError, ValidationError
 from app.db.client import get_db
+from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import doc_get, run_aql
 from app.models.curation import (
     BatchDecisionRequest,
@@ -29,8 +29,6 @@ from app.services import curation as curation_svc
 from app.services import promotion as promotion_svc
 
 log = logging.getLogger(__name__)
-
-NEVER_EXPIRES: int = sys.maxsize
 
 router = APIRouter(prefix="/api/v1/curation", tags=["curation"])
 

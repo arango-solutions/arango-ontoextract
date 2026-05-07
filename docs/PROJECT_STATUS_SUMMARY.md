@@ -22,7 +22,7 @@ AOE is an LLM-driven ontology extraction and curation platform built on ArangoDB
 | **LLM Extraction Pipeline** | Complete | 6-agent LangGraph pipeline: Strategy Selector → Extraction Agent → Consistency Checker → Quality Judge → Entity Resolution → Pre-Curation Filter |
 | **Multi-Signal Confidence** | Complete | 7-signal scoring: cross-pass agreement, LLM-as-Judge faithfulness, semantic validity, structural quality (relationship richness), description quality, provenance strength, property agreement |
 | **Visual Curation** | Complete | Interactive graph editor with node/edge actions, VCR timeline for ontology time travel, diff view, provenance display |
-| **Ontology Editor** | Complete | Standalone graph editor at `/ontology/[id]/edit` with Add Class, Add Property, inline rename, reparent |
+| **Ontology Editor** | Complete | Standalone graph editor at `/ontology/edit?ontologyId=…` (flat route per ADR-007) with Add Class, Add Property, inline rename, reparent |
 | **Pipeline Monitor** | Complete | Real-time 6-step DAG with polling, metrics (tokens, cost, entities, confidence, completeness, agreement rate), error log |
 | **Ontology Library** | Complete | Browse, search (ArangoSearch full-text), filter by tier/tags, quality panel with health score, export (OWL/Turtle, JSON-LD, CSV) |
 | **Multi-Document Ontologies** | Complete | Build one ontology from multiple documents; add documents incrementally |

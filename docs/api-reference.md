@@ -351,8 +351,9 @@ Upload a file for processing. The file is parsed, chunked, and embedded asynchro
 | `GET` | `/api/v1/quality/{ontology_id}` | Structural + extraction quality merge for one ontology | Yes |
 | `GET` | `/api/v1/quality/{ontology_id}/evaluation` | Qualitative strengths / weaknesses | Yes |
 | `GET` | `/api/v1/quality/{ontology_id}/class-scores` | Per-class faithfulness and semantic validity | Yes |
+| `GET` | `/api/v1/quality/{ontology_id}/history?limit=50` | Timestamped quality snapshots for trend views | Yes |
 
-**Note:** `GET /api/v1/quality/summary` was removed; use `GET /api/v1/quality/dashboard` and read the `summary` field. `GET .../history` and `POST .../recall` appear in the PRD but are not implemented in the current router.
+**Note:** `GET /api/v1/quality/summary` was removed; use `GET /api/v1/quality/dashboard` and read the `summary` field. `POST .../recall` appears in the PRD but is not implemented in the current router.
 
 ---
 

@@ -53,7 +53,7 @@ The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline
 | Area | Status | Gap |
 |------|--------|-----|
 | Entity Resolution (§6.7) | **Stub** | ER agent exists but uses placeholder logic. No real `arango-entity-resolution` library integration. |
-| Imports, Composition & Dependencies (§6.15, §6.8.8–8.16) | **Not Started** | No `owl:imports` edge tracking, no standard ontology catalog, no dependency graph UI, no ontology composition (create ontology that imports/extends others), no effective graph API |
+| Imports, Composition & Dependencies (§6.15, §6.8.8–8.16) | **Phase 0 done; later phases pending** | `owl:imports` edge tracking, `sync_owl_imports_edges`, and `GET/POST/DELETE /api/v1/ontology/{id}/imports` are shipped (see Stream 1 below). Standard catalog, dependency graph UI, effective graph API still pending. |
 | Constraints (§6.14) | **Not Started** | No OWL restriction or SHACL shape extraction, import, display, or export |
 | Schema Extraction (§6.9) | **Stub** | Service shell exists but minimal implementation. No named graph-aware extraction, no direct graph-to-ontology mapping fallback, no UI for graph selection |
 | Quality Dashboard (§6.13.7) | **Partially Done** | Unified `/dashboard`, `/quality` → per-ontology tab, recharts radar, audited OntoQA metrics, connectivity metric, qualitative evaluation, live per-ontology six-dimension view. Missing: history tracking, gold-standard recall, curation throughput timer, RAG benchmark comparison |
@@ -416,8 +416,8 @@ See `docs/adr/006-pgt-aligned-property-collections.md` for full design rationale
 | V.7 | Restriction editor panel | Frontend | 6h | Visual builder for OWL restrictions (cardinality, value, has-value, qualified). Generates `owl:Restriction` constructs. |
 | V.8 | Namespace manager | Frontend | 3h | Settings dialog for managing ontology prefixes and namespaces. |
 | V.9 | Validation console | Frontend | 4h | Bottom panel showing real-time OWL consistency issues and SHACL validation results. |
-| V.10 | Migrate curation page to Sigma.js | Frontend | 4h | Replace `GraphCanvas` usage in `/curation/[runId]` with `SigmaGraphCanvas`. |
-| V.11 | Migrate editor page to Sigma.js | Frontend | 4h | Replace `GraphCanvas` usage in `/ontology/[id]/edit` with `SigmaGraphCanvas`. |
+| V.10 | Migrate curation page to Sigma.js | Frontend | 4h | Replace `GraphCanvas` usage in `/curation?runId=…` with `SigmaGraphCanvas`. |
+| V.11 | Migrate editor page to Sigma.js | Frontend | 4h | Replace `GraphCanvas` usage in `/ontology/edit?ontologyId=…` with `SigmaGraphCanvas`. |
 
 **Exit Criteria:** All graph visualization uses Sigma.js/graphology. TopBraid-class editor panels available. Graphs with 1000+ nodes render smoothly.
 

@@ -17,13 +17,15 @@ flowchart LR
     MCP["MCP Server<br/>(FastMCP)"]
     AI["AI Agents<br/>(Cursor, Claude)"]
 
-    subgraph Pipeline["LangGraph Pipeline"]
+    subgraph Pipeline["LangGraph Pipeline (6 agents)"]
         direction TB
         P1["Strategy → LLM"]
         P2["Consistency"]
-        P3["ER"]
-        P4["Filter"]
-        P1 --> P2 --> P3 --> P4
+        P3["Quality Judge"]
+        P4["ER"]
+        P5["Pre-Curation Filter"]
+        P1 --> P2 --> P3
+        P3 --> P4 --> P5
     end
 
     subgraph Arango["ArangoDB (multi-model)"]
@@ -71,7 +73,7 @@ After startup:
 | Backend API | http://localhost:8000 |
 | API Docs (Swagger) | http://localhost:8000/docs |
 | Frontend | http://localhost:3000 |
-| ArangoDB UI | http://localhost:8529 |
+| ArangoDB UI | http://localhost:8530 (host port; container listens on 8529) |
 
 ## Features
 
@@ -90,7 +92,7 @@ After startup:
 | ArangoDB Visualizer | Done | Custom themes, canvas actions, saved queries |
 | Auth (JWT + RBAC) | Done | 4 roles, org-scoped, API key auth for MCP |
 | Notifications | Done | In-app notification queue with WebSocket |
-| Observability | Done | Structured logging, Prometheus metrics, OpenTelemetry |
+| Observability | Partial | Structured logging (`structlog`) + Prometheus metrics; OpenTelemetry tracing not yet wired (see `docs/REMAINING_WORK_PLAN.md` E.1) |
 
 ## Project Structure
 
@@ -325,7 +327,7 @@ All configuration is via environment variables (see [.env.example](.env.example)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ARANGO_HOST` | `http://localhost:8529` | ArangoDB connection URL |
+| `ARANGO_HOST` | `http://localhost:8530` | ArangoDB connection URL (matches the host-side port mapping in `docker-compose.yml`) |
 | `ARANGO_DB` | `OntoExtract` | Database name |
 | `ANTHROPIC_API_KEY` | — | Anthropic API key for Claude |
 | `OPENAI_API_KEY` | — | OpenAI API key for embeddings |

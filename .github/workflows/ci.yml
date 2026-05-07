@@ -28,6 +28,11 @@ jobs:
         run: ruff check backend/
       - name: Mypy
         run: mypy backend/app/ --ignore-missing-imports
+      - name: requirements.txt parity (BYOC)
+        # Catches drift between root `requirements.txt` and the canonical
+        # backend/pyproject.toml — see scripts/sync-requirements.sh.
+        run: bash scripts/sync-requirements.sh --check
+        working-directory: ${{ github.workspace }}
 
   lint-frontend:
     name: Lint Frontend

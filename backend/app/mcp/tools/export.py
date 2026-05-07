@@ -8,17 +8,15 @@ Two tools:
 from __future__ import annotations
 
 import logging
-import sys
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 from app.db.client import get_db
+from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import doc_get, run_aql
 
 log = logging.getLogger(__name__)
-
-NEVER_EXPIRES: int = sys.maxsize
 
 _PROPERTY_VERTEX_COLLECTIONS = (
     "ontology_properties",

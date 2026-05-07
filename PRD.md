@@ -151,7 +151,7 @@ This section defines the end-to-end workflows performed by each role. These work
 
 ### Use Case Catalog
 
-> **Note on routes:** The use cases below describe logical workflows. References to routes like `/upload`, `/library`, `/curation/[runId]` describe the v1 multi-page UI. In the target object-centric workspace (§7.8), all these workflows occur within the unified `/workspace` route via the Asset Explorer, Canvas, and context menus. **Migration is incremental** (see §7.8 "Migration Strategy"): legacy routes remain functional during transition and gain "Open in Workspace" links; they redirect to workspace only after feature parity is achieved.
+> **Note on routes:** The use cases below describe logical workflows. References to routes like `/upload`, `/library`, `/curation?runId=…` describe the v1 multi-page UI (now flat per ADR-007). In the target object-centric workspace (§7.8), all these workflows occur within the unified `/workspace` route via the Asset Explorer, Canvas, and context menus. **Migration is incremental** (see §7.8 "Migration Strategy"): legacy routes remain functional during transition and gain "Open in Workspace" links; they redirect to workspace only after feature parity is achieved.
 
 #### UC-1: Extract Ontology from Document (Domain Expert)
 
@@ -167,7 +167,7 @@ This section defines the end-to-end workflows performed by each role. These work
 5. System auto-triggers the extraction pipeline (6-agent LangGraph)
 6. User is redirected to `/pipeline` to monitor progress
 7. Pipeline completes: Strategy → Extraction → Consistency → Quality Judge → ER → Filter
-8. User clicks "Curate" to review results in `/curation/[runId]`
+8. User clicks "Curate" to review results in `/curation?runId=…`
 9. User reviews each class: approves, rejects, or edits
 10. User clicks "Promote" to move approved classes to the ontology library
 
@@ -216,7 +216,7 @@ This section defines the end-to-end workflows performed by each role. These work
 
 **Main Flow:**
 1. User navigates to `/pipeline` and selects a completed run
-2. User clicks "Curate" → opens `/curation/[runId]`
+2. User clicks "Curate" → opens `/curation?runId=…`
 3. Graph canvas shows extracted classes with confidence-coded colors (red <0.5, yellow 0.5–0.7, green >0.7)
 4. User clicks a class node → side panel shows: label, URI, description, properties, provenance (source chunks), confidence breakdown
 5. User approves high-confidence classes (batch select → approve)
@@ -245,7 +245,7 @@ This section defines the end-to-end workflows performed by each role. These work
 
 **Main Flow:**
 1. User navigates to `/library` and selects an ontology
-2. User clicks "Edit Graph" → opens `/ontology/[ontologyId]/edit`
+2. User clicks "Edit Graph" → opens `/ontology/edit?ontologyId=…` (flat route per ADR-007)
 3. Graph editor shows all current classes and relationships
 4. User clicks "+ Add Class" → dialog: label, URI, description, parent class
 5. System creates class with `source_type: "manual"`, `confidence: 1.0`
@@ -1089,7 +1089,7 @@ This evolution should be planned as a separate phase after the current extractio
 | FR-4.7 | Provenance and evidence display | Clicking a node or edge shows supporting `source_chunk_ids`, quoted `evidence_text`, optional spans, evidence confidence, and extraction rationale. Unsupported assertions are visually distinguishable. |
 | FR-4.8 | Confidence scores | Each extracted entity displays LLM confidence; low-confidence entities visually highlighted |
 | FR-4.9 | All visualization libraries are React-compatible | No vanilla JS graph libraries that require manual DOM manipulation; all rendering through React component tree. Sigma.js qualifies via `@react-sigma/core`. |
-| FR-4.10 | Standalone ontology graph viewer/editor (not tied to extraction run) | The curation dashboard is accessible in two modes: (1) **Staging mode** (`/curation/[runId]`) for reviewing extraction results, and (2) **Ontology mode** (`/ontology/[ontologyId]/edit`) for directly viewing and editing any approved ontology in the library. Ontology mode loads all current classes, properties, and edges for the ontology, supports the same graph visualization, node/edge actions, VCR timeline, and diff view. Enables ongoing ontology management beyond initial extraction. **Long-term target:** TopBraid Composer-class editing environment with class tree browser, property matrix, restriction editor, SHACL shapes panel, namespace manager, and validation console (see "Full Ontology Editor Vision" above). |
+| FR-4.10 | Standalone ontology graph viewer/editor (not tied to extraction run) | The curation dashboard is accessible in two modes: (1) **Staging mode** (`/curation?runId=…`) for reviewing extraction results, and (2) **Ontology mode** (`/ontology/edit?ontologyId=…`) for directly viewing and editing any approved ontology in the library. Both routes are flat (no `[param]` segments) per ADR-007 to support the static-export bundle used by Container Manager deployments. Ontology mode loads all current classes, properties, and edges for the ontology, supports the same graph visualization, node/edge actions, VCR timeline, and diff view. Enables ongoing ontology management beyond initial extraction. **Long-term target:** TopBraid Composer-class editing environment with class tree browser, property matrix, restriction editor, SHACL shapes panel, namespace manager, and validation console (see "Full Ontology Editor Vision" above). |
 | FR-4.11 | Direct class/property creation in the editor | In ontology mode, users can manually add new classes, properties, and edges directly in the graph editor without needing an extraction run. New entities are created with `source_type: "manual"` and go through the same temporal versioning. Useful for filling gaps LLM extraction missed. |
 | FR-4.12 | Drag-and-drop reparenting | Users can drag a class node onto another class to create or change a `subclass_of` relationship. The old edge is expired and a new edge created (temporal versioning). Visual feedback shows valid drop targets. |
 | FR-4.12a | Node repositioning (drag) | Users can drag any node to reposition it on the canvas. Dragging updates the graphology position in real-time; releasing snaps the node to its new position. This is a basic canvas interaction, not reparenting. Sigma.js supports this natively via mouse/touch captor events. |
@@ -1876,7 +1876,7 @@ class ExtractionPipelineState(TypedDict):
 
 | Panel | Content | Data Source |
 |-------|---------|-------------|
-| **Run List** | All extraction/ER/schema runs with status badges (queued, running, completed, failed), sortable/filterable by date, org, status, type | `GET /api/v1/extraction/runs`, `GET /api/v1/er/runs`, `GET /api/v1/schema/extract/{run_id}` |
+| **Run List** | All extraction/ER/schema runs with status badges (queued, running, completed, failed), sortable/filterable by date, org, status, type | `GET /api/v1/extraction/runs`, `GET /api/v1/er/runs`, `GET /api/v1/ontology/schema/extract/{run_id}` |
 | **Agent DAG** | Visual directed acyclic graph showing the LangGraph pipeline topology with fork/join parallelism. Nodes show agent name, status (pending/running/completed/failed), and elapsed time. Quality Judge and ER Agent are positioned side-by-side to show they run in parallel. Edges animate when data flows between steps. Canvas is pannable and zoomable. | WebSocket `ws://host/ws/extraction/{run_id}` events + `extraction_runs.stats` + REST polling fallback every 5s |
 | **Node Detail** | Click an agent node to see: input/output summary, LLM prompt/response (truncated), validation errors, retry count | `GET /api/v1/extraction/runs/{run_id}` with `?detail=agent_steps` |
 | **Run Metrics** | Total duration, LLM token usage (prompt + completion), estimated cost, entity counts (classes/properties extracted), pass agreement rates | `extraction_runs.stats` |
@@ -2566,8 +2566,8 @@ The `ontology_constraints` collection already exists in §5.1 with fields for `o
 | `GET` | `/api/v1/ontology/library/{ontology_id}` | Get ontology detail (classes, properties, stats) |
 | `PUT` | `/api/v1/ontology/library/{ontology_id}` | Update ontology metadata (name, description, tags, status) |
 | `DELETE` | `/api/v1/ontology/library/{ontology_id}` | Deprecate an ontology — returns cascade analysis (dependent ontologies, affected orgs) |
-| `GET` | `/api/v1/ontology/library/{ontology_id}/imports` | List ontologies this ontology imports (outbound `imports` edges) |
-| `GET` | `/api/v1/ontology/library/{ontology_id}/imported-by` | List ontologies that import this one (inbound `imports` edges) |
+| `GET` | `/api/v1/ontology/{ontology_id}/imports` | List ontologies this ontology imports (outbound `imports` edges) |
+| `GET` | `/api/v1/ontology/{ontology_id}/imported-by` | List ontologies that import this one (inbound `imports` edges) |
 | `POST` | `/api/v1/ontology/library/{ontology_id}/add-document` | Add a document to an existing ontology — triggers incremental extraction |
 | `GET` | `/api/v1/ontology/library/{ontology_id}/documents` | List all source documents for this ontology (via `extracted_from` edges) |
 | `GET` | `/api/v1/ontology/library/{ontology_id}/constraints` | List all constraints (OWL restrictions + SHACL shapes) for this ontology |
@@ -2584,8 +2584,8 @@ The `ontology_constraints` collection already exists in §5.1 with fields for `o
 | `GET` | `/api/v1/ontology/{ontology_id}/diff` | Temporal diff — query params `t1={ts}&t2={ts}` returns added/removed/changed entities |
 | `GET` | `/api/v1/ontology/class/{class_key}/history` | Full version history of a specific class (all versions with change metadata) |
 | `POST` | `/api/v1/ontology/class/{class_key}/revert` | Revert a class to a previous version — creates a new current version restoring historical state |
-| `POST` | `/api/v1/schema/extract` | Trigger schema extraction from an external ArangoDB instance |
-| `GET` | `/api/v1/schema/extract/{run_id}` | Get schema extraction run status |
+| `POST` | `/api/v1/ontology/schema/extract` | Trigger schema extraction from an external ArangoDB instance |
+| `GET` | `/api/v1/ontology/schema/extract/{run_id}` | Get schema extraction run status |
 
 ### 7.4 Curation Endpoints
 
@@ -2618,7 +2618,7 @@ The `ontology_constraints` collection already exists in §5.1 with fields for `o
 | `PUT` | `/api/v1/orgs/{org_id}` | Update organization settings (selected base ontologies, ER config) |
 | `GET` | `/api/v1/orgs/{org_id}/users` | List users in organization |
 | `POST` | `/api/v1/orgs/{org_id}/users` | Add user to organization with role |
-| `PUT` | `/api/v1/orgs/{org_id}/users/{user_id}` | Update user role |
+| `PUT` | `/api/v1/orgs/{org_id}/users/{user_id}/role` | Update user role |
 | `DELETE` | `/api/v1/orgs/{org_id}/users/{user_id}` | Remove user from organization |
 
 ### 7.7 System Endpoints
@@ -2715,7 +2715,7 @@ Clients that don't support WebSocket can poll the corresponding `GET` status end
 
 **Design Philosophy:** The frontend is a **single-page workspace** that eliminates tab-hopping and page navigation. Instead of separate pages for upload, library, curation, editing, and quality, all workflows occur within a unified interface composed of persistent zones. Users interact with objects (documents, ontologies, classes, edges) via **right-click context menus** and **drag-and-drop**, not by navigating to different pages.
 
-**Why this matters:** The original multi-route architecture (`/upload`, `/library`, `/curation/[runId]`, `/ontology/[id]/edit`, `/pipeline`, `/quality`) forces users to jump between pages to complete simple workflows. For example, editing an ontology requires: Library → click ontology → click "Edit Graph" → new page loads → find the class → edit → go back to Library. An object-centric workspace makes this: right-click ontology → it opens in the canvas → right-click class → edit. One workspace, zero navigation.
+**Why this matters:** The original multi-route architecture (`/upload`, `/library`, `/curation?runId=…`, `/ontology/edit?ontologyId=…`, `/pipeline`, `/quality`) forces users to jump between pages to complete simple workflows. For example, editing an ontology requires: Library → click ontology → click "Edit Graph" → new page loads → find the class → edit → go back to Library. An object-centric workspace makes this: right-click ontology → it opens in the canvas → right-click class → edit. One workspace, zero navigation.
 
 #### Workspace Layout
 
@@ -2796,8 +2796,8 @@ The previous multi-page routes redirect to the workspace with appropriate contex
 | `/` | Opens workspace with no ontology selected (landing state) |
 | `/upload` | Opens workspace with asset explorer focused, file drop zone active |
 | `/library` | Opens workspace with asset explorer expanded showing ontologies |
-| `/curation/[runId]` | Opens workspace with staging graph loaded in canvas, curation lens active |
-| `/ontology/[id]/edit` | Opens workspace with ontology loaded in canvas |
+| `/curation?runId=…` | Opens workspace with staging graph loaded in canvas, curation lens active (flat route per ADR-007) |
+| `/ontology/edit?ontologyId=…` | Opens workspace with ontology loaded in canvas (flat route per ADR-007) |
 | `/pipeline` | Opens workspace with pipeline runs expanded in asset explorer |
 | `/quality` or `/dashboard` | Opens workspace with quality radar overlay visible |
 | `/entity-resolution` | Opens workspace with ER candidates view in canvas |
@@ -2840,8 +2840,8 @@ Workspace subsumes legacy page functionality one feature at a time:
 | File upload | `/upload` | Drag-and-drop onto canvas or asset explorer | Move upload UI into workspace; `/upload` redirects |
 | Ontology browsing | `/library` | Asset explorer (ontologies section) | `/library` redirects to `/workspace` |
 | Pipeline DAG | `/pipeline` | Pipeline run detail in asset explorer + overlay | `/pipeline` redirects |
-| Curation workflow | `/curation/[runId]` | Staging graph in canvas + curation lens | `/curation/*` redirects |
-| Graph editor | `/ontology/[id]/edit` | Canvas is always editable (Sigma.js) | `/ontology/*/edit` redirects |
+| Curation workflow | `/curation?runId=…` | Staging graph in canvas + curation lens | `/curation` redirects |
+| Graph editor | `/ontology/edit?ontologyId=…` | Canvas is always editable (Sigma.js) | `/ontology/edit` redirects |
 | Quality dashboard | `/dashboard` | Quality radar overlay in workspace | `/dashboard` redirects |
 | Entity resolution | `/entity-resolution` | ER view in canvas | `/entity-resolution` redirects |
 

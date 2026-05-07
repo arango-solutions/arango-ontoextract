@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock, patch
 
 from app.models.ontology import ExtractedClass
@@ -23,8 +22,6 @@ from app.services.er import (
     score_existing_class_vs_extracted,
     update_config,
 )
-
-NEVER_EXPIRES = sys.maxsize
 
 
 class TestERPipelineConfig:

@@ -9,15 +9,14 @@ Three tools:
 from __future__ import annotations
 
 import logging
-import sys
 import time
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-log = logging.getLogger(__name__)
+from app.db.temporal_constants import NEVER_EXPIRES
 
-NEVER_EXPIRES: int = sys.maxsize
+log = logging.getLogger(__name__)
 
 
 def register_temporal_tools(mcp: FastMCP) -> None:

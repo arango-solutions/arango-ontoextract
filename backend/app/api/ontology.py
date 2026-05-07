@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import re
-import sys
 import time
 from typing import Any, cast
 
@@ -14,6 +13,7 @@ from app.api.auth import get_user_from_request
 from app.api.errors import ConflictError, NotFoundError, ValidationError
 from app.db import documents_repo, ontology_repo, registry_repo, releases_repo
 from app.db.client import get_db
+from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import doc_get, run_aql
 from app.models.curation import (
     TemporalDiff,
@@ -37,8 +37,6 @@ from app.services.schema_extraction import (
     extract_schema,
     get_extraction_status,
 )
-
-NEVER_EXPIRES: int = sys.maxsize
 
 log = logging.getLogger(__name__)
 

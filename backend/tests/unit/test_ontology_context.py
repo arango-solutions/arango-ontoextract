@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,8 +12,6 @@ from app.services.ontology_context import (
     serialize_multi_domain_context,
     set_domain_ontology_for_org,
 )
-
-NEVER_EXPIRES = sys.maxsize
 
 
 def _mock_db(

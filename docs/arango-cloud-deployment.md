@@ -119,7 +119,7 @@ cp .env.example .env
 Edit `.env` with your values:
 
 ```bash
-ARANGO_HOST=http://localhost:8529
+ARANGO_HOST=http://localhost:8530   # local docker-compose host port; use your cloud endpoint in production
 ARANGO_DB=OntoExtract
 ARANGO_USER=root
 ARANGO_PASSWORD=changeme

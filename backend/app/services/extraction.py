@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import sys
 import time
 import uuid
 from typing import Any, cast
@@ -21,6 +20,7 @@ from app.api.errors import NotFoundError
 from app.config import settings
 from app.db.client import get_db
 from app.db.pagination import paginate
+from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import doc_get, run_aql
 from app.extraction.judges.qualitative_eval_node import run_qualitative_evaluation
 from app.extraction.pipeline import run_pipeline
@@ -642,9 +642,6 @@ def _store_results(
         col.insert(doc)
     except Exception:
         col.update({"_key": results_key, **doc})
-
-
-NEVER_EXPIRES: int = sys.maxsize
 
 
 def _count_class_properties(cls: Any) -> int:

@@ -1,3 +1,11 @@
+# AUTO-GENERATED — do not edit by hand.
+# Regenerate with: make sync-requirements
+# Source of truth: backend/pyproject.toml ([project].dependencies)
+#
+# Consumed by scripts/prepareproject.sh (BYOC build hook). Production
+# builds (Dockerfile, Container Manager) install from backend/pyproject.toml
+# directly; this file exists only to keep BYOC working until that flow can
+# read pyproject.toml.
 fastapi>=0.115
 uvicorn[standard]>=0.34
 python-arango>=8.1

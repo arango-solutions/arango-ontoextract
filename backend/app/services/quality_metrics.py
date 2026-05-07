@@ -7,17 +7,15 @@ for individual ontologies and aggregate summaries (PRD §6.13, §3.2).
 from __future__ import annotations
 
 import logging
-import sys
 from typing import Any, cast
 
 from arango.database import StandardDatabase
 
 from app.db import quality_history_repo
+from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import run_aql
 
 log = logging.getLogger(__name__)
-
-NEVER_EXPIRES: int = sys.maxsize
 
 
 def _has(db: StandardDatabase, name: str) -> bool:

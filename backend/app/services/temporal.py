@@ -7,18 +7,22 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import sys
 import time
 from typing import Any, cast
 
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import run_aql
 
 log = logging.getLogger(__name__)
 
-NEVER_EXPIRES: int = sys.maxsize
+# ``NEVER_EXPIRES`` is re-exported from ``app.db.temporal_constants`` so
+# legacy callers that ``from app.services.temporal import NEVER_EXPIRES``
+# keep working. New code should import it from ``app.db.temporal_constants``
+# directly.
+__all__ = ["NEVER_EXPIRES"]
 
 # ---------------------------------------------------------------------------
 # Materialized snapshot cache (Week 23 — PRD R16)

@@ -11,8 +11,9 @@ from typing import Any, cast
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import run_aql
-from app.services.temporal import NEVER_EXPIRES, create_version, expire_entity, update_entity
+from app.services.temporal import create_version, expire_entity, update_entity
 
 log = logging.getLogger(__name__)
 

@@ -3,19 +3,17 @@
 from __future__ import annotations
 
 import logging
-import sys
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.db.client import get_db
+from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import doc_get, run_aql
 from app.services import extraction as extraction_service
 
 log = logging.getLogger(__name__)
-
-NEVER_EXPIRES: int = sys.maxsize
 
 router = APIRouter(prefix="/api/v1/extraction", tags=["extraction"])
 

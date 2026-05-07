@@ -1,4 +1,4 @@
-.PHONY: help setup dev infra backend frontend test test-unit test-integration test-all test-infra-up test-infra-down lint format typecheck type-check clean migrate docker-build docker-up docker-down docker-unified-build docker-unified-run docker-unified-up docker-unified-down package-arango-manual package-arango-manual-all
+.PHONY: help setup dev infra backend frontend test test-unit test-integration test-all test-infra-up test-infra-down lint format typecheck type-check clean migrate docker-build docker-up docker-down docker-unified-build docker-unified-run docker-unified-up docker-unified-down package-arango-manual package-arango-manual-all sync-requirements check-requirements
 
 # Optional repo-root .env (BACKEND_PORT, etc.). Safe if missing.
 -include .env
@@ -148,6 +148,19 @@ package-arango-manual: ## Build aoe-myservice.tar.gz (flat: entrypoint + pyproje
 
 package-arango-manual-all: ## Same + Next static export (SERVICE_URL_PATH_PREFIX from repo .env via include). Pass PACKAGE_INCLUDE_ENV=1 to bundle .env.
 	PACKAGE_INCLUDE_FRONTEND=1 SERVICE_URL_PATH_PREFIX="$(SERVICE_URL_PATH_PREFIX)" bash scripts/package-arango-manual.sh
+
+# ---------------------------------------------------------------------------
+# Dependency parity (BYOC requirements.txt vs canonical backend/pyproject.toml)
+# ---------------------------------------------------------------------------
+# `requirements.txt` is consumed by `scripts/prepareproject.sh` (BYOC build hook).
+# The canonical dependency list lives in `backend/pyproject.toml`. These targets
+# keep `requirements.txt` mechanically in sync so it cannot drift.
+
+sync-requirements: ## Regenerate requirements.txt from backend/pyproject.toml
+	@bash scripts/sync-requirements.sh
+
+check-requirements: ## Fail if requirements.txt is out of sync with backend/pyproject.toml (CI-friendly)
+	@bash scripts/sync-requirements.sh --check
 
 # ---------------------------------------------------------------------------
 # Cleanup

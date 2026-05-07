@@ -6,6 +6,7 @@
  */
 
 import { getToken } from "@/lib/auth";
+import { getBasePath } from "@/lib/base-path";
 
 // --- Response types -------------------------------------------------------
 
@@ -64,11 +65,6 @@ function shouldUseSameOriginApiProxy(envUrl: string | undefined): boolean {
   }
 }
 
-/** Inlined from ``SERVICE_URL_PATH_PREFIX`` (see ``frontend/next.config.js``). */
-export function nextPublicBasePath(): string {
-  return (process.env.NEXT_PUBLIC_BASE_PATH || "").replace(/\/$/, "");
-}
-
 /**
  * Resolved API base for HTTP ``fetch`` / relative URLs.
  *
@@ -84,7 +80,7 @@ function effectiveApiBaseUrl(): string {
     return "";
   }
 
-  const basePath = nextPublicBasePath();
+  const basePath = getBasePath();
   if (!trimmed && basePath && typeof window !== "undefined") {
     return resolveApiBaseUrl(`${window.location.origin}${basePath}`);
   }

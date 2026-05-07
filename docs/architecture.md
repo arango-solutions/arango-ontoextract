@@ -32,8 +32,10 @@ This document describes the system architecture of the Arango-OntoExtract (AOE) 
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │            LangGraph Agentic Orchestration Layer             │  │
 │  │                                                              │  │
-│  │  Strategy ──▶ Extraction ──▶ Consistency ──▶ ER ──▶ Filter  │  │
-│  │  Selector     Agent         Checker         Agent   Agent   │  │
+│  │  Strategy ──▶ Extraction ──▶ Consistency ──▶ Quality        │  │
+│  │  Selector     Agent         Checker         Judge ──▶ ER    │  │
+│  │                                             ──▶ Pre-Curation│  │
+│  │                                                  Filter      │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                    │
 │  ┌────────────┐ ┌──────────────┐ ┌──────────┐ ┌───────────────┐  │
@@ -96,10 +98,10 @@ React 18 + Next.js 14 application providing the user interface.
 | `/workspace` | Unified workspace — asset explorer, **Sigma.js** ontology graph, VCR timeline |
 | `/dashboard` | Metrics and quality (including per-ontology quality tab) |
 | `/pipeline` | Pipeline Monitor — real-time extraction DAG, run list, metrics |
-| `/curation/{runId}` | Visual Curation Dashboard — **React Flow** graph, node actions, VCR timeline |
+| `/curation?runId=…` | Visual Curation Dashboard — **React Flow** graph, node actions, VCR timeline (run id passed as a query string; flat route required by the static export bundle, see ADR-007) |
 | `/library` | Ontology Library browser |
 | `/quality` | Redirects to `/dashboard?tab=per-ontology-quality` |
-| `/ontology/{ontologyId}/edit` | Ontology structure editor (**React Flow**) |
+| `/ontology/edit?ontologyId=…` | Ontology structure editor (**React Flow**); flat route required by the static export bundle, see ADR-007 |
 | `/entity-resolution` | ER workflows (**React Flow** where a graph is shown) |
 
 Key UI components:
@@ -117,7 +119,7 @@ Multi-model database serving as the single persistence layer for documents, grap
 |------------|-------|
 | Document store | Uploaded documents, chunks, extraction runs, curation decisions, notifications |
 | Graph | Ontology class hierarchies, property associations, cross-tier links |
-| Vector index | HNSW index on chunk embeddings for RAG retrieval and ER blocking |
+| Vector index | FAISS IVF index on chunk embeddings (`nLists` / `defaultNProbe` tuned per corpus size in `backend/app/tasks.py::_ensure_vector_index`) for RAG retrieval and ER blocking |
 | ArangoSearch | BM25 full-text search on class labels/descriptions for ER blocking and search |
 | Named graphs | Per-ontology isolation, staging graphs, domain/local separation |
 | MDI indexes | Multi-dimensional indexes on `[created, expired]` for temporal range queries |
@@ -174,7 +176,9 @@ Standalone process (FastMCP) that exposes ontology operations to AI agents. Runs
   │  Strategy ──▶ Extractor ──▶ Consistency  ││
   │  Selector     (N-pass       Checker      ││
   │               LLM)                       ││
-  │                    ──▶ ER Agent ──▶ Filter││
+  │                    ──▶ Quality Judge     ││
+  │                    ──▶ ER Agent          ││
+  │                    ──▶ Pre-Curation Filter│
   └─────────────────────────────┬────────────┘│
                                 │              │
                       ┌─────────▼────────┐     │
@@ -224,7 +228,7 @@ This enables point-in-time snapshots via AQL range filters on `[created, expired
 | Backend | FastAPI (Python 3.11+) | Async-native, Pydantic-first validation, auto-generated OpenAPI docs; strong LLM library ecosystem |
 | LLM orchestration | LangGraph | Stateful multi-step agent graphs with checkpointing, conditional edges, and human-in-the-loop breakpoints |
 | LLM providers | Claude (primary), GPT-4o (fallback) | Best-in-class structured extraction with JSON schema enforcement |
-| Frontend | Next.js 14 + React 18 | Server-side rendering, file-based routing, React Server Components |
+| Frontend | Next.js 15 + React 18 | App Router with file-based routing; static export (`output: 'export'`) used for the unified Docker image and Container Manager bundles (see ADR-007) |
 | Graph visualization | Sigma.js + React Flow | Sigma for the main `/workspace` canvas (WebGL performance at scale); React Flow for curation, pipeline DAG, ontology editor, and ER UIs that need rich node interactions |
 | Entity resolution | arango-entity-resolution | ArangoDB-native ER with blocking, scoring, and WCC clustering; supports GAE backend |
 | Temporal indexing | MDI-prefixed indexes | ArangoDB's multi-dimensional indexes optimized for interval range queries on `[created, expired]` |

@@ -64,7 +64,7 @@ After startup, verify each service is accessible:
 | Backend API | http://localhost:8000/health | `{"status": "ok"}` |
 | API Docs (Swagger) | http://localhost:8000/docs | Interactive OpenAPI UI |
 | Frontend | http://localhost:3000 | Landing page with system status |
-| ArangoDB UI | http://localhost:8529 | ArangoDB web interface |
+| ArangoDB UI | http://localhost:8530 | ArangoDB web interface (host port; container listens on 8529) |
 
 Day-to-day ontology work happens on **`/workspace`** (asset explorer + **Sigma.js** graph + VCR timeline). Aggregated metrics and the **Per-Ontology Quality** tab live on **`/dashboard`** (the legacy **`/quality`** URL redirects to that tab).
 

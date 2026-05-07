@@ -16,8 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.db.temporal_constants import NEVER_EXPIRES
+
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
-NEVER_EXPIRES = 9223372036854775807
 
 
 def _load_fixture(name: str) -> dict:

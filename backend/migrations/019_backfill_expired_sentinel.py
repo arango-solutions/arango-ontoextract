@@ -10,15 +10,13 @@ Idempotent: only updates documents where ``expired`` is null, absent, or 0.
 from __future__ import annotations
 
 import logging
-import sys
 
 from arango.database import StandardDatabase
 
+from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import run_aql
 
 log = logging.getLogger(__name__)
-
-NEVER_EXPIRES: int = sys.maxsize
 
 # Vertex and edge collections that use edge-interval temporal semantics.
 COLLECTIONS_WITH_EXPIRED: tuple[str, ...] = (

@@ -7,17 +7,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Constants reused across tests
-# ---------------------------------------------------------------------------
-NEVER_EXPIRES: int = sys.maxsize
-
+from app.db.temporal_constants import NEVER_EXPIRES
 
 # ===========================================================================
 # auth.py

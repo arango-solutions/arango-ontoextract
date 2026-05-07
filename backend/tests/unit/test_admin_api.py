@@ -2,39 +2,32 @@
 
 from __future__ import annotations
 
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
 from app.api.admin import _remove_ontology_graphs, _require_reset_enabled
+from app.config import settings
 
 
 class TestRequireResetEnabled:
-    def test_raises_403_when_not_enabled(self):
-        with patch.dict(os.environ, {"ALLOW_SYSTEM_RESET": "false"}):
+    """Verify the reset gate respects ``settings.allow_system_reset``.
+
+    The setting is loaded once at process start by pydantic-settings (env var
+    ``ALLOW_SYSTEM_RESET``); individual test cases can flip it at runtime via
+    ``patch.object(settings, ...)``.
+    """
+
+    def test_raises_403_when_disabled(self):
+        with patch.object(settings, "allow_system_reset", False):
             with pytest.raises(HTTPException) as exc_info:
                 _require_reset_enabled()
             assert exc_info.value.status_code == 403
 
-    def test_raises_403_when_env_missing(self):
-        with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(HTTPException) as exc_info:
-                _require_reset_enabled()
-            assert exc_info.value.status_code == 403
-
-    def test_passes_when_enabled_true(self):
-        with patch.dict(os.environ, {"ALLOW_SYSTEM_RESET": "true"}):
-            _require_reset_enabled()  # Should not raise
-
-    def test_passes_when_enabled_1(self):
-        with patch.dict(os.environ, {"ALLOW_SYSTEM_RESET": "1"}):
-            _require_reset_enabled()  # Should not raise
-
-    def test_passes_when_enabled_yes(self):
-        with patch.dict(os.environ, {"ALLOW_SYSTEM_RESET": "yes"}):
-            _require_reset_enabled()  # Should not raise
+    def test_passes_when_enabled(self):
+        with patch.object(settings, "allow_system_reset", True):
+            _require_reset_enabled()
 
 
 class TestResetEndpoints:
@@ -68,7 +61,7 @@ class TestResetEndpoints:
         mock_db.collection.return_value = mock_collection
 
         with (
-            patch.dict(os.environ, {"ALLOW_SYSTEM_RESET": "true"}),
+            patch.object(settings, "allow_system_reset", True),
             patch("app.api.admin.get_db", return_value=mock_db),
         ):
             from app.api.admin import reset_ontology_data
@@ -89,7 +82,7 @@ class TestResetEndpoints:
         mock_db.collection.return_value = mock_collection
 
         with (
-            patch.dict(os.environ, {"ALLOW_SYSTEM_RESET": "true"}),
+            patch.object(settings, "allow_system_reset", True),
             patch("app.api.admin.get_db", return_value=mock_db),
         ):
             from app.api.admin import reset_all_data
@@ -106,7 +99,7 @@ class TestResetEndpoints:
         mock_db.has_collection.return_value = False
 
         with (
-            patch.dict(os.environ, {"ALLOW_SYSTEM_RESET": "true"}),
+            patch.object(settings, "allow_system_reset", True),
             patch("app.api.admin.get_db", return_value=mock_db),
         ):
             from app.api.admin import reset_ontology_data
@@ -116,6 +109,22 @@ class TestResetEndpoints:
         assert result["reset"] is True
         assert result["collections_truncated"] == []
         mock_db.collection.assert_not_called()
+
+    def test_settings_field_default_is_false(self, tmp_path, monkeypatch):
+        """Regression: a fresh Settings with no env var and no .env must default
+        to ``allow_system_reset=False`` so a new deployment isn't silently exposed
+        to ``/admin/reset``.
+        """
+        monkeypatch.delenv("ALLOW_SYSTEM_RESET", raising=False)
+        # Point pydantic-settings at an empty .env so the developer's repo-root
+        # ``.env`` doesn't bleed into this assertion.
+        empty_env = tmp_path / ".env.empty"
+        empty_env.write_text("")
+
+        from app.config import Settings
+
+        fresh = Settings(_env_file=str(empty_env))
+        assert fresh.allow_system_reset is False
 
 
 class TestFeedbackLearningArtifacts:

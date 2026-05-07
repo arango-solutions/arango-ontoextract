@@ -5,13 +5,12 @@ All database operations are mocked via monkeypatching.
 
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-NEVER_EXPIRES = sys.maxsize
+from app.db.temporal_constants import NEVER_EXPIRES
 
 
 def _registry_doc(key: str = "test_ont", name: str = "Test Ontology", **extra):

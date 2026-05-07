@@ -46,7 +46,7 @@ Performance targets and measurement methodology for the AOE platform. Derived fr
 |--------|--------|-------------|
 | ER pipeline (1000 entities) | < 30 seconds | Full blocking → scoring → clustering cycle |
 | BM25 blocking query | < 200ms | ArangoSearch query for candidate retrieval |
-| Vector similarity blocking | < 500ms | HNSW approximate nearest neighbor search |
+| Vector similarity blocking | < 500ms | FAISS IVF approximate nearest neighbor search (cosine, `nLists` ≈ `15·√N`) |
 | Explain match | < 100ms | Field-by-field similarity computation for a single pair |
 | WCC clustering | < 5 seconds | Weakly connected components on `similarTo` edges (1000 entities) |
 

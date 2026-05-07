@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock
 
 from app.services.cross_tier import (
@@ -10,8 +9,6 @@ from app.services.cross_tier import (
     create_cross_tier_edges,
     detect_conflicts,
 )
-
-NEVER_EXPIRES = sys.maxsize
 
 
 def _mock_db_for_edges(

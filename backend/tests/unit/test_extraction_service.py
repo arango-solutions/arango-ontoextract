@@ -5,14 +5,12 @@ _auto_register_ontology, _update_existing_ontology, and helpers.
 
 from __future__ import annotations
 
-import sys
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-NEVER_EXPIRES: int = sys.maxsize
-
+from app.db.temporal_constants import NEVER_EXPIRES
 
 # ---------------------------------------------------------------------------
 # Helpers

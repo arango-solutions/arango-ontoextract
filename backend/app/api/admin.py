@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.config import settings
 from app.db.client import get_db
 from app.services.feedback_learning import build_feedback_learning_examples
 
@@ -57,13 +57,14 @@ def _remove_ontology_graphs(db) -> list[str]:
 
 
 def _require_reset_enabled() -> None:
-    env_value = os.getenv("ALLOW_SYSTEM_RESET")
-    if env_value is None:
-        enabled = False
-    else:
-        enabled = env_value.strip().lower() in {"1", "true", "yes", "on"}
+    """Allow ``/admin/reset*`` only when the operator opts in via Settings.
 
-    if not enabled:
+    Reads ``settings.allow_system_reset`` (env: ``ALLOW_SYSTEM_RESET``) so the
+    knob lives in one place — see ``app.config.Settings`` and
+    ``backend/app/AGENTS.md`` ("Configuration comes from app/config.py via the
+    settings singleton — never read env vars directly").
+    """
+    if not settings.allow_system_reset:
         raise HTTPException(
             status_code=403,
             detail="System reset disabled. Set ALLOW_SYSTEM_RESET=true in .env to enable.",
