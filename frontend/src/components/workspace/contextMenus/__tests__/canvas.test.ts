@@ -1,0 +1,205 @@
+/**
+ * @jest-environment jsdom
+ */
+
+import {
+  buildCanvasContextMenu,
+  LENS_OPTIONS,
+} from "@/components/workspace/contextMenus/canvas";
+import type { WorkspaceContextMenuActions } from "@/components/workspace/contextMenus/types";
+
+function makeActions(
+  overrides: Partial<WorkspaceContextMenuActions> = {},
+): WorkspaceContextMenuActions {
+  return {
+    handleNodeSelect: jest.fn(),
+    handleEdgeSelect: jest.fn(),
+    handleSelectOntology: jest.fn(),
+    handleSelectRun: jest.fn(),
+    setInfoPanelItem: jest.fn(),
+    setDetailPanelOpen: jest.fn(),
+    setQualityOverlay: jest.fn(),
+    fetchOntologyQualityReport: jest.fn(),
+    approveClass: jest.fn(),
+    rejectClass: jest.fn(),
+    approveEdge: jest.fn(),
+    rejectEdge: jest.fn(),
+    approveProperty: jest.fn(),
+    rejectProperty: jest.fn(),
+    deleteClass: jest.fn(),
+    deleteOntology: jest.fn(),
+    deleteDocument: jest.fn(),
+    deleteRun: jest.fn(),
+    setRenameOntology: jest.fn(),
+    setReleaseOntology: jest.fn(),
+    setShowCreateOntology: jest.fn(),
+    setManageImports: jest.fn(),
+    setFeedbackLearning: jest.fn(),
+    exportOntology: jest.fn(),
+    retryRun: jest.fn(),
+    pipelineRunId: null,
+    activeLens: "semantic",
+    setActiveLens: jest.fn(),
+    graphViewMode: "network",
+    setGraphViewMode: jest.fn(),
+    fitAllNodes: jest.fn(),
+    centerView: jest.fn(),
+    relayout: jest.fn(),
+    setEdgeStyle: jest.fn(),
+    fitPipelineView: jest.fn(),
+    centerPipelineView: jest.fn(),
+    closeContextMenu: jest.fn(),
+    selectedOntologyId: null,
+    ...overrides,
+  };
+}
+
+describe("buildCanvasContextMenu", () => {
+  it("includes View As / Graph Style / Layout / Edge Style / Fit / Center / New / Feedback in network mode", () => {
+    const actions = makeActions({ graphViewMode: "network" });
+    const items = buildCanvasContextMenu({}, actions);
+
+    const visibleLabels = items
+      .filter((it) => !it.separator)
+      .map((it) => it.label);
+
+    expect(visibleLabels).toEqual([
+      "View As",
+      "Graph Style",
+      "Layout",
+      "Edge Style",
+      "Fit All Nodes",
+      "Center View",
+      "New Ontology…",
+      "Review Feedback Learning",
+    ]);
+  });
+
+  it("hides Layout and Edge Style in box-arrow mode", () => {
+    const actions = makeActions({ graphViewMode: "box-arrow" });
+    const items = buildCanvasContextMenu({}, actions);
+
+    const visibleLabels = items
+      .filter((it) => !it.separator)
+      .map((it) => it.label);
+
+    expect(visibleLabels).not.toContain("Layout");
+    expect(visibleLabels).not.toContain("Edge Style");
+    expect(visibleLabels).toEqual([
+      "View As",
+      "Graph Style",
+      "Fit All Nodes",
+      "Center View",
+      "New Ontology…",
+      "Review Feedback Learning",
+    ]);
+  });
+
+  it("View As submenu has all 5 lenses; the active one is checked", () => {
+    const actions = makeActions({ activeLens: "confidence" });
+    const items = buildCanvasContextMenu({}, actions);
+    const viewAs = items.find((it) => it.label === "View As")!;
+
+    expect(viewAs.submenu).toHaveLength(LENS_OPTIONS.length);
+    const checked = viewAs.submenu!.filter((s) => s.checked);
+    expect(checked).toHaveLength(1);
+    expect(checked[0].label).toBe("Confidence");
+  });
+
+  it("View As submenu items dispatch setActiveLens with the matching id", () => {
+    const actions = makeActions();
+    const items = buildCanvasContextMenu({}, actions);
+    const viewAs = items.find((it) => it.label === "View As")!;
+
+    viewAs.submenu!.find((s) => s.label === "Diff (vs timeline)")!.onClick!();
+    expect(actions.setActiveLens).toHaveBeenCalledWith("diff");
+  });
+
+  it("Graph Style toggles between network and box-arrow", () => {
+    const actions = makeActions({ graphViewMode: "network" });
+    const items = buildCanvasContextMenu({}, actions);
+    const gs = items.find((it) => it.label === "Graph Style")!;
+
+    expect(gs.submenu!.find((s) => s.label === "Network (circles)")!.checked)
+      .toBe(true);
+    expect(gs.submenu!.find((s) => s.label === "Box & Arrow (UML)")!.checked)
+      .toBe(false);
+
+    gs.submenu!.find((s) => s.label === "Box & Arrow (UML)")!.onClick!();
+    expect(actions.setGraphViewMode).toHaveBeenCalledWith("box-arrow");
+  });
+
+  it("Layout submenu fires relayout for each mode", () => {
+    const actions = makeActions({ graphViewMode: "network" });
+    const items = buildCanvasContextMenu({}, actions);
+    const layout = items.find((it) => it.label === "Layout")!;
+
+    layout.submenu!.find((s) => s.label === "Force-Directed")!.onClick!();
+    layout.submenu!.find((s) => s.label === "Circular")!.onClick!();
+    layout.submenu!.find((s) => s.label === "Grid")!.onClick!();
+    layout.submenu!.find((s) => s.label === "Random")!.onClick!();
+
+    expect(actions.relayout).toHaveBeenNthCalledWith(1, "force");
+    expect(actions.relayout).toHaveBeenNthCalledWith(2, "circular");
+    expect(actions.relayout).toHaveBeenNthCalledWith(3, "grid");
+    expect(actions.relayout).toHaveBeenNthCalledWith(4, "random");
+  });
+
+  it("Edge Style submenu fires setEdgeStyle for curved and straight", () => {
+    const actions = makeActions({ graphViewMode: "network" });
+    const items = buildCanvasContextMenu({}, actions);
+    const es = items.find((it) => it.label === "Edge Style")!;
+
+    es.submenu!.find((s) => s.label === "Curved")!.onClick!();
+    es.submenu!.find((s) => s.label === "Straight")!.onClick!();
+
+    expect(actions.setEdgeStyle).toHaveBeenNthCalledWith(1, "curved");
+    expect(actions.setEdgeStyle).toHaveBeenNthCalledWith(2, "straight");
+  });
+
+  it("Fit All Nodes closes the context menu BEFORE calling fitAllNodes", () => {
+    const actions = makeActions();
+    const items = buildCanvasContextMenu({}, actions);
+
+    items.find((it) => it.label === "Fit All Nodes")!.onClick!();
+
+    expect(actions.closeContextMenu).toHaveBeenCalled();
+    expect(actions.fitAllNodes).toHaveBeenCalled();
+    // ordering: closeContextMenu fires first so the menu is gone before the
+    // viewport pans / zooms
+    const closeCall = (actions.closeContextMenu as jest.Mock).mock
+      .invocationCallOrder[0];
+    const fitCall = (actions.fitAllNodes as jest.Mock).mock
+      .invocationCallOrder[0];
+    expect(closeCall).toBeLessThan(fitCall);
+  });
+
+  it("Center View closes the context menu before calling centerView", () => {
+    const actions = makeActions();
+    const items = buildCanvasContextMenu({}, actions);
+
+    items.find((it) => it.label === "Center View")!.onClick!();
+
+    expect(actions.closeContextMenu).toHaveBeenCalled();
+    expect(actions.centerView).toHaveBeenCalled();
+  });
+
+  it("New Ontology… opens the create dialog", () => {
+    const actions = makeActions();
+    const items = buildCanvasContextMenu({}, actions);
+
+    items.find((it) => it.label === "New Ontology…")!.onClick!();
+    expect(actions.setShowCreateOntology).toHaveBeenCalledWith(true);
+  });
+
+  it("Review Feedback Learning opens the overlay with no specific ontology", () => {
+    const actions = makeActions();
+    const items = buildCanvasContextMenu({}, actions);
+
+    items.find((it) => it.label === "Review Feedback Learning")!.onClick!();
+    expect(actions.setFeedbackLearning).toHaveBeenCalledWith({
+      ontologyId: null,
+      ontologyName: null,
+    });
+  });
+});

@@ -98,14 +98,6 @@ const MIN_PANEL_WIDTH = 200;
 const MAX_PANEL_WIDTH = 480;
 const DEFAULT_PANEL_WIDTH = 280;
 
-const LENS_OPTIONS: { id: LensType; label: string }[] = [
-  { id: "semantic", label: "Semantic" },
-  { id: "confidence", label: "Confidence" },
-  { id: "curation", label: "Curation Status" },
-  { id: "diff", label: "Diff (vs timeline)" },
-  { id: "source", label: "Source Type" },
-];
-
 export default function WorkspacePage() {
   return (
     <Suspense>
@@ -781,82 +773,6 @@ function WorkspacePageInner() {
     }
 
     switch (type) {
-      case "canvas":
-        return [
-          {
-            label: "View As",
-            icon: "👁",
-            submenu: LENS_OPTIONS.map((opt) => ({
-              label: opt.label,
-              checked: activeLens === opt.id,
-              onClick: () => setActiveLens(opt.id),
-            })),
-          },
-          {
-            label: "Graph Style",
-            icon: "📐",
-            submenu: [
-              {
-                label: "Network (circles)",
-                checked: graphViewMode === "network",
-                onClick: () => setGraphViewMode("network"),
-              },
-              {
-                label: "Box & Arrow (UML)",
-                checked: graphViewMode === "box-arrow",
-                onClick: () => setGraphViewMode("box-arrow"),
-              },
-            ],
-          },
-          ...(graphViewMode === "network" ? [
-            {
-              label: "Layout",
-              icon: "🔄",
-              submenu: [
-                { label: "Force-Directed", onClick: () => { viewportApiRef.current?.relayout("force"); } },
-                { label: "Circular", onClick: () => { viewportApiRef.current?.relayout("circular"); } },
-                { label: "Grid", onClick: () => { viewportApiRef.current?.relayout("grid"); } },
-                { label: "Random", onClick: () => { viewportApiRef.current?.relayout("random"); } },
-              ],
-            },
-            {
-              label: "Edge Style",
-              icon: "〰",
-              submenu: [
-                { label: "Curved", onClick: () => { viewportApiRef.current?.setEdgeStyle("curved"); } },
-                { label: "Straight", onClick: () => { viewportApiRef.current?.setEdgeStyle("straight"); } },
-              ],
-            },
-          ] as ContextMenuItem[] : []),
-          { label: "separator1", separator: true },
-          {
-            label: "Fit All Nodes",
-            icon: "⬜",
-            onClick: () => {
-              closeContextMenu();
-              viewportApiRef.current?.fitAll();
-            },
-          },
-          {
-            label: "Center View",
-            icon: "🎯",
-            onClick: () => {
-              closeContextMenu();
-              viewportApiRef.current?.centerView();
-            },
-          },
-          { label: "sep-new-ont", separator: true },
-          {
-            label: "New Ontology…",
-            icon: "➕",
-            onClick: () => setShowCreateOntology(true),
-          },
-          {
-            label: "Review Feedback Learning",
-            icon: "📊",
-            onClick: () => setFeedbackLearning({ ontologyId: null, ontologyName: null }),
-          },
-        ];
       case "step": {
         const stepKey = data.stepKey as string;
         const stepLabel = data.label as string;

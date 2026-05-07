@@ -17,6 +17,7 @@
 
 import type { ContextMenuItem } from "@/components/workspace/ContextMenu";
 
+import { buildCanvasContextMenu } from "./canvas";
 import { buildClassContextMenu } from "./class";
 import { buildDocumentContextMenu } from "./document";
 import { buildEdgeContextMenu } from "./edge";
@@ -35,6 +36,7 @@ export type ContextMenuBuilder = (
  *  Kept partial during the incremental H.7 extraction; ``app/workspace/page.tsx``
  *  falls back to its inline switch for kinds not registered here yet. */
 export const CONTEXT_MENU_BUILDERS: Partial<Record<string, ContextMenuBuilder>> = {
+  canvas: buildCanvasContextMenu,
   class: buildClassContextMenu,
   document: buildDocumentContextMenu,
   edge: buildEdgeContextMenu,
@@ -43,6 +45,7 @@ export const CONTEXT_MENU_BUILDERS: Partial<Record<string, ContextMenuBuilder>> 
   run: buildRunContextMenu,
 };
 
+export { buildCanvasContextMenu } from "./canvas";
 export { buildClassContextMenu } from "./class";
 export { buildDocumentContextMenu } from "./document";
 export { buildEdgeContextMenu } from "./edge";
