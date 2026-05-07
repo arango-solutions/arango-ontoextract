@@ -8,8 +8,11 @@
  *
  * Notes:
  *
- * - The destructive Delete leaves the ``confirm()`` call inside
- *   ``deleteOntology`` (in ``app/workspace/page.tsx``); we just dispatch.
+ * - Delete uses ``ConfirmDialog``'s **typed-name** mode per
+ *   ``ui-architecture.mdc`` §18: the cascade (classes / properties / edges /
+ *   runs / quality history) is unbounded enough that real friction is
+ *   warranted. The user must type the ontology's display name verbatim
+ *   before Confirm enables.
  * - Release is gated by ``data.status === "deprecated"`` to match the
  *   existing UX (deprecated ontologies cannot be re-released without going
  *   through admin tooling).
@@ -117,7 +120,23 @@ export function buildOntologyContextMenu(
       icon: "🗑️",
       danger: true,
       onClick: () => {
-        if (ontKey) actions.deleteOntology(ontKey);
+        if (!ontKey) return;
+        const displayName = String(data.name ?? data.label ?? ontKey).trim() || ontKey;
+        actions.requestConfirm({
+          title: "Delete ontology",
+          message:
+            `Delete ontology "${displayName}"?\n` +
+            `This cascades to its classes, properties, edges, extraction runs, and ` +
+            `quality history. This cannot be undone.`,
+          confirmLabel: "Delete",
+          danger: true,
+          typedName: {
+            expected: displayName,
+            label: `Type the ontology name to confirm:`,
+            placeholder: displayName,
+          },
+          onConfirm: () => actions.deleteOntology(ontKey),
+        });
       },
     },
   ];

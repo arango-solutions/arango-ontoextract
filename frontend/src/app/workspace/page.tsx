@@ -637,14 +637,13 @@ function WorkspacePageInner() {
     }
   }, [selectedOntologyId, refreshGraph]);
 
+  // Plain delete-and-cleanup for an ontology. The user-facing typed-name
+  // confirmation lives in ``contextMenus/ontology.ts``; this callback is
+  // only invoked after that gate has been satisfied. Side-panel "Delete"
+  // buttons, if added later, MUST also gate on requestConfirm rather than
+  // calling this directly.
   const deleteOntology = useCallback(async (key: string) => {
     try {
-      const confirmed = confirm(
-        `Delete ontology "${key}"? This removes it from the ontology list and expires its contents.`,
-      );
-      if (!confirmed) {
-        return;
-      }
       await api.del(`/api/v1/ontology/library/${key}?confirm=true&hard_delete=true`);
       if (selectedOntologyId === key) {
         setSelectedOntologyId(null);
