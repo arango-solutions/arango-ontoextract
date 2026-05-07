@@ -5,9 +5,12 @@
  * ``ui-architecture.mdc`` §7 ("Run"): View Pipeline & Metrics · Copy Run ID ·
  * View Run Info · View Extracted Entities · Retry Run · Delete Run.
  *
- * The native ``confirm()`` call inside Delete Run is preserved verbatim — it
- * is a known H.6 target, intentionally untouched here so the H.7 PR is a pure
- * structural move.
+ * Delete Run is irreversible (the run row, its steps, and its extracted
+ * entities are hard-deleted). It uses the plain ``ConfirmDialog`` mode (no
+ * typed-name gate) per ``ui-architecture.mdc`` §18: the cost of an
+ * accidental click is bounded — runs are easy to re-create from the source
+ * documents — so a single Cancel / red-Delete pair is the right
+ * severity-proportional friction.
  */
 
 import type { ContextMenuItem } from "@/components/workspace/ContextMenu";
@@ -80,9 +83,13 @@ export function buildRunContextMenu(
       icon: "🗑️",
       danger: true,
       onClick: () => {
-        if (confirm(`Delete run ${runKey}? This cannot be undone.`)) {
-          actions.deleteRun(runKey);
-        }
+        actions.requestConfirm({
+          title: "Delete run",
+          message: `Delete run ${runKey}?\nThis cannot be undone.`,
+          confirmLabel: "Delete",
+          danger: true,
+          onConfirm: () => actions.deleteRun(runKey),
+        });
       },
     },
   ];

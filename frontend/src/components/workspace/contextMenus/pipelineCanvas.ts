@@ -102,9 +102,13 @@ export function buildPipelineCanvasContextMenu(
       icon: "🗑️",
       danger: true,
       onClick: () => {
-        if (confirm(`Delete run ${runId}? This cannot be undone.`)) {
-          actions.deleteRun(runId);
-        }
+        actions.requestConfirm({
+          title: "Delete run",
+          message: `Delete run ${runId}?\nThis cannot be undone.`,
+          confirmLabel: "Delete",
+          danger: true,
+          onConfirm: () => actions.deleteRun(runId),
+        });
       },
     });
   }

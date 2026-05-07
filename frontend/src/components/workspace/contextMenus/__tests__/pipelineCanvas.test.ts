@@ -189,21 +189,41 @@ describe("buildPipelineCanvasContextMenu", () => {
     expect(actions.retryRun).toHaveBeenCalledWith("run-1");
   });
 
-  it("Delete Run gates deleteRun on confirm and is danger-styled", () => {
+  it("Delete Run is danger-styled and routes through requestConfirm (no window.confirm)", () => {
     const actions = makeActions({ pipelineRunId: "run-1" });
     const items = buildPipelineCanvasContextMenu({}, actions);
     const del = items.find((it) => it.label === "Delete Run")!;
 
     expect(del.danger).toBe(true);
 
-    const confirmSpy = jest.spyOn(window, "confirm").mockReturnValueOnce(false);
+    const confirmSpy = jest.spyOn(window, "confirm");
     del.onClick!();
-    expect(actions.deleteRun).not.toHaveBeenCalled();
 
-    confirmSpy.mockReturnValueOnce(true);
-    del.onClick!();
-    expect(actions.deleteRun).toHaveBeenCalledWith("run-1");
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(actions.deleteRun).not.toHaveBeenCalled();
+    expect(actions.requestConfirm).toHaveBeenCalledTimes(1);
+
+    const req = (actions.requestConfirm as jest.Mock).mock.calls[0][0];
+    expect(req).toEqual(
+      expect.objectContaining({
+        title: "Delete run",
+        confirmLabel: "Delete",
+        danger: true,
+      }),
+    );
+    expect(req.message).toContain("run-1");
 
     confirmSpy.mockRestore();
+  });
+
+  it("requestConfirm.onConfirm fires deleteRun with the loaded run id", () => {
+    const actions = makeActions({ pipelineRunId: "run-1" });
+    const items = buildPipelineCanvasContextMenu({}, actions);
+
+    items.find((it) => it.label === "Delete Run")!.onClick!();
+    const req = (actions.requestConfirm as jest.Mock).mock.calls[0][0];
+
+    req.onConfirm();
+    expect(actions.deleteRun).toHaveBeenCalledWith("run-1");
   });
 });
