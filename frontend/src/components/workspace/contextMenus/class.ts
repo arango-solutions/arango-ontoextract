@@ -6,10 +6,14 @@
  *
  *   View Details · Approve · Reject · View Version History · View Provenance · Delete
  *
- * Behaviour-preserving extraction from the original switch in
- * ``app/workspace/page.tsx`` (lines 727–787 pre-refactor). The native
- * ``confirm()`` for delete is retained until the H.6 PR replaces it with a
- * ConfirmDialog.
+ * Delete is technically reversible per ``ui-architecture.mdc`` §18 (a
+ * server-side restore is conceivable: the temporal model expires rather
+ * than hard-deletes), but the rule's preferred undo-toast pattern requires
+ * deferred-delete + a global toast host that don't exist yet. For now,
+ * Delete fires a plain ``ConfirmDialog`` via ``actions.requestConfirm`` —
+ * which already removes the ``window.confirm`` call called out by
+ * ``ui-architecture.mdc`` §18 ("Forbidden anywhere. No exceptions.").
+ * The undo-toast migration is tracked as a follow-up.
  */
 
 import type { ContextMenuItem } from "@/components/workspace/ContextMenu";
@@ -88,13 +92,13 @@ export function buildClassContextMenu(
       icon: "🗑️",
       danger: true,
       onClick: () => {
-        if (
-          confirm(
-            `Delete class "${classLabel}"? This will expire the class and all connected edges.`,
-          )
-        ) {
-          actions.deleteClass(classKey);
-        }
+        actions.requestConfirm({
+          title: "Delete class",
+          message: `Delete class "${classLabel}"?\nThis will expire the class and all connected edges.`,
+          confirmLabel: "Delete",
+          danger: true,
+          onConfirm: () => actions.deleteClass(classKey),
+        });
       },
     },
   ];

@@ -1,8 +1,5 @@
 /**
  * @jest-environment jsdom
- *
- * jsdom is required because ``buildClassContextMenu`` calls into ``confirm()``
- * for the destructive ``Delete`` item, which only exists on a window object.
  */
 
 import { buildClassContextMenu } from "@/components/workspace/contextMenus/class";
@@ -173,21 +170,41 @@ describe("buildClassContextMenu", () => {
     });
   });
 
-  it("Delete prompts via confirm and only deletes on accept", () => {
+  it("Delete is danger-styled and routes through requestConfirm (no window.confirm)", () => {
     const actions = makeActions();
     const items = buildClassContextMenu({ _key: "C1", label: "Person" }, actions);
     const deleteItem = items.find((it) => it.label === "Delete")!;
 
     expect(deleteItem.danger).toBe(true);
 
-    const confirmSpy = jest.spyOn(window, "confirm").mockReturnValueOnce(false);
+    const confirmSpy = jest.spyOn(window, "confirm");
     deleteItem.onClick!();
+    expect(confirmSpy).not.toHaveBeenCalled();
     expect(actions.deleteClass).not.toHaveBeenCalled();
 
-    confirmSpy.mockReturnValueOnce(true);
-    deleteItem.onClick!();
-    expect(actions.deleteClass).toHaveBeenCalledWith("C1");
+    expect(actions.requestConfirm).toHaveBeenCalledTimes(1);
+    const req = (actions.requestConfirm as jest.Mock).mock.calls[0][0];
+    expect(req).toEqual(
+      expect.objectContaining({
+        title: "Delete class",
+        confirmLabel: "Delete",
+        danger: true,
+      }),
+    );
+    expect(req.message).toContain('"Person"');
+    expect(req.message).toContain("expire the class and all connected edges");
 
     confirmSpy.mockRestore();
+  });
+
+  it("requestConfirm.onConfirm fires deleteClass with the class key", () => {
+    const actions = makeActions();
+    const items = buildClassContextMenu({ _key: "C1", label: "Person" }, actions);
+
+    items.find((it) => it.label === "Delete")!.onClick!();
+    const req = (actions.requestConfirm as jest.Mock).mock.calls[0][0];
+
+    req.onConfirm();
+    expect(actions.deleteClass).toHaveBeenCalledWith("C1");
   });
 });
