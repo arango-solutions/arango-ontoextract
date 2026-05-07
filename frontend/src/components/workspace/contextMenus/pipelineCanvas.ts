@@ -9,16 +9,15 @@
  *   (the rest are gated on a loaded run:)
  *   Copy Run ID · View Run Info · View Extracted Entities · Retry Run · Delete Run
  *
- * Behaviour quirk preserved verbatim from ``app/workspace/page.tsx``:
- * "View Run Info" here uses raw ``fetch(backendUrl(...))`` with a quiet
- * ``res.ok`` check rather than the ``api.get`` helper used by the run /
- * step menus. That means 4xx responses fail silently here while they would
- * throw in the run menu. We deliberately keep the divergence so this
- * commit stays purely structural; harmonising the two is a follow-up.
+ * "View Run Info" uses ``api.get`` so that 4xx / 5xx responses surface
+ * via ``console.error``, matching the run-row menu in ``./run.ts``. Prior
+ * to this file, the pipeline-canvas equivalent used a raw
+ * ``fetch(backendUrl(...)) + res.ok`` check that swallowed 4xx silently;
+ * the behaviour now matches the run menu.
  */
 
 import type { ContextMenuItem } from "@/components/workspace/ContextMenu";
-import { api, backendUrl } from "@/lib/api-client";
+import { api } from "@/lib/api-client";
 
 import type { WorkspaceContextMenuActions } from "./types";
 
@@ -60,11 +59,10 @@ export function buildPipelineCanvasContextMenu(
       icon: "ℹ️",
       onClick: async () => {
         try {
-          const res = await fetch(backendUrl(`/api/v1/extraction/runs/${runId}`));
-          if (res.ok) {
-            const run = await res.json();
-            actions.setInfoPanelItem({ type: "run", data: run });
-          }
+          const run = await api.get<Record<string, unknown>>(
+            `/api/v1/extraction/runs/${runId}`,
+          );
+          actions.setInfoPanelItem({ type: "run", data: run });
         } catch (err) {
           console.error("Failed to load run info", err);
         }
