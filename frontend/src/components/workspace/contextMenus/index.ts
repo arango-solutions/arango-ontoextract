@@ -22,6 +22,7 @@ import { buildClassContextMenu } from "./class";
 import { buildDocumentContextMenu } from "./document";
 import { buildEdgeContextMenu } from "./edge";
 import { buildOntologyContextMenu } from "./ontology";
+import { buildPipelineCanvasContextMenu } from "./pipelineCanvas";
 import { buildPropertyContextMenu } from "./property";
 import { buildRunContextMenu } from "./run";
 import { buildStepContextMenu } from "./step";
@@ -34,14 +35,17 @@ export type ContextMenuBuilder = (
 
 /** Lookup table: entity kind → builder.
  *
- *  Kept partial during the incremental H.7 extraction; ``app/workspace/page.tsx``
- *  falls back to its inline switch for kinds not registered here yet. */
+ *  ``Partial`` rather than full ``Record`` so unrecognised kinds (e.g. a
+ *  future ``setContextMenu({ type: "annotation" })``) yield ``undefined``
+ *  and the page returns an empty menu, matching the pre-refactor
+ *  ``default: return []`` branch. */
 export const CONTEXT_MENU_BUILDERS: Partial<Record<string, ContextMenuBuilder>> = {
   canvas: buildCanvasContextMenu,
   class: buildClassContextMenu,
   document: buildDocumentContextMenu,
   edge: buildEdgeContextMenu,
   ontology: buildOntologyContextMenu,
+  pipeline_canvas: buildPipelineCanvasContextMenu,
   property: buildPropertyContextMenu,
   run: buildRunContextMenu,
   step: buildStepContextMenu,
@@ -52,6 +56,7 @@ export { buildClassContextMenu } from "./class";
 export { buildDocumentContextMenu } from "./document";
 export { buildEdgeContextMenu } from "./edge";
 export { buildOntologyContextMenu } from "./ontology";
+export { buildPipelineCanvasContextMenu } from "./pipelineCanvas";
 export { buildPropertyContextMenu } from "./property";
 export { buildRunContextMenu } from "./run";
 export { buildStepContextMenu } from "./step";
