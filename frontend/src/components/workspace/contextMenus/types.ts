@@ -55,6 +55,34 @@ export type ManageImportsArg = {
   name: string;
 } | null;
 
+/** Typed-name confirmation gate for ``ConfirmRequest``. Mirrors
+ *  ``ConfirmDialogTypedName`` in ``ConfirmDialog.tsx`` so builders don't have
+ *  to import the React component just to reference the type. */
+export interface ConfirmTypedName {
+  expected: string;
+  label: string;
+  placeholder?: string;
+}
+
+/** A single ``ConfirmDialog`` request emitted by a builder. The page owns the
+ *  state that holds the latest request and renders the dialog from it; per
+ *  ``ui-architecture.mdc`` §18 this surface replaces every ``window.confirm``
+ *  in the workspace. */
+export interface ConfirmRequest {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  /** When omitted, defaults to ``true`` (red styling) — this surface exists
+   *  primarily for destructive ops. */
+  danger?: boolean;
+  /** When set, switches the rendered dialog into typed-name mode. */
+  typedName?: ConfirmTypedName;
+  /** Fired when the user clicks Confirm. The page closes the dialog before
+   *  invoking this so the caller doesn't need to thread a separate close. */
+  onConfirm: () => void;
+}
+
 /** Layout modes accepted by ``viewportApi.relayout``. */
 export type SigmaLayoutMode = "force" | "circular" | "grid" | "random";
 
@@ -105,12 +133,16 @@ export interface WorkspaceContextMenuActions {
   rejectProperty: (propKey: string, ontologyId?: string) => void;
 
   // ── Destructive ───────────────────────────────────────────────────────
-  // ``confirm()`` calls live at call sites today (H.6 territory). Builders
-  // wrap each delete in the same ``window.confirm`` until that PR lands.
+  // Builders that need a confirmation gate (delete class / run / ontology)
+  // call ``requestConfirm`` instead of ``window.confirm``; the page owns
+  // the dialog state and renders ``<ConfirmDialog>``. The bare delete
+  // callbacks below stay as-is so non-gated callers (e.g. the side panel
+  // delete buttons) keep working.
   deleteClass: (classKey: string) => void;
   deleteOntology: (ontologyKey: string) => void;
   deleteDocument: (docKey: string) => void;
   deleteRun: (runKey: string) => void;
+  requestConfirm: (request: ConfirmRequest) => void;
 
   // ── Ontology life-cycle / dialogs ─────────────────────────────────────
   setRenameOntology: (arg: RenameOntologyArg) => void;

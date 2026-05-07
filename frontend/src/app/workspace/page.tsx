@@ -8,6 +8,7 @@ import AssetExplorer from "@/components/workspace/AssetExplorer";
 import OntologyRenameDialog from "@/components/workspace/OntologyRenameDialog";
 import OntologyReleaseDialog from "@/components/workspace/OntologyReleaseDialog";
 import CreateOntologyDialog from "@/components/workspace/CreateOntologyDialog";
+import ConfirmDialog from "@/components/workspace/ConfirmDialog";
 import ManageImportsOverlay from "@/components/workspace/ManageImportsOverlay";
 import FeedbackLearningOverlay from "@/components/workspace/FeedbackLearningOverlay";
 import CanvasLensLegend from "@/components/workspace/CanvasLensLegend";
@@ -17,6 +18,7 @@ import ContextMenu, { type ContextMenuItem } from "@/components/workspace/Contex
 import {
   CONTEXT_MENU_BUILDERS,
   type WorkspaceContextMenuActions,
+  type ConfirmRequest,
 } from "@/components/workspace/contextMenus";
 import { api, ApiError, type PaginatedResponse } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
@@ -137,6 +139,15 @@ function WorkspacePageInner() {
     ontologyId?: string | null;
     ontologyName?: string | null;
   } | null>(null);
+
+  // Outstanding ConfirmDialog request, populated by builders via
+  // ``requestConfirm``. ``null`` means no dialog is open. Per
+  // ``ui-architecture.mdc`` §18 this surface replaces every ``window.confirm``
+  // in the workspace.
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmRequest | null>(null);
+  const requestConfirm = useCallback((request: ConfirmRequest) => {
+    setPendingConfirm(request);
+  }, []);
 
   const [classes, setClasses] = useState<OntologyClass[]>([]);
   const [properties, setProperties] = useState<OntologyProperty[]>([]);
@@ -740,6 +751,7 @@ function WorkspacePageInner() {
     deleteOntology,
     deleteDocument,
     deleteRun,
+    requestConfirm,
     setRenameOntology,
     setReleaseOntology,
     setShowCreateOntology,
@@ -1032,6 +1044,24 @@ function WorkspacePageInner() {
           ontologyId={feedbackLearning.ontologyId}
           ontologyName={feedbackLearning.ontologyName}
           onClose={() => setFeedbackLearning(null)}
+        />
+      )}
+
+      {pendingConfirm && (
+        <ConfirmDialog
+          open
+          title={pendingConfirm.title}
+          message={pendingConfirm.message}
+          confirmLabel={pendingConfirm.confirmLabel}
+          cancelLabel={pendingConfirm.cancelLabel}
+          danger={pendingConfirm.danger}
+          typedName={pendingConfirm.typedName}
+          onConfirm={() => {
+            const fn = pendingConfirm.onConfirm;
+            setPendingConfirm(null);
+            fn();
+          }}
+          onClose={() => setPendingConfirm(null)}
         />
       )}
     </div>

@@ -60,4 +60,8 @@ export { buildPipelineCanvasContextMenu } from "./pipelineCanvas";
 export { buildPropertyContextMenu } from "./property";
 export { buildRunContextMenu } from "./run";
 export { buildStepContextMenu } from "./step";
-export type { WorkspaceContextMenuActions } from "./types";
+export type {
+  ConfirmRequest,
+  ConfirmTypedName,
+  WorkspaceContextMenuActions,
+} from "./types";

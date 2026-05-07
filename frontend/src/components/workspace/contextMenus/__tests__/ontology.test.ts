@@ -44,6 +44,7 @@ function makeActions(): WorkspaceContextMenuActions {
     fitPipelineView: jest.fn(),
     centerPipelineView: jest.fn(),
     closeContextMenu: jest.fn(),
+    requestConfirm: jest.fn(),
     selectedOntologyId: null,
   };
 }

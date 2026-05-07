@@ -60,6 +60,7 @@ function makeActions(
     fitPipelineView: jest.fn(),
     centerPipelineView: jest.fn(),
     closeContextMenu: jest.fn(),
+    requestConfirm: jest.fn(),
     selectedOntologyId: null,
     ...overrides,
   };
