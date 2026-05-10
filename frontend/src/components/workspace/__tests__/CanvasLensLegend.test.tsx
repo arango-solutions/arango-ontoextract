@@ -23,4 +23,26 @@ describe("CanvasLensLegend", () => {
     expect(el).toHaveTextContent("not approval");
     expect(el).toHaveTextContent("PageRank");
   });
+
+  it("confidence lens documents the edge encoding explicitly", () => {
+    // The legend must call out exactly how edge confidence is rendered so the
+    // user can read a stroke / color and know what it means (workspace rule
+    // §12, "every encoding is legible in-UI"). The aggregation that feeds it
+    // lives in ``backend/app/services/edge_confidence.py``.
+    render(<CanvasLensLegend activeLens="confidence" timelineActive={false} />);
+    const el = screen.getByTestId("canvas-lens-legend");
+    expect(el).toHaveTextContent(/Edge color and stroke width/i);
+    expect(el).toHaveTextContent(/per-evidence confidences/i);
+    expect(el).toHaveTextContent(/relation label appends a %/i);
+  });
+
+  it("confidence lens points the user at the threshold slider below the canvas", () => {
+    // Discoverability: the slider is only visible in the Confidence lens, so
+    // the legend has to advertise it (workspace rule §20, "context-menu-
+    // primary is hard to discover — mitigate explicitly").
+    render(<CanvasLensLegend activeLens="confidence" timelineActive={false} />);
+    const el = screen.getByTestId("canvas-lens-legend");
+    expect(el).toHaveTextContent(/slider below the canvas/i);
+    expect(el).toHaveTextContent(/composes with the time slider/i);
+  });
 });

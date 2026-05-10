@@ -32,6 +32,10 @@ from app.services import ontology_context as ctx_svc
 from app.services import promotion as promotion_svc
 from app.services import temporal as temporal_svc
 from app.services.arangordf_bridge import import_from_file
+from app.services.edge_confidence import (
+    compute_edge_confidence,
+    enrich_rdfs_range_class_edges,
+)
 from app.services.schema_extraction import (
     SchemaExtractionConfig,
     extract_schema,
@@ -1353,9 +1357,37 @@ async def list_ontology_properties(
     return {"data": props}
 
 
+_EDGE_HISTORY_COLLECTIONS = (
+    "subclass_of",
+    "rdfs_domain",
+    "rdfs_range_class",
+    "equivalent_class",
+    "has_property",
+    "related_to",
+    "extends_domain",
+    "imports",
+    "extracted_from",
+)
+
+
 @router.get("/{ontology_id}/edges")
 async def list_ontology_edges(ontology_id: str) -> dict[str, Any]:
-    """List all edges for an ontology (PGT-aligned + legacy fallback)."""
+    """List all edges for an ontology (PGT-aligned + legacy fallback).
+
+    Each edge is annotated with a top-level ``confidence`` derived from
+    ``evidence[].evidence_confidence`` (mean) when an explicit field is not
+    already present -- see ``app.services.edge_confidence``. This is what the
+    workspace canvas's confidence lens (PRD §5.3, FR-7.8.6) reads to paint
+    edge color, stroke width, and the appended ``%`` label.
+
+    For ``rdfs_range_class`` edges, ``label``/``description``/``confidence``/
+    ``evidence`` are first lifted from the owning ``ontology_object_properties``
+    vertex via :func:`enrich_rdfs_range_class_edges`. Without this join, the
+    canvas falls back to the structural label ``owl:ObjectProperty`` and shows
+    no confidence percentage, even though the real relationship name (e.g.
+    "generates Risk Profile") and a 0.9 confidence with grounded evidence
+    live one hop away on the property document.
+    """
     db = get_db()
     edges: list[dict[str, Any]] = []
     for edge_col in (
@@ -1384,7 +1416,161 @@ async def list_ontology_edges(ontology_id: str) -> dict[str, Any]:
                 )
             )
             edges.extend(result)
+
+    properties_by_id = _live_properties_by_id(db, ontology_id)
+    enrich_rdfs_range_class_edges(edges, properties_by_id)
+
+    for edge in edges:
+        conf = compute_edge_confidence(edge)
+        if conf is not None and edge.get("confidence") in (None, ""):
+            edge["confidence"] = conf
+
     return {"data": edges}
+
+
+def _live_properties_by_id(db: Any, ontology_id: str) -> dict[str, dict[str, Any]]:
+    """Return ``{_id: property_doc}`` for live object/datatype properties.
+
+    Used by :func:`list_ontology_edges` to enrich ``rdfs_range_class`` edges
+    without a per-edge round-trip. Both property collections are keyed by
+    ``_id`` (full ``collection/key`` form) since that is what the
+    ``rdfs_range_class._from`` field stores.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for col_name in ("ontology_object_properties", "ontology_datatype_properties"):
+        if not db.has_collection(col_name):
+            continue
+        rows = run_aql(
+            db,
+            f"FOR p IN {col_name} "
+            "FILTER p.ontology_id == @oid AND p.expired == @never "
+            "RETURN p",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        )
+        for row in rows:
+            pid = row.get("_id")
+            if isinstance(pid, str):
+                out[pid] = row
+    return out
+
+
+def _find_edge_collection_for_key(db: Any, edge_key: str) -> tuple[str, dict[str, Any]] | None:
+    """Locate which edge collection owns ``edge_key`` and return ``(collection, doc)``.
+
+    Edges live in one of several collections (``subclass_of``, ``rdfs_domain``,
+    …); we discover the owner by checking each in order. This mirrors the
+    lookup pattern in ``ontology_repo._EDGE_COLLECTIONS_FOR_LOOKUP``.
+    """
+    for col_name in _EDGE_HISTORY_COLLECTIONS:
+        if not db.has_collection(col_name):
+            continue
+        try:
+            doc = cast(
+                "dict[str, Any] | None",
+                db.collection(col_name).get(edge_key),
+            )
+        except Exception:
+            doc = None
+        if doc is not None:
+            return col_name, doc
+    return None
+
+
+@router.get("/edge/{edge_key}/history")
+async def get_edge_history(edge_key: str) -> list[dict[str, Any]]:
+    """All versions of an edge sorted by ``created`` DESC.
+
+    Mirrors ``GET /class/{class_key}/history`` for first-class edge support
+    (PRD FR-7.8.6: "Selecting a node/edge opens a floating panel with
+    metadata, properties, provenance, history, and quality scores").
+
+    Edges are grouped by their endpoint pair ``(_from, _to, ontology_id)``
+    rather than by URI — see ``temporal_svc.get_edge_history`` for the
+    grouping rationale and the cross-vertex-version caveat.
+    """
+    db = get_db()
+    located = _find_edge_collection_for_key(db, edge_key)
+    if located is None:
+        raise HTTPException(status_code=404, detail=f"Edge '{edge_key}' not found")
+    collection, _doc = located
+
+    history = temporal_svc.get_edge_history(
+        db,
+        collection=collection,
+        key=edge_key,
+    )
+    if not history:
+        raise HTTPException(status_code=404, detail=f"Edge '{edge_key}' not found")
+    for ver in history:
+        conf = compute_edge_confidence(ver)
+        if conf is not None and "confidence" not in ver:
+            ver["confidence"] = conf
+    return history
+
+
+@router.get("/edge/{edge_key}/provenance")
+async def get_edge_provenance(edge_key: str) -> dict[str, Any]:
+    """Source chunks supporting an edge, derived from ``evidence[].source_chunk_ids``.
+
+    Unlike the class-level provenance (which links to whole documents via
+    ``extracted_from``), edge provenance is **chunk-level**: every relationship
+    extracted under FR-2.14 records the exact ``source_chunk_ids`` and a
+    verbatim ``evidence_text`` snippet. We surface those chunks plus the
+    inline ``evidence_text`` so the workspace panel can show why this
+    relationship was inferred.
+
+    Returned shape mirrors ``/class/{class_key}/provenance`` (``{data, total_count}``)
+    so the frontend ``AssetInfoPanel`` can render edge provenance with the
+    same code path that already renders class provenance via the ``_provenance``
+    field - see ``frontend/src/app/workspace/page.tsx`` lines 1247-1273.
+    """
+    db = get_db()
+    located = _find_edge_collection_for_key(db, edge_key)
+    if located is None:
+        raise HTTPException(status_code=404, detail=f"Edge '{edge_key}' not found")
+    _collection, doc = located
+
+    chunk_ids: list[str] = []
+    inline_evidence: list[dict[str, Any]] = []
+    evidence = doc.get("evidence")
+    if isinstance(evidence, list):
+        for item in evidence:
+            if not isinstance(item, dict):
+                continue
+            ids = item.get("source_chunk_ids")
+            if isinstance(ids, list):
+                for cid in ids:
+                    if isinstance(cid, str) and cid not in chunk_ids:
+                        chunk_ids.append(cid)
+            inline_evidence.append(
+                {
+                    "evidence_text": item.get("evidence_text"),
+                    "evidence_confidence": item.get("evidence_confidence"),
+                    "extraction_rationale": item.get("extraction_rationale"),
+                    "source_chunk_ids": item.get("source_chunk_ids"),
+                    "source_spans": item.get("source_spans"),
+                }
+            )
+
+    chunks: list[dict[str, Any]] = []
+    if chunk_ids and db.has_collection("chunks"):
+        chunks = list(
+            run_aql(
+                db,
+                "FOR c IN chunks "
+                "  FILTER c._key IN @ids "
+                "  SORT c.chunk_index ASC "
+                "  RETURN { _key: c._key, text: c.text, chunk_index: c.chunk_index, "
+                "           doc_id: c.doc_id, section_heading: c.section_heading }",
+                bind_vars={"ids": chunk_ids},
+            )
+        )
+
+    return {
+        "data": chunks,
+        "total_count": len(chunks),
+        "evidence": inline_evidence,
+    }
 
 
 # ---------------------------------------------------------------------------

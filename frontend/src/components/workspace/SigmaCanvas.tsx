@@ -137,6 +137,25 @@ function displayNodeLabel(cls: OntologyClass, lens: LensType): string {
   return `${cls.label} ${pct}%`;
 }
 
+/** Edge label shown on the canvas. In the confidence lens we append a ``%`` so
+ *  the lens has visible parity with class nodes (FR-7.8.6 / workspace rule §16,
+ *  "edges are first-class"). When the edge has no confidence we leave the base
+ *  relation label alone so the label doesn't lie ("0%" would imply we measured
+ *  it). The base label falls back to a human-readable version of the edge type
+ *  when the LLM didn't supply a relation label. */
+function displayEdgeLabel(
+  baseLabel: string,
+  edgeType: string,
+  edgeConfidence: number | null | undefined,
+  lens: LensType,
+): string {
+  const base = baseLabel || edgeType.replace(/_/g, " ");
+  if (lens !== "confidence") return base;
+  if (edgeConfidence == null || Number.isNaN(edgeConfidence)) return base;
+  const pct = Math.round(normalizeConfidence01(edgeConfidence) * 100);
+  return `${base} ${pct}%`;
+}
+
 function lensEdgeVisual(
   edge: OntologyEdge,
   edgeType: string,
@@ -263,6 +282,13 @@ export interface SigmaCanvasProps {
   onViewportApi?: (api: SigmaViewportApi | null) => void;
   /** When set, only nodes in this set are visible (VCR timeline filtering). */
   visibleNodeKeys?: Set<string> | null;
+  /** When set, only edges in this set are visible (e.g. confidence-threshold
+   *  filtering by ``ConfidenceThresholdSlider``). Combines additively with
+   *  ``visibleNodeKeys``: an edge is visible iff both endpoints pass the node
+   *  filter **and** its own ``_key`` is in this set. ``null`` disables this
+   *  axis (no edge-level filter — every edge whose endpoints are visible is
+   *  drawn). */
+  visibleEdgeKeys?: Set<string> | null;
   /** Externally-driven node selection (e.g. sidebar click). Highlighted with a ring. */
   selectedNodeKey?: string | null;
   /** Externally-driven edge selection (e.g. sidebar click). */
@@ -303,6 +329,9 @@ function buildTopologyGraph(classes: OntologyClass[], edges: OntologyEdge[]): Gr
       syn.targetClassKey,
       {
         label,
+        // ``baseLabel`` is the lens-independent label; ``label`` is what's
+        // currently shown (rewritten by ``paintLensOnGraph`` per active lens).
+        baseLabel: label,
         color: EDGE_COLORS.rdfs_range_class,
         size: 2,
         type: "curvedArrow",
@@ -330,6 +359,7 @@ function buildTopologyGraph(classes: OntologyClass[], edges: OntologyEdge[]): Gr
 
     graph.addEdgeWithKey(edge._key, source, target, {
       label: displayLabel,
+      baseLabel: displayLabel,
       color: EDGE_COLORS[edgeType] ?? "#94a3b8",
       size: edgeType === "subclass_of" ? 2.5 : 2,
       type: "curvedArrow",
@@ -408,6 +438,11 @@ function paintLensOnGraph(
     const ek = attrs.edgeKey as string | undefined;
     const et = attrs.edgeType as string | undefined;
     if (!ek || !et) return;
+    // ``baseLabel`` is whatever was written into the topology graph at build
+    // time — the LLM-supplied relation label or the synthetic-edge fallback.
+    // We need it for ``displayEdgeLabel`` so the confidence-lens append is
+    // consistent with the non-confidence lens.
+    const baseLabel = (attrs.baseLabel as string | undefined) ?? String(attrs.label ?? "");
     const domainEdge = edges.find((ed) => ed._key === ek);
     if (!domainEdge) {
       const synEdge: OntologyEdge = {
@@ -415,16 +450,22 @@ function paintLensOnGraph(
         _from: "",
         _to: "",
         type: "rdfs_range_class",
-        label: String(attrs.label ?? ""),
+        label: baseLabel,
       };
       const ev = lensEdgeVisual(synEdge, et, lens);
       g.setEdgeAttribute(eid, "color", ev.color);
       g.setEdgeAttribute(eid, "size", ev.size);
+      g.setEdgeAttribute(eid, "label", displayEdgeLabel(baseLabel, et, null, lens));
       return;
     }
     const ev = lensEdgeVisual(domainEdge, et, lens);
     g.setEdgeAttribute(eid, "color", ev.color);
     g.setEdgeAttribute(eid, "size", ev.size);
+    g.setEdgeAttribute(
+      eid,
+      "label",
+      displayEdgeLabel(baseLabel, et, domainEdge.confidence ?? null, lens),
+    );
   });
 }
 
@@ -509,6 +550,7 @@ export default function SigmaCanvas({
   onContextMenu,
   onViewportApi,
   visibleNodeKeys,
+  visibleEdgeKeys,
   selectedNodeKey,
   selectedEdgeKey,
 }: SigmaCanvasProps) {
@@ -735,9 +777,11 @@ export default function SigmaCanvas({
     const s = sigmaRef.current;
     if (!s) return;
     const hasVisFilter = !!visibleNodeKeys;
+    const hasEdgeVisFilter = !!visibleEdgeKeys;
     const hasNodeSel = !!selectedNodeKey;
     const hasEdgeSel = !!selectedEdgeKey;
-    const needsReducer = hasVisFilter || hasNodeSel || hasEdgeSel;
+    const needsReducer =
+      hasVisFilter || hasEdgeVisFilter || hasNodeSel || hasEdgeSel;
 
     if (!needsReducer) {
       s.setSetting("nodeReducer", null);
@@ -763,6 +807,16 @@ export default function SigmaCanvas({
             return { ...data, hidden: true };
           }
         }
+        if (hasEdgeVisFilter) {
+          const attrs = g.getEdgeAttributes(edge);
+          // ``edgeKey`` is the domain key (e.g. ``150170542``); the graphology
+          // ``edge`` may differ for synthetic edges (``syn-…`` prefix). The
+          // filter is keyed by the domain key the slider observed.
+          const ek = (attrs.edgeKey ?? edge) as string;
+          if (!visibleEdgeKeys!.has(ek)) {
+            return { ...data, hidden: true };
+          }
+        }
         if (hasEdgeSel) {
           const attrs = g.getEdgeAttributes(edge);
           if ((attrs.edgeKey ?? edge) === selectedEdgeKey) {
@@ -773,7 +827,7 @@ export default function SigmaCanvas({
       });
     }
     s.refresh();
-  }, [visibleNodeKeys, selectedNodeKey, selectedEdgeKey]);
+  }, [visibleNodeKeys, visibleEdgeKeys, selectedNodeKey, selectedEdgeKey]);
 
   const handleRelayout = useCallback((layout: LayoutType = "force") => {
     if (!graphRef.current || !sigmaRef.current) return;

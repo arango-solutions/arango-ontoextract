@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { setToken } from "@/lib/auth";
 import { backendUrl } from "@/lib/api-client";
 import { resolvedPostLoginHref } from "@/lib/base-path";
@@ -12,6 +12,21 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [state, setState] = useState<LoginState>("idle");
   const [errorMsg, setErrorMsg] = useState("");
+
+  // In dev mode the middleware lets every protected route through, but the
+  // login page itself sits on the public allowlist and would otherwise
+  // render unconditionally — so a user who lands here (e.g. via a stale
+  // bookmark or browser autocomplete) gets a misleading "Sign in" screen
+  // even though the footer correctly says auth is bypassed. Bounce them
+  // straight to the post-login destination. ``location.replace`` (not
+  // ``href``) so the back button doesn't return here.
+  useEffect(() => {
+    if (process.env.NEXT_PUBLIC_DEV_MODE === "true") {
+      const params = new URLSearchParams(window.location.search);
+      const redirect = params.get("redirect") ?? "/";
+      window.location.replace(resolvedPostLoginHref(redirect));
+    }
+  }, []);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();

@@ -39,7 +39,7 @@ const LENS_META: Record<
       { color: "#eab308", label: "Medium (50–70%)" },
       { color: "#ef4444", label: "Low (below 50%)" },
     ],
-    note: "Fill and size reflect class confidence; labels append a % when known. Edges use confidence color/thickness when per-edge confidence exists; otherwise they keep relation-type colors.",
+    note: "Class fill + size reflect class confidence; labels append a %. Edge color and stroke width reflect the mean of per-evidence confidences, and the relation label appends a % too. Edges with no evidence keep their relation-type color and show the bare label. Use the slider below the canvas to hide entities below a confidence threshold (composes with the time slider).",
   },
   curation: {
     headline: "Curation status",

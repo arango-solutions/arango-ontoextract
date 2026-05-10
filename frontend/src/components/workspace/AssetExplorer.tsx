@@ -842,8 +842,14 @@ function ClassItem({
             <p className="pl-20 pr-3 py-0.5 text-[9px] text-gray-400 italic">No properties</p>
           )}
           {properties.map((prop, idx) => (
+            // ``idx`` is appended to ``_key`` because the backend currently writes
+            // duplicate property records (same ``_key``) for the same class — see
+            // the demo notes on the duplicate-write dedupe gap. Without the
+            // tiebreaker, React warns ``Encountered two children with the same
+            // key`` and may drop renders. Once the backend dedupes on write this
+            // can revert to ``key={prop._key ?? idx}``.
             <div
-              key={prop._key ?? idx}
+              key={`${prop._key ?? "noKey"}-${idx}`}
               onContextMenu={(e) => {
                 e.preventDefault();
                 onContextMenu(e, "property", { ...prop, ontology_id: ontologyId, class_key: cls._key });

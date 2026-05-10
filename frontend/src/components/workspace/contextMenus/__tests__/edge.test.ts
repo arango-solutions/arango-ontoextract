@@ -4,6 +4,19 @@
 
 import { buildEdgeContextMenu } from "@/components/workspace/contextMenus/edge";
 import type { WorkspaceContextMenuActions } from "@/components/workspace/contextMenus/types";
+import * as apiClient from "@/lib/api-client";
+
+jest.mock("@/lib/api-client", () => ({
+  api: {
+    get: jest.fn(),
+    put: jest.fn(),
+    post: jest.fn(),
+    del: jest.fn(),
+  },
+  ApiError: class ApiError extends Error {},
+}));
+
+const mockedApi = apiClient.api as jest.Mocked<typeof apiClient.api>;
 
 function makeActions(): WorkspaceContextMenuActions {
   return {
@@ -50,6 +63,10 @@ function makeActions(): WorkspaceContextMenuActions {
 }
 
 describe("buildEdgeContextMenu", () => {
+  beforeEach(() => {
+    mockedApi.get.mockReset();
+  });
+
   it("returns the canonical edge menu inventory using the edge label", () => {
     const actions = makeActions();
     const items = buildEdgeContextMenu(
@@ -65,6 +82,8 @@ describe("buildEdgeContextMenu", () => {
       "knows",
       "Approve edge",
       "Reject edge",
+      "View Version History",
+      "View Provenance",
       "Delete",
     ]);
   });
@@ -103,6 +122,66 @@ describe("buildEdgeContextMenu", () => {
 
     expect(actions.approveEdge).toHaveBeenCalledWith("E1");
     expect(actions.rejectEdge).toHaveBeenCalledWith("E1");
+  });
+
+  it("View Version History fetches the edge history endpoint and opens the info panel with _history", async () => {
+    const actions = makeActions();
+    const versions = [
+      { _key: "v3", label: "knows", created: 3 },
+      { _key: "v2", label: "knows", created: 2 },
+      { _key: "v1", label: "knows", created: 1 },
+    ];
+    mockedApi.get.mockResolvedValueOnce(versions);
+
+    const items = buildEdgeContextMenu({ _key: "E1", label: "knows" }, actions);
+    await items.find((it) => it.label === "View Version History")!.onClick!();
+
+    expect(mockedApi.get).toHaveBeenCalledWith("/api/v1/ontology/edge/E1/history");
+    expect(actions.setInfoPanelItem).toHaveBeenCalledWith({
+      type: "ontology",
+      data: { _key: "E1", name: "knows", _history: versions },
+    });
+  });
+
+  it("View Version History falls back to opening the detail panel when the API errors", async () => {
+    const actions = makeActions();
+    mockedApi.get.mockRejectedValueOnce(new Error("boom"));
+
+    const items = buildEdgeContextMenu({ _key: "E1", label: "knows" }, actions);
+    await items.find((it) => it.label === "View Version History")!.onClick!();
+
+    expect(actions.handleEdgeSelect).toHaveBeenCalledWith("E1");
+    expect(actions.setDetailPanelOpen).toHaveBeenCalledWith(true);
+    expect(actions.setInfoPanelItem).not.toHaveBeenCalled();
+  });
+
+  it("View Provenance fetches the edge provenance endpoint and opens the info panel with _provenance", async () => {
+    const actions = makeActions();
+    const provData = [
+      { _key: "c1", text: "Customer is …", chunk_index: 0, doc_id: "D1" },
+    ];
+    mockedApi.get.mockResolvedValueOnce({ data: provData });
+
+    const items = buildEdgeContextMenu({ _key: "E1", label: "knows" }, actions);
+    await items.find((it) => it.label === "View Provenance")!.onClick!();
+
+    expect(mockedApi.get).toHaveBeenCalledWith("/api/v1/ontology/edge/E1/provenance");
+    expect(actions.setInfoPanelItem).toHaveBeenCalledWith({
+      type: "ontology",
+      data: { _key: "E1", name: "knows", _provenance: provData },
+    });
+  });
+
+  it("View Provenance falls back to opening the detail panel when the API errors", async () => {
+    const actions = makeActions();
+    mockedApi.get.mockRejectedValueOnce(new Error("boom"));
+
+    const items = buildEdgeContextMenu({ _key: "E1", label: "knows" }, actions);
+    await items.find((it) => it.label === "View Provenance")!.onClick!();
+
+    expect(actions.handleEdgeSelect).toHaveBeenCalledWith("E1");
+    expect(actions.setDetailPanelOpen).toHaveBeenCalledWith(true);
+    expect(actions.setInfoPanelItem).not.toHaveBeenCalled();
   });
 
   it("Delete is disabled and danger-styled (edge deletion not yet supported)", () => {

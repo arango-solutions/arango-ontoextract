@@ -2583,7 +2583,10 @@ The `ontology_constraints` collection already exists in §5.1 with fields for `o
 | `GET` | `/api/v1/ontology/{ontology_id}/timeline` | List all discrete change events (version creations) for timeline tick marks |
 | `GET` | `/api/v1/ontology/{ontology_id}/diff` | Temporal diff — query params `t1={ts}&t2={ts}` returns added/removed/changed entities |
 | `GET` | `/api/v1/ontology/class/{class_key}/history` | Full version history of a specific class (all versions with change metadata) |
+| `GET` | `/api/v1/ontology/class/{class_key}/provenance` | Source chunks linked to a class via `extracted_from` (document-level provenance) |
 | `POST` | `/api/v1/ontology/class/{class_key}/revert` | Revert a class to a previous version — creates a new current version restoring historical state |
+| `GET` | `/api/v1/ontology/edge/{edge_key}/history` | Full version history of a specific edge sharing the same `(_from, _to, ontology_id)` triple (FR-7.8.6 edge parity with classes) |
+| `GET` | `/api/v1/ontology/edge/{edge_key}/provenance` | Source chunks supporting an edge, derived from `evidence[].source_chunk_ids` (chunk-level — richer than the class endpoint, which only resolves to whole documents) |
 | `POST` | `/api/v1/ontology/schema/extract` | Trigger schema extraction from an external ArangoDB instance |
 | `GET` | `/api/v1/ontology/schema/extract/{run_id}` | Get schema extraction run status |
 

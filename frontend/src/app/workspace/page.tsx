@@ -76,6 +76,11 @@ const VCRTimeline = dynamic(() => import("@/components/timeline/VCRTimeline"), {
   ssr: false,
 });
 
+const ConfidenceThresholdSlider = dynamic(
+  () => import("@/components/workspace/ConfidenceThresholdSlider"),
+  { ssr: false },
+);
+
 const AgentDAG = dynamic(() => import("@/components/pipeline/AgentDAG"), {
   ssr: false,
   loading: () => (
@@ -155,6 +160,33 @@ function WorkspacePageInner() {
   const [graphLoading, setGraphLoading] = useState(false);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [timelineVisibleKeys, setTimelineVisibleKeys] = useState<Set<string> | null>(null);
+  // Confidence-threshold slider state. Both axes default to ``null`` ("no
+  // filter"); each becomes a ``Set`` only when the slider is dragged above
+  // 0% in the Confidence lens. The page intersects the class set with
+  // ``timelineVisibleKeys`` below so timeline + threshold compose, and the
+  // edge set is forwarded directly to ``SigmaCanvas.visibleEdgeKeys``.
+  const [confidenceVisibleClasses, setConfidenceVisibleClasses] = useState<
+    Set<string> | null
+  >(null);
+  const [confidenceVisibleEdges, setConfidenceVisibleEdges] = useState<
+    Set<string> | null
+  >(null);
+
+  /** Class-key visibility merged across every active filter (currently:
+   *  VCR timeline ∩ confidence threshold). ``null`` means "no filter
+   *  active" so ``SigmaCanvas`` can skip the reducer entirely. */
+  const mergedVisibleNodeKeys = useMemo<Set<string> | null>(() => {
+    if (timelineVisibleKeys == null && confidenceVisibleClasses == null) {
+      return null;
+    }
+    if (timelineVisibleKeys == null) return confidenceVisibleClasses;
+    if (confidenceVisibleClasses == null) return timelineVisibleKeys;
+    const out = new Set<string>();
+    for (const k of timelineVisibleKeys) {
+      if (confidenceVisibleClasses.has(k)) out.add(k);
+    }
+    return out;
+  }, [timelineVisibleKeys, confidenceVisibleClasses]);
 
   const [pipelineRunId, setPipelineRunId] = useState<string | null>(null);
   const [pipelineSteps, setPipelineSteps] = useState<Map<string, StepStatus>>(new Map());
@@ -894,7 +926,7 @@ function WorkspacePageInner() {
                       onEdgeSelect={handleEdgeSelect}
                       onContextMenu={handleSigmaContextMenu}
                       onViewportApi={handleViewportApi}
-                      visibleNodeKeys={timelineVisibleKeys}
+                      visibleNodeKeys={mergedVisibleNodeKeys}
                       selectedNodeKey={selectedNodeKey}
                       selectedEdgeKey={selectedEdgeKey}
                       classProperties={classPropertiesMap}
@@ -909,7 +941,8 @@ function WorkspacePageInner() {
                       onEdgeSelect={handleEdgeSelect}
                       onContextMenu={handleSigmaContextMenu}
                       onViewportApi={handleViewportApi}
-                      visibleNodeKeys={timelineVisibleKeys}
+                      visibleNodeKeys={mergedVisibleNodeKeys}
+                      visibleEdgeKeys={confidenceVisibleEdges}
                       selectedNodeKey={selectedNodeKey}
                       selectedEdgeKey={selectedEdgeKey}
                     />
@@ -961,6 +994,23 @@ function WorkspacePageInner() {
               />
             )}
           </div>
+
+          {/* Confidence-threshold slider — sibling to the VCR timeline,
+              shown only in the Confidence lens (workspace rule §6: lens /
+              graph style / layout are three separate axes; this is a filter,
+              not a lens, but it only encodes confidence). */}
+          {selectedOntologyId &&
+            activeLens === "confidence" &&
+            graphViewMode !== "box-arrow" && (
+              <div className="h-auto min-h-[56px] border-t border-gray-800 bg-[#16162a] px-4 py-2 flex-shrink-0">
+                <ConfidenceThresholdSlider
+                  classes={classes}
+                  edges={edges}
+                  onVisibleClassesChange={setConfidenceVisibleClasses}
+                  onVisibleEdgesChange={setConfidenceVisibleEdges}
+                />
+              </div>
+            )}
 
           {/* Bottom: VCR Timeline */}
           {selectedOntologyId && (

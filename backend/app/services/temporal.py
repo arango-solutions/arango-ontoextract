@@ -539,6 +539,73 @@ FOR doc IN @@col
     return list(run_aql(db, history_query, bind_vars={"@col": collection, "uri": uri}))
 
 
+def get_edge_history(
+    db: StandardDatabase | None = None,
+    *,
+    collection: str,
+    key: str,
+) -> list[dict[str, Any]]:
+    """Return all versions of an edge sharing the same endpoint pair, sorted by ``created`` DESC.
+
+    Edges have no ``uri`` to group by (unlike vertices), so this groups by the
+    ``(_from, _to, ontology_id)`` triple of the edge identified by ``key``.
+    That captures the **decision history** of a logical edge as curators
+    approve / reject it (each mutation expires the prior version and inserts a
+    new one with the same endpoints — see ``re_create_edges``).
+
+    **Known limitation:** when a connected vertex itself gets a new version
+    (vertex re-versioning), the system re-creates the edge with new endpoint
+    ``_id`` values pointing to the new vertex key. Those re-created edges
+    appear here as a separate history thread because their ``_from``/``_to``
+    differ. Cross-vertex-version edge history would require resolving each
+    endpoint to a stable URI at query time and grouping by the URI pair; that
+    is left as a follow-up since edge re-versioning is dominated by curation
+    decisions in current usage.
+    """
+    if db is None:
+        db = get_db()
+
+    if not db.has_collection(collection):
+        return []
+
+    pivot_query = """\
+FOR doc IN @@col
+  FILTER doc._key == @key
+  LIMIT 1
+  RETURN { _from: doc._from, _to: doc._to, ontology_id: doc.ontology_id }"""
+
+    pivot_results = list(
+        run_aql(db, pivot_query, bind_vars={"@col": collection, "key": key})
+    )
+    if not pivot_results:
+        return []
+
+    pivot = pivot_results[0]
+    if not pivot.get("_from") or not pivot.get("_to"):
+        return []
+
+    history_query = """\
+FOR doc IN @@col
+  FILTER doc._from == @from_id
+  FILTER doc._to == @to_id
+  FILTER (@oid == null) OR (doc.ontology_id == @oid)
+  SORT doc.created DESC
+  RETURN doc"""
+
+    return list(
+        run_aql(
+            db,
+            history_query,
+            bind_vars={
+                "@col": collection,
+                "from_id": pivot["_from"],
+                "to_id": pivot["_to"],
+                "oid": pivot.get("ontology_id"),
+            },
+        )
+    )
+
+
 def get_diff(
     db: StandardDatabase | None = None,
     *,
