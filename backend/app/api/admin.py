@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.config import settings
 from app.db.client import get_db
+from app.services.edge_repair import repair_orphan_object_property_ranges
 from app.services.feedback_learning import build_feedback_learning_examples
 
 log = logging.getLogger(__name__)
@@ -99,6 +100,44 @@ async def reset_all_data() -> dict[str, Any]:
     graphs_removed = _remove_ontology_graphs(db)
     log.warning("full system reset: truncated %s, removed graphs %s", truncated, graphs_removed)
     return {"reset": True, "collections_truncated": truncated, "graphs_removed": graphs_removed}
+
+
+@router.post("/ontology/{ontology_id}/repair-edges")
+async def repair_ontology_edges(
+    ontology_id: str,
+    dry_run: bool = Query(
+        default=False,
+        description=(
+            "When true, run the matcher and return the would-be repairs "
+            "without inserting any rdfs_range_class edges."
+        ),
+    ),
+) -> dict[str, Any]:
+    """Repair orphan ``ontology_object_properties`` for one ontology.
+
+    Calls :func:`app.services.edge_repair.repair_orphan_object_property_ranges`
+    -- see that module's docstring for the matching algorithm and the rules
+    for what counts as an orphan. Idempotent: a second call after a
+    successful repair finds zero orphans.
+
+    Returns the :class:`RepairReport` as a dict so the caller can see
+    exactly which properties were repaired (and which couldn't be).
+    """
+    try:
+        db = get_db()
+        report = repair_orphan_object_property_ranges(
+            db,
+            ontology_id,
+            dry_run=dry_run,
+        )
+        return report.to_dict()
+    except Exception as exc:
+        log.exception(
+            "edge repair failed for ontology %s (dry_run=%s)",
+            ontology_id,
+            dry_run,
+        )
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @router.get("/feedback-learning")
