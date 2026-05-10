@@ -53,17 +53,76 @@ class TestDocumentHelpers:
 
 class TestUploadDocument:
     @pytest.mark.asyncio
-    async def test_upload_document_raises_on_duplicate_hash(self):
+    async def test_upload_document_raises_on_duplicate_hash_when_prior_is_ready(self):
+        # A duplicate of a fully-ingested doc (status=ready) should still
+        # 409 -- we don't want users to accidentally clobber a working doc
+        # by re-uploading identical content.
         file = _upload_file()
         with (
             patch("app.api.documents.compute_file_hash", return_value="hash"),
             patch(
                 "app.api.documents.documents_repo.find_document_by_hash",
-                return_value={"_key": "d0"},
+                return_value={"_key": "d0", "status": "ready"},
             ),
             pytest.raises(ConflictError),
         ):
             await upload_document(file)
+
+    @pytest.mark.asyncio
+    async def test_upload_document_raises_on_duplicate_hash_when_status_unknown(self):
+        # Defensive: a record without an explicit status (legacy / partial
+        # write) is treated as a duplicate, not a retry. We only allow the
+        # retry path when status is explicitly FAILED.
+        file = _upload_file()
+        with (
+            patch("app.api.documents.compute_file_hash", return_value="hash"),
+            patch(
+                "app.api.documents.documents_repo.find_document_by_hash",
+                return_value={"_key": "d0"},  # no status field
+            ),
+            pytest.raises(ConflictError),
+        ):
+            await upload_document(file)
+
+    @pytest.mark.asyncio
+    async def test_upload_replaces_prior_failed_document(self):
+        # Re-uploading the same file after a FAILED ingestion is the user's
+        # natural recovery action -- discard the prior FAILED record and
+        # its orphaned chunks, then proceed as a fresh upload. Without this
+        # users hit an inscrutable 409 with no obvious next step.
+        file = _upload_file()
+        task = MagicMock()
+        mock_create_task = MagicMock(side_effect=lambda coro: (coro.close(), task)[1])
+
+        with (
+            patch("app.api.documents.compute_file_hash", return_value="hash"),
+            patch(
+                "app.api.documents.documents_repo.find_document_by_hash",
+                return_value={"_key": "old_doc", "status": "failed"},
+            ),
+            patch(
+                "app.api.documents.documents_repo.delete_chunks_for_document",
+                return_value=16,
+            ) as mock_delete_chunks,
+            patch(
+                "app.api.documents.documents_repo.hard_delete_document",
+                return_value=True,
+            ) as mock_hard_delete,
+            patch(
+                "app.api.documents.documents_repo.create_document",
+                return_value={"_key": "new_doc", "filename": "doc.pdf", "status": "uploading"},
+            ),
+            patch("app.api.documents.asyncio.create_task", mock_create_task),
+        ):
+            result = await upload_document(file)
+
+        # The prior FAILED record + chunks were cleaned up before the new
+        # ingestion started -- so the user gets a fresh doc_id rather than
+        # silently inheriting a half-broken state.
+        mock_delete_chunks.assert_called_once_with("old_doc")
+        mock_hard_delete.assert_called_once_with("old_doc")
+        mock_create_task.assert_called_once()
+        assert result == {"doc_id": "new_doc", "filename": "doc.pdf", "status": "uploading"}
 
     @pytest.mark.asyncio
     async def test_upload_document_creates_record_and_task(self):

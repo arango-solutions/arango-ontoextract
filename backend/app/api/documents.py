@@ -19,6 +19,7 @@ from app.db import documents_repo
 from app.db.client import get_db
 from app.db.utils import run_aql
 from app.models.common import PaginatedResponse
+from app.models.documents import DocumentStatus
 from app.services.ingestion import compute_file_hash
 from app.tasks import process_document
 
@@ -76,10 +77,35 @@ async def upload_document(
     file_hash = compute_file_hash(content)
     existing = documents_repo.find_document_by_hash(file_hash)
     if existing:
-        raise ConflictError(
-            "Duplicate document — a file with identical content already exists",
-            details={"existing_doc_id": existing["_key"], "file_hash": file_hash},
-        )
+        # A FAILED record is a leftover from a previous failed ingestion
+        # attempt at any pipeline stage (parse / chunk / embed / index).
+        # The user's natural recovery is to retry the same file, so we
+        # treat re-upload of identical content as an explicit retry: hard
+        # delete the prior record + its chunks, then proceed with a fresh
+        # ingestion. Any non-FAILED status (uploading / parsing / chunking
+        # / embedding / ready / deleted) is still rejected -- those are
+        # legitimate duplicates the user shouldn't accidentally clobber.
+        prior_status = existing.get("status")
+        if prior_status == DocumentStatus.FAILED:
+            prior_id = existing["_key"]
+            chunks_removed = documents_repo.delete_chunks_for_document(prior_id)
+            documents_repo.hard_delete_document(prior_id)
+            log.info(
+                "discarded prior FAILED document %s (chunks_removed=%d) "
+                "to allow re-upload of identical content (hash=%s)",
+                prior_id,
+                chunks_removed,
+                file_hash,
+            )
+        else:
+            raise ConflictError(
+                "Duplicate document — a file with identical content already exists",
+                details={
+                    "existing_doc_id": existing["_key"],
+                    "existing_status": prior_status,
+                    "file_hash": file_hash,
+                },
+            )
 
     doc = documents_repo.create_document(
         filename=file.filename or "untitled",
@@ -171,8 +197,6 @@ async def update_document(
         file_hash=file_hash,
         chunk_count=0,
     )
-    from app.models.documents import DocumentStatus
-
     documents_repo.update_document_status(doc_id, DocumentStatus.UPLOADING)
 
     task = asyncio.create_task(process_document(doc_id, content, mime))
