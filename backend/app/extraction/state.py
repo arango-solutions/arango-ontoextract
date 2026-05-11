@@ -64,3 +64,9 @@ class ExtractionPipelineState(TypedDict, total=False):
     qualitative_evaluation: dict[str, Any]
 
     domain_context: str
+
+    # Belief revision (PRD §6.16, Stream 11 IBR.10)
+    # One entry per revision applied OR flagged during this run. Each entry
+    # is a dict (not a dataclass) so the value composes cleanly through
+    # LangGraph state-merge with operator.add.
+    revision_actions: Annotated[list[dict[str, Any]], operator.add]
