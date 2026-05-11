@@ -119,6 +119,112 @@ def _normalise(s: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", "", stripped.lower())
 
 
+# Splits CamelCase / PascalCase / snake_case / kebab-case into space-separated
+# words. Used to derive a human-readable label from a URI fragment when the
+# LLM only emitted a ``target_class_uri`` (no separate label).
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+
+def humanize_uri_fragment(uri: str) -> str:
+    """Derive a readable label from a URI's last fragment.
+
+    ``http://x#CustomerRiskProfile`` -> ``"Customer Risk Profile"``
+    ``http://x/customer_risk_profile`` -> ``"customer risk profile"``
+    ``http://x/account-type`` -> ``"account type"``
+    Empty / non-string input returns ``""``.
+
+    This is intentionally simple: the goal is to capture the LLM's *intent*
+    when it emitted the URI, so a later resolution pass (or a human curator)
+    can find the right class even if the URI itself doesn't directly match.
+    """
+    if not isinstance(uri, str) or not uri:
+        return ""
+    fragment = uri.split("#")[-1].split("/")[-1]
+    if not fragment:
+        return ""
+    spaced = _CAMEL_BOUNDARY.sub(" ", fragment)
+    spaced = re.sub(r"[_\-]+", " ", spaced)
+    return re.sub(r"\s+", " ", spaced).strip()
+
+
+@dataclass(frozen=True)
+class RangeResolution:
+    """Result of resolving an LLM-supplied target_class_uri to an extracted class.
+
+    Attributes:
+        class_key: The matched class ``_key``, or ``None`` if no tier hit.
+        tier: Which tier produced the match -- ``"uri"``, ``"fragment"``,
+            ``"label"`` (longest normalised label match), or ``"miss"``.
+            Tier names are stable for telemetry / logging.
+        target_label: The humanised label derived from the URI for
+            persistence on the property document, regardless of whether
+            resolution succeeded.
+    """
+
+    class_key: str | None
+    tier: str
+    target_label: str
+
+
+def resolve_range_class(
+    target_uri: str,
+    *,
+    uri_to_key: dict[str, str],
+    fragment_to_key: dict[str, str],
+    label_to_key: dict[str, str],
+    target_label: str | None = None,
+) -> RangeResolution:
+    """Resolve an LLM-emitted ``target_class_uri`` to an extracted class key.
+
+    Tries four ordered tiers; first hit wins:
+
+    1. **uri** -- exact URI match against ``uri_to_key``.
+    2. **fragment** -- match URI's last fragment against ``fragment_to_key``
+       (which is keyed by the class URI fragment, e.g. ``"CustomerAccount"``).
+    3. **label** -- normalised longest-match against ``label_to_key`` (which
+       is keyed by the original class label, e.g. ``"Customer Account"``).
+       This is the workhorse tier for the common LLM failure mode where the
+       URI fragment doesn't equal the label letter-for-letter.
+    4. **miss** -- nothing matched. ``class_key`` is ``None``.
+
+    ``target_label`` is the LLM-supplied human label for the target class
+    (rare; the prompts do not currently request it). When absent, the URI
+    fragment is humanised (see :func:`humanize_uri_fragment`) so that later
+    repair passes have a textual anchor even when the URI is unresolvable.
+    """
+    label = target_label or humanize_uri_fragment(target_uri)
+
+    # Tier 1: exact URI
+    hit = uri_to_key.get(target_uri)
+    if hit:
+        return RangeResolution(class_key=hit, tier="uri", target_label=label)
+
+    # Tier 2: URI fragment against per-fragment index
+    fragment = target_uri.split("#")[-1].split("/")[-1] if target_uri else ""
+    if fragment:
+        hit = fragment_to_key.get(fragment)
+        if hit:
+            return RangeResolution(class_key=hit, tier="fragment", target_label=label)
+
+    # Tier 3: longest-normalised-match against class labels
+    needle = _normalise(label) or _normalise(fragment)
+    if needle and label_to_key:
+        # Build candidate (normalised_label, key) list, longest first so
+        # ``CustomerRiskProfile`` beats ``Customer`` when both are valid.
+        candidates = sorted(
+            ((_normalise(lbl), key) for lbl, key in label_to_key.items()),
+            key=lambda x: len(x[0]),
+            reverse=True,
+        )
+        for cn, key in candidates:
+            if not cn:
+                continue
+            if cn == needle or cn in needle or needle in cn:
+                return RangeResolution(class_key=key, tier="label", target_label=label)
+
+    return RangeResolution(class_key=None, tier="miss", target_label=label)
+
+
 def _signal_text(prop: dict[str, Any]) -> str:
     """Concatenate every recorded natural-language signal on the property."""
     parts: list[str] = []

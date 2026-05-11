@@ -26,6 +26,7 @@ from app.extraction.judges.qualitative_eval_node import run_qualitative_evaluati
 from app.extraction.pipeline import run_pipeline
 from app.models.common import PaginatedResponse
 from app.services.confidence import compute_class_confidence
+from app.services.edge_repair import resolve_range_class
 
 log = logging.getLogger(__name__)
 _BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
@@ -769,8 +770,9 @@ def _materialize_to_graph(
     extracted_col = db.collection("extracted_from")
     subclass_col = db.collection("subclass_of")
 
-    class_keys: dict[str, str] = {}
-    uri_to_key: dict[str, str] = {}
+    class_keys: dict[str, str] = {}     # label -> key (legacy name; really label_to_key)
+    uri_to_key: dict[str, str] = {}     # full URI -> key
+    fragment_to_key: dict[str, str] = {}  # URI fragment -> key (for resolver tier 2)
     class_parent_uris: list[tuple[str, str, list[dict[str, Any]]]] = []
     deferred_rels: list[dict[str, Any]] = []
 
@@ -802,6 +804,10 @@ def _materialize_to_graph(
             log.warning("class insert failed for %s: %s", key, exc)
         class_keys[label] = key
         uri_to_key[uri] = key
+        # Index by URI fragment (post ``#`` / final path segment) so the
+        # range resolver can find a class by fragment even when its label
+        # diverges from the URI suffix (the common LLM case).
+        fragment_to_key[key] = key
 
         parent_uri = cls_data.get("parent_uri")
         if parent_uri:
@@ -885,6 +891,11 @@ def _materialize_to_graph(
                     "label": rel_label,
                     "description": rel.get("description", ""),
                     "target_class_uri": rel.get("target_class_uri", ""),
+                    # Forward an LLM-supplied target_class_label if present
+                    # (the prompts don't request it today, but the resolver
+                    # accepts it and a future prompt change can start emitting
+                    # it without further pipeline work).
+                    "target_class_label": rel.get("target_class_label"),
                     "confidence": rel.get("confidence", 0.0),
                     "evidence": rel.get("evidence", []),
                 }
@@ -924,11 +935,22 @@ def _materialize_to_graph(
             log.warning("skipping self-referential subclass_of: %s", child_key)
 
     # Deferred relationships → ontology_object_properties + rdfs_domain + rdfs_range_class
+    #
+    # Resolution uses ``edge_repair.resolve_range_class`` which tries four
+    # ordered tiers (uri / fragment / label / miss). The raw
+    # ``target_class_uri`` and the humanised ``target_class_label`` are
+    # persisted on every property document regardless of resolution success,
+    # so a later repair pass (or a curator) can always recover the LLM's
+    # original intent. Misses now log a WARNING (the silent failure mode
+    # was the original orphan-property bug).
     for rel in deferred_rels:
         target_uri = rel["target_class_uri"]
-        range_frag = target_uri.split("#")[-1].split("/")[-1]
-        range_class_key = (
-            uri_to_key.get(target_uri) or class_keys.get(range_frag) or class_keys.get(target_uri)
+        resolution = resolve_range_class(
+            target_uri,
+            uri_to_key=uri_to_key,
+            fragment_to_key=fragment_to_key,
+            label_to_key=class_keys,
+            target_label=rel.get("target_class_label"),
         )
 
         prop_key = rel["prop_key"]
@@ -940,6 +962,11 @@ def _materialize_to_graph(
             "ontology_id": ontology_id,
             "confidence": rel["confidence"],
             "evidence": rel.get("evidence", []),
+            # Persist the LLM's range intent even when resolution missed,
+            # so future repair / re-extraction can pick up where this run
+            # left off.
+            "target_class_uri": target_uri,
+            "target_class_label": resolution.target_label,
             "created": now,
             "expired": NEVER_EXPIRES,
         }
@@ -949,7 +976,7 @@ def _materialize_to_graph(
             log.warning("object property insert failed for %s: %s", prop_key, exc)
 
         domain_key = rel["domain_key"]
-        with contextlib.suppress(Exception):
+        try:
             rdfs_domain_col.insert(
                 {
                     "_from": f"ontology_object_properties/{prop_key}",
@@ -959,18 +986,59 @@ def _materialize_to_graph(
                     "expired": NEVER_EXPIRES,
                 }
             )
+        except Exception as exc:
+            log.warning(
+                "rdfs_domain insert failed for object property %s -> %s: %s",
+                prop_key,
+                domain_key,
+                exc,
+            )
 
-        if range_class_key:
-            with contextlib.suppress(Exception):
+        if resolution.class_key:
+            if resolution.tier == "label":
+                # Tier 4 hit -- the URI didn't match anything but the
+                # humanised label matched a class. Worth an INFO line so
+                # we can monitor how often the resolver is bailing out
+                # the LLM in the wild.
+                log.info(
+                    "resolved object-property %s range via label match: "
+                    "target_uri=%r -> class_key=%r (label=%r)",
+                    prop_key,
+                    target_uri,
+                    resolution.class_key,
+                    resolution.target_label,
+                )
+            try:
                 rdfs_range_col.insert(
                     {
                         "_from": f"ontology_object_properties/{prop_key}",
-                        "_to": f"ontology_classes/{range_class_key}",
+                        "_to": f"ontology_classes/{resolution.class_key}",
                         "ontology_id": ontology_id,
                         "created": now,
                         "expired": NEVER_EXPIRES,
                     }
                 )
+            except Exception as exc:
+                log.warning(
+                    "rdfs_range_class insert failed for object property %s -> %s: %s",
+                    prop_key,
+                    resolution.class_key,
+                    exc,
+                )
+        else:
+            # All four resolver tiers missed. The property still exists with
+            # its rdfs_domain edge and persisted target_class_{uri,label},
+            # so post-hoc repair (``edge_repair.repair_orphan_object_property_ranges``)
+            # can still recover it. But surface it now -- the original bug
+            # was that this case was silent.
+            log.warning(
+                "could not resolve target_class_uri for object property %s "
+                "(target_uri=%r, target_label=%r); property persisted as "
+                "orphan and will be a candidate for edge_repair",
+                prop_key,
+                target_uri,
+                resolution.target_label,
+            )
 
     # has_chunk edges
     if db.has_collection("has_chunk"):

@@ -18,8 +18,11 @@ from app.db.temporal_constants import NEVER_EXPIRES
 from app.services.edge_repair import (
     REPAIR_SOURCE,
     RangeMatch,
+    RangeResolution,
     find_range_class_for_orphan,
+    humanize_uri_fragment,
     repair_orphan_object_property_ranges,
+    resolve_range_class,
 )
 
 # ---------------------------------------------------------------------------
@@ -648,5 +651,194 @@ class TestRepairOrchestrator:
             "no_domain",
         ):
             assert k in d
+
+
+# ---------------------------------------------------------------------------
+# humanize_uri_fragment
+# ---------------------------------------------------------------------------
+
+
+class TestHumanizeUriFragment:
+    def test_camel_case_uri(self):
+        assert (
+            humanize_uri_fragment("http://example.org/x#CustomerRiskProfile")
+            == "Customer Risk Profile"
+        )
+
+    def test_camel_case_with_acronym(self):
+        # "ACHBatch" should not be split into "A C H Batch" -- the regex
+        # allows runs of caps before a lowercase letter.
+        assert humanize_uri_fragment("http://example.org/x#ACHBatch") == "ACH Batch"
+
+    def test_snake_case_uri(self):
+        assert (
+            humanize_uri_fragment("http://example.org/x/customer_risk_profile")
+            == "customer risk profile"
+        )
+
+    def test_kebab_case_uri(self):
+        assert humanize_uri_fragment("http://example.org/x/account-type") == "account type"
+
+    def test_path_fragment_when_no_hash(self):
+        assert humanize_uri_fragment("http://example.org/Account") == "Account"
+
+    def test_empty_returns_empty(self):
+        assert humanize_uri_fragment("") == ""
+
+    def test_none_returns_empty(self):
+        # Defensive: mypy says it's str, but historical data may be None.
+        assert humanize_uri_fragment(None) == ""  # type: ignore[arg-type]
+
+    def test_non_string_returns_empty(self):
+        assert humanize_uri_fragment(42) == ""  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# resolve_range_class
+# ---------------------------------------------------------------------------
+
+
+class TestResolveRangeClassTier1Uri:
+    def test_exact_uri_hit_returns_uri_tier(self):
+        res = resolve_range_class(
+            "http://example.org/onto#Customer",
+            uri_to_key={"http://example.org/onto#Customer": "Customer"},
+            fragment_to_key={},
+            label_to_key={},
+        )
+        assert isinstance(res, RangeResolution)
+        assert res.class_key == "Customer"
+        assert res.tier == "uri"
+        assert res.target_label == "Customer"
+
+    def test_uri_tier_takes_precedence_over_fragment(self):
+        # Both indexes contain a hit; tier 1 (uri) must win.
+        res = resolve_range_class(
+            "http://example.org/onto#Customer",
+            uri_to_key={"http://example.org/onto#Customer": "URICustomer"},
+            fragment_to_key={"Customer": "FragCustomer"},
+            label_to_key={"Customer": "LabelCustomer"},
+        )
+        assert res.class_key == "URICustomer"
+        assert res.tier == "uri"
+
+
+class TestResolveRangeClassTier2Fragment:
+    def test_fragment_hit_when_uri_misses(self):
+        res = resolve_range_class(
+            "http://example.org/other#Customer",  # not in uri_to_key
+            uri_to_key={"http://example.org/onto#Customer": "OtherKey"},
+            fragment_to_key={"Customer": "Customer"},
+            label_to_key={},
+        )
+        assert res.class_key == "Customer"
+        assert res.tier == "fragment"
+        assert res.target_label == "Customer"
+
+    def test_fragment_with_path_segment(self):
+        res = resolve_range_class(
+            "http://example.org/onto/Account",  # uses ``/`` not ``#``
+            uri_to_key={},
+            fragment_to_key={"Account": "Account"},
+            label_to_key={},
+        )
+        assert res.class_key == "Account"
+        assert res.tier == "fragment"
+
+
+class TestResolveRangeClassTier3Label:
+    def test_camel_uri_resolves_to_spaced_label(self):
+        # Common LLM failure: emits ``#CustomerAccount`` but the extracted
+        # class label is "Customer Account" with the same fragment.
+        # Tier 2 (fragment) hits because both produce key "CustomerAccount",
+        # so this test instead exercises the case where the fragment
+        # diverges from the key.
+        res = resolve_range_class(
+            "http://example.org/onto#CustomerAccount",
+            uri_to_key={},
+            fragment_to_key={"AcctClass": "AcctClass"},  # no match on fragment
+            label_to_key={"Customer Account": "AcctClass"},  # but label matches
+        )
+        assert res.class_key == "AcctClass"
+        assert res.tier == "label"
+        assert res.target_label == "Customer Account"
+
+    def test_snake_uri_resolves_to_spaced_label(self):
+        res = resolve_range_class(
+            "http://example.org/onto/customer_account",
+            uri_to_key={},
+            fragment_to_key={},
+            label_to_key={"Customer Account": "AcctKey"},
+        )
+        assert res.class_key == "AcctKey"
+        assert res.tier == "label"
+
+    def test_longest_label_wins(self):
+        # Both ``Customer`` and ``Customer Risk Profile`` could match a URI
+        # of ``#CustomerRiskProfile``; the longer label must win to avoid
+        # the well-known "Customer beats CustomerRiskProfile" bug.
+        res = resolve_range_class(
+            "http://example.org/onto#CustomerRiskProfile",
+            uri_to_key={},
+            fragment_to_key={},
+            label_to_key={
+                "Customer": "Customer",
+                "Customer Risk Profile": "CRP",
+            },
+        )
+        assert res.class_key == "CRP"
+        assert res.tier == "label"
+
+    def test_partial_label_match_via_substring(self):
+        # The URI fragment is contained within the label.
+        res = resolve_range_class(
+            "http://example.org/onto#Risk",
+            uri_to_key={},
+            fragment_to_key={},
+            label_to_key={"Customer Risk Profile": "CRP"},
+        )
+        # ``risk`` (normalised needle) is contained in ``customerriskprofile``
+        # (normalised label) -> match.
+        assert res.class_key == "CRP"
+        assert res.tier == "label"
+
+
+class TestResolveRangeClassMiss:
+    def test_no_tier_hits_returns_miss(self):
+        res = resolve_range_class(
+            "http://example.org/onto#Quux",
+            uri_to_key={"http://example.org/onto#Customer": "Customer"},
+            fragment_to_key={"Customer": "Customer"},
+            label_to_key={"Customer": "Customer"},
+        )
+        assert res.class_key is None
+        assert res.tier == "miss"
+        # target_label is still populated from the URI for downstream repair.
+        assert res.target_label == "Quux"
+
+    def test_empty_target_uri(self):
+        res = resolve_range_class(
+            "",
+            uri_to_key={"http://example.org/onto#Customer": "Customer"},
+            fragment_to_key={"Customer": "Customer"},
+            label_to_key={"Customer": "Customer"},
+        )
+        assert res.class_key is None
+        assert res.tier == "miss"
+        assert res.target_label == ""
+
+    def test_explicit_target_label_overrides_humanised(self):
+        # When the LLM (future) supplies an explicit label, it is preferred
+        # over the URI-derived one and used as the resolution needle.
+        res = resolve_range_class(
+            "http://example.org/onto#OpaqueId123",
+            target_label="Customer Account",
+            uri_to_key={},
+            fragment_to_key={},
+            label_to_key={"Customer Account": "CA"},
+        )
+        assert res.class_key == "CA"
+        assert res.tier == "label"
+        assert res.target_label == "Customer Account"
 
 
