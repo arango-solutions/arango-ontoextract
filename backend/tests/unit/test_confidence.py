@@ -5,14 +5,20 @@ from __future__ import annotations
 import pytest
 
 from app.services.confidence import (
+    DEFAULT_EVIDENCE_HALF_LIFE_DAYS,
+    EVIDENCE_COUNT_SATURATION,
     WEIGHT_AGREEMENT,
     WEIGHT_DESCRIPTION,
+    WEIGHT_EVIDENCE_AGE,
+    WEIGHT_EVIDENCE_COUNT,
     WEIGHT_FAITHFULNESS,
     WEIGHT_PROPERTY_AGREEMENT,
     WEIGHT_PROVENANCE,
     WEIGHT_SEMANTIC_VALIDITY,
     WEIGHT_STRUCTURAL,
     _description_score,
+    _evidence_age_score,
+    _evidence_count_score,
     _property_agreement_score,
     _provenance_score,
     _structural_score,
@@ -152,6 +158,10 @@ class TestComputeClassConfidence:
         assert score >= 0.9
 
     def test_weak_signals_yield_low_confidence(self):
+        # All nine signals weak. evidence_count=0 and evidence_age_seconds set
+        # to two half-lives so both new signals contribute near-zero -- the
+        # original test intent (everything-is-weak) extended for the IBR
+        # evidence signals.
         score = compute_class_confidence(
             agreement_ratio=0.33,
             faithfulness=0.2,
@@ -165,6 +175,8 @@ class TestComputeClassConfidence:
             all_descriptions=["x", "y"],
             provenance_count=0,
             property_agreement=0.0,
+            evidence_count=0,
+            evidence_age_seconds=DEFAULT_EVIDENCE_HALF_LIFE_DAYS * 86400 * 4,
         )
         assert score < 0.2
 
@@ -227,6 +239,8 @@ class TestComputeClassConfidence:
             + WEIGHT_DESCRIPTION
             + WEIGHT_PROVENANCE
             + WEIGHT_PROPERTY_AGREEMENT
+            + WEIGHT_EVIDENCE_COUNT
+            + WEIGHT_EVIDENCE_AGE
         )
         assert total == pytest.approx(1.0)
 
@@ -284,3 +298,156 @@ class TestComputeClassConfidence:
             provenance_count=0,
         )
         assert score_a > score_b
+
+
+# ---------------------------------------------------------------------------
+# IBR.2: evidence-count + evidence-age signals
+# ---------------------------------------------------------------------------
+
+
+class TestEvidenceCountScore:
+    def test_none_returns_neutral_one(self):
+        # Back-compat: legacy callers that don't measure the signal are
+        # not retroactively penalised.
+        assert _evidence_count_score(None) == 1.0
+
+    def test_zero_returns_zero(self):
+        # Explicit zero is "we measured and there is no evidence" -- a
+        # very different statement from "we did not measure".
+        assert _evidence_count_score(0) == 0.0
+
+    def test_negative_treated_as_zero(self):
+        assert _evidence_count_score(-3) == 0.0
+
+    def test_one_quote_partial(self):
+        assert _evidence_count_score(1) == pytest.approx(1 / EVIDENCE_COUNT_SATURATION)
+
+    def test_saturation_count_returns_one(self):
+        assert _evidence_count_score(EVIDENCE_COUNT_SATURATION) == 1.0
+
+    def test_above_saturation_capped_at_one(self):
+        assert _evidence_count_score(EVIDENCE_COUNT_SATURATION * 10) == 1.0
+
+
+class TestEvidenceAgeScore:
+    def test_none_returns_neutral_one(self):
+        assert _evidence_age_score(None) == 1.0
+
+    def test_zero_seconds_returns_one(self):
+        # Just-observed evidence is freshest; no decay.
+        assert _evidence_age_score(0) == 1.0
+
+    def test_negative_age_clamped_to_one(self):
+        # Future-dated evidence (clock skew etc.) is treated as fresh.
+        assert _evidence_age_score(-100.0) == 1.0
+
+    def test_one_half_life_returns_half(self):
+        half_life_seconds = DEFAULT_EVIDENCE_HALF_LIFE_DAYS * 86400
+        assert _evidence_age_score(half_life_seconds) == pytest.approx(0.5, rel=1e-3)
+
+    def test_two_half_lives_returns_quarter(self):
+        half_life_seconds = DEFAULT_EVIDENCE_HALF_LIFE_DAYS * 86400
+        assert _evidence_age_score(half_life_seconds * 2) == pytest.approx(0.25, rel=1e-3)
+
+    def test_custom_half_life(self):
+        # 7-day half-life: after 7 days the score should be ~0.5.
+        seconds_7d = 7 * 86400
+        assert _evidence_age_score(seconds_7d, half_life_days=7.0) == pytest.approx(0.5, rel=1e-3)
+
+    def test_far_future_age_decays_to_near_zero(self):
+        seconds_3y = 3 * 365 * 86400
+        # With 90-day half-life, ~12 half-lives -> ~0.0002, definitely "near zero".
+        assert _evidence_age_score(seconds_3y) < 0.01
+
+    def test_zero_half_life_clamps_to_one_second_min(self):
+        # Defensive: a misconfigured half_life=0 must not divide-by-zero.
+        # The implementation clamps to 1 second minimum.
+        score = _evidence_age_score(10.0, half_life_days=0.0)
+        assert 0.0 <= score <= 1.0
+
+
+class TestComputeClassConfidenceWithEvidenceSignals:
+    """End-to-end behaviour of the two new signals through the blender."""
+
+    def _baseline_kwargs(self) -> dict:
+        # Fixed, mid-strength inputs for the seven legacy signals so we
+        # can isolate the contribution of evidence_count / evidence_age.
+        return dict(
+            agreement_ratio=0.6,
+            faithfulness=0.6,
+            semantic_validity=0.6,
+            datatype_property_count=1,
+            object_property_count=1,
+            has_parent=True,
+            has_children=False,
+            has_lateral_edges=False,
+            description="A medium-length description for an ontology class",
+            all_descriptions=[
+                "A medium-length description for an ontology class",
+                "Another distinct description",
+            ],
+            provenance_count=1,
+            property_agreement=0.5,
+        )
+
+    def test_default_evidence_signals_equivalent_to_omitting_them(self):
+        score_default = compute_class_confidence(**self._baseline_kwargs())
+        score_explicit_neutral = compute_class_confidence(
+            **self._baseline_kwargs(),
+            evidence_count=None,
+            evidence_age_seconds=None,
+        )
+        assert score_default == score_explicit_neutral
+
+    def test_more_evidence_quotes_increase_score(self):
+        score_low = compute_class_confidence(
+            **self._baseline_kwargs(),
+            evidence_count=1,
+            evidence_age_seconds=0,
+        )
+        score_high = compute_class_confidence(
+            **self._baseline_kwargs(),
+            evidence_count=EVIDENCE_COUNT_SATURATION,
+            evidence_age_seconds=0,
+        )
+        assert score_high > score_low
+
+    def test_older_evidence_decreases_score(self):
+        score_fresh = compute_class_confidence(
+            **self._baseline_kwargs(),
+            evidence_count=3,
+            evidence_age_seconds=0,
+        )
+        score_stale = compute_class_confidence(
+            **self._baseline_kwargs(),
+            evidence_count=3,
+            evidence_age_seconds=DEFAULT_EVIDENCE_HALF_LIFE_DAYS * 86400 * 4,
+        )
+        assert score_fresh > score_stale
+
+    def test_zero_evidence_count_lowers_score_below_default(self):
+        # Caller explicitly says "no evidence" -- different from "didn't
+        # measure". Explicit zero must be punished relative to default.
+        score_default = compute_class_confidence(**self._baseline_kwargs())
+        score_no_evidence = compute_class_confidence(
+            **self._baseline_kwargs(),
+            evidence_count=0,
+            evidence_age_seconds=None,
+        )
+        assert score_no_evidence < score_default
+
+    def test_custom_half_life_passed_through(self):
+        # Same age, different half_life -> different decay -> different score.
+        score_long_hl = compute_class_confidence(
+            **self._baseline_kwargs(),
+            evidence_count=3,
+            evidence_age_seconds=14 * 86400,  # 14 days
+            evidence_half_life_days=90.0,
+        )
+        score_short_hl = compute_class_confidence(
+            **self._baseline_kwargs(),
+            evidence_count=3,
+            evidence_age_seconds=14 * 86400,
+            evidence_half_life_days=7.0,
+        )
+        assert score_long_hl > score_short_hl
