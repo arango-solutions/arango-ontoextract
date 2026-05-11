@@ -1111,6 +1111,8 @@ This evolution should be planned as a separate phase after the current extractio
 
 **Why?** Ontologies are living artifacts. Classes get renamed, properties get added, hierarchies get restructured, merges happen, tiers get promoted. Without temporal support, these changes are destructive — the previous state is lost. With the temporal pattern, every past state is recoverable, auditable, and visualizable.
 
+**Substrate for belief revision:** This temporal model is also the substrate for iterative refinement (§6.16). Every belief revision — whether reinforcement, refinement, retraction, or LLM-proposed revision — executes via the **Levi identity**: contract the old version (`expired = now`) and expand a new version (`created = now`). Nothing is destroyed. The pre-revision state remains resolvable via `/snapshot?at={pre_revision_ts}`, and the diff endpoint trivially answers "what changed in this revision pass?" See `docs/adr/008-belief-revision-substrate.md`.
+
 **VCR Timeline Slider (Curation Dashboard):**
 
 The React curation dashboard renders a timeline control at the bottom of the graph viewport:
@@ -1255,6 +1257,8 @@ Each ontology named graph gets a programmatically created viewpoint (`_viewpoint
 ### 6.7 Entity Resolution & Deduplication
 
 **Description:** Automated detection and suggested merging of overlapping ontology concepts across tiers and extraction runs. Built on the **`arango-entity-resolution`** library, which already implements blocking, similarity scoring, clustering, merging, and MCP tooling for ArangoDB.
+
+**Relationship to belief revision (§6.16):** ER and belief revision are complementary, not duplicative. ER answers *"is this newly-extracted concept the same entity as an existing one?"* (deduplication). Belief revision answers *"now that this new evidence has arrived, what should I do with the existing belief?"* (refinement / contraction / revision). In the belief revision pipeline (§6.16), the **REDUNDANT** verdict is explicitly delegated to ER — extracted concepts that overlap an existing belief on multiple signals become ER merge candidates, not revision proposals.
 
 **Leveraged Library: `arango-entity-resolution`**
 
@@ -1764,7 +1768,8 @@ Ontology Classes:        Ontology Object Properties:
 | **Consistency Checker** | Compares results across passes; keeps only concepts appearing in ≥ M of N passes; assigns confidence scores | Multi-pass extraction results | Filtered, scored extraction result |
 | **Quality Judge** | Runs LLM-as-Judge faithfulness evaluation and semantic validation in parallel (`asyncio.gather`). Rates each class as EXPLICIT/INFERRED/PLAUSIBLE/HALLUCINATED. Checks for domain/range mismatches and disjointness violations. | Consistency result + source chunks | Per-class faithfulness + semantic validity scores |
 | **Entity Resolution Agent** | Invokes `arango-entity-resolution` pipeline (`ConfigurableERPipeline`) for vector + field similarity + topological scoring against existing ontologies; flags merge candidates via WCC clustering; auto-links EXTENSION classes to domain parents using `CrossCollectionMatchingService` | Filtered extraction, domain ontology, local ontology | Extraction + merge candidates + `extends_domain` edges |
-| **Pre-Curation Filter** | Removes obvious noise (generic terms, duplicates within run); annotates remaining entities with provenance links and confidence tiers (high/medium/low) | Extraction + merge candidates | Clean staging graph ready for human review |
+| **Belief Revision Agent** (§6.16) | For each newly-extracted concept, discovers touchpoints with existing beliefs (Phase 1), classifies a mechanical verdict per touchpoint — REINFORCED / REFINED / GAP-FILLING / REDUNDANT / CONTRADICTED / UNCERTAIN — (Phase 2), and invokes the LLM revision agent only for CONTRADICTED + UNCERTAIN (Phase 3). Auto-applies reversible revisions; flags structural revisions on approved classes for the Revisions Inbox. | Extraction + merge candidates + existing ontology + provenance | `revision_actions[]` (per-touchpoint verdict + action) + new temporal versions for auto-applied revisions + `revision_meta` documents |
+| **Pre-Curation Filter** | Removes obvious noise (generic terms, duplicates within run); annotates remaining entities with provenance links and confidence tiers (high/medium/low) | Extraction + merge candidates + revision actions | Clean staging graph ready for human review |
 | **Qualitative Evaluation Agent** | After all LLM-as-judge metrics (faithfulness, semantic validity, property agreement) are computed and pre-curation filtering is done, this agent performs a final qualitative evaluation pass. It receives the full batch of extracted classes along with all their per-class judge scores (faithfulness, semantic validity, confidence, structural quality, etc.) and asks the LLM to produce a qualitative summary of the ontology extraction's strengths and weaknesses. The response is enforced as structured JSON via the provider's JSON mode / structured output parameter (e.g., `response_format` for OpenAI, tool-use JSON for Anthropic). This runs **async** as a background step and does not block staging. | Filtered extraction batch + all per-class LLM-as-judge scores (faithfulness, semantic validity, property agreement, structural quality, description quality, provenance strength) | JSON: `{"strengths": ["markdown point 1", ...], "weaknesses": ["markdown point 1", ...]}` stored on the extraction run record |
 
 **Qualitative Evaluation Agent — Detail:**
@@ -1802,6 +1807,7 @@ class ExtractionPipelineState(TypedDict):
     pass_results: list[ExtractionResult]
     filtered_result: ExtractionResult  # after consistency check
     merge_candidates: list[dict]       # entity resolution output
+    revision_actions: list[dict]       # belief revision verdicts + actions (§6.16)
     staging_entities: list[dict]       # final pre-curated output
     errors: list[str]                  # accumulated errors
     current_step: str                  # for checkpoint/resume
@@ -1825,6 +1831,9 @@ class ExtractionPipelineState(TypedDict):
 | FR-11.11 | Qualitative Evaluation Agent produces strengths/weaknesses | After all LLM-as-judge scores are computed and filtering is done, the agent sends the full batch + scores to the LLM and receives a JSON response with `strengths` and `weaknesses` arrays. JSON schema is enforced via the provider's structured output parameter (not regex parsing). |
 | FR-11.12 | Qualitative Evaluation runs async | The evaluation agent runs as a background task and does not block staging graph creation. Result is written to `extraction_runs.stats.qualitative_evaluation` when complete. |
 | FR-11.13 | Qualitative Evaluation displayed on dashboard | The strengths/weaknesses summary is displayed on the Ontology Quality Dashboard for each ontology, sourced from its extraction run. |
+| FR-11.14 | Belief Revision Agent runs after ER, before Quality Judge | The Belief Revision Agent is a LangGraph node positioned between Entity Resolution and the Quality Judge. It populates `revision_actions[]` in pipeline state and emits `step_started`/`step_completed` WebSocket events visible in the Pipeline Monitor. See §6.16 for full behavior. |
+| FR-11.15 | Conditional skip when no contested verdicts | If Phase 2 of the Belief Revision Agent produces zero CONTRADICTED + UNCERTAIN verdicts, Phase 3 (LLM revision agent) is skipped via a LangGraph conditional edge. Cost telemetry records `llm_calls = 0` for that run. |
+| FR-11.16 | Pipeline state persists `revision_actions[]` for staging | Pre-curation filter receives `revision_actions[]` from pipeline state and uses it to (a) hydrate staging with per-class revision provenance, and (b) ensure FLAG_FOR_CURATION revisions land in the Revisions Inbox alongside the staging graph. |
 
 ### 6.12 Pipeline Monitor Dashboard (Agentic Workflow Visualizer)
 
@@ -1953,19 +1962,23 @@ The agent DAG is a small, fixed-topology graph (6 nodes) with a fork/join at the
 
 **Problem:** A single-signal confidence score (e.g., cross-pass agreement alone) produces identical values for all classes that clear the consistency threshold (e.g., every class shows 67%). This provides no differentiation and no actionable signal to curators.
 
-**Solution:** Each class receives a **multi-signal confidence score** that blends seven independent quality signals into a single value:
+**Solution:** Each class receives a **multi-signal confidence score** that blends nine independent quality signals into a single value:
 
 | Signal | Weight | What it measures | Range | Source |
 |--------|--------|-----------------|-------|--------|
-| **Cross-pass agreement** | 0.20 | How consistently the LLM extracts this class across N passes | 0.0–1.0 | `pass_count / total_passes` from consistency checker |
-| **Faithfulness (LLM-as-Judge)** | 0.20 | Whether the class is grounded in the source text vs. hallucinated or inferred beyond the evidence | 0.0–1.0 | Post-extraction LLM judge pass (see below) |
-| **Semantic validity** | 0.15 | Whether the class's properties and relationships are logically consistent (domain/range correctness, no disjointness violations) | 0.0–1.0 | LLM-based semantic validation pass (see below) |
-| **Structural quality** | 0.15 | Graph connectivity including hierarchy AND relationship richness | 0.0–1.0 | Differentiated scoring for object vs. datatype properties (see below) |
-| **Description quality** | 0.10 | Does the class have a meaningful description? Is it distinct from other classes? | 0.0–1.0 | `min(len(description) / 100, 1.0) * 0.7 + uniqueness * 0.3` where uniqueness penalizes near-duplicate descriptions |
-| **Provenance strength** | 0.10 | How many distinct source chunks support this class? More evidence = higher confidence | 0.0–1.0 | `min(supporting_chunk_count / 3, 1.0)` — 3+ chunks = full score |
-| **Cross-pass property agreement** | 0.10 | How consistently the class's properties are extracted across passes | 0.0–1.0 | Jaccard similarity of property URIs across passes |
+| **Cross-pass agreement** | 0.18 | How consistently the LLM extracts this class across N passes | 0.0–1.0 | `pass_count / total_passes` from consistency checker |
+| **Faithfulness (LLM-as-Judge)** | 0.18 | Whether the class is grounded in the source text vs. hallucinated or inferred beyond the evidence | 0.0–1.0 | Post-extraction LLM judge pass (see below) |
+| **Semantic validity** | 0.13 | Whether the class's properties and relationships are logically consistent (domain/range correctness, no disjointness violations) | 0.0–1.0 | LLM-based semantic validation pass (see below) |
+| **Structural quality** | 0.13 | Graph connectivity including hierarchy AND relationship richness | 0.0–1.0 | Differentiated scoring for object vs. datatype properties (see below) |
+| **Description quality** | 0.09 | Does the class have a meaningful description? Is it distinct from other classes? | 0.0–1.0 | `min(len(description) / 100, 1.0) * 0.7 + uniqueness * 0.3` where uniqueness penalizes near-duplicate descriptions |
+| **Provenance strength** | 0.09 | How many distinct source chunks support this class? More evidence = higher confidence | 0.0–1.0 | `min(supporting_chunk_count / 3, 1.0)` — 3+ chunks = full score |
+| **Cross-pass property agreement** | 0.09 | How consistently the class's properties are extracted across passes | 0.0–1.0 | Jaccard similarity of property URIs across passes |
+| **Evidence count** (added in §6.16) | 0.06 | How many distinct documents support this belief? More documents = higher confidence | 0.0–1.0 | `min(distinct_doc_count / 3, 1.0)` — 3+ documents = full score |
+| **Evidence age** (added in §6.16) | 0.05 | How recent is the supporting evidence? Combined with confidence decay (§6.16, FR-16.9) to detect stale beliefs | 0.0–1.0 | `exp(-age_days / half_life_days)` where `half_life_days` is configurable (default 90) |
 
-**Formula:** `confidence = 0.20 * agreement + 0.20 * faithfulness + 0.15 * semantic_validity + 0.15 * structural + 0.10 * description + 0.10 * provenance + 0.10 * property_agreement`
+**Formula:** `confidence = 0.18 * agreement + 0.18 * faithfulness + 0.13 * semantic_validity + 0.13 * structural + 0.09 * description + 0.09 * provenance + 0.09 * property_agreement + 0.06 * evidence_count + 0.05 * evidence_age`
+
+The two new signals (evidence count, evidence age) feed the iterative refinement pipeline (§6.16): evidence count rises as new documents reinforce a belief; evidence age decays unless new supporting evidence arrives. The combination drives Phase 4 background consolidation's stale-belief detection.
 
 **Signal Details:**
 
@@ -2115,6 +2128,8 @@ These metrics are intentionally observational. They do not automatically change 
 | FR-13.23 | Benchmark runtime reporting | Ontology extraction benchmark reports include per-document `duration_ms` plus aggregate `runtime.total_duration_ms` and `runtime.avg_duration_ms`, enabling quality-per-minute comparisons across adapters, models, and prompt versions. |
 | FR-13.24 | HITL regression benchmark fixtures | Feedback-learning responses include a `benchmark_fixture` payload using schema `hitl-regression-v1`. The benchmark harness supports `--dataset hitl-regression` to load these fixtures, score positive gold assertions, and retain rejected negative assertions in source metadata for review/future negative-example metrics. |
 | FR-13.25 | Benchmark cost and adapter metadata | Benchmark adapters can attach per-document metadata: `model`, `prompt_version`, token counts, and `estimated_cost_usd`. Aggregate reports include total tokens, total estimated cost, quality-per-dollar, and quality-per-minute when enough metadata is available. |
+| FR-13.26 | Belief revision metrics on the dashboard | The Quality Dashboard displays per-ontology revision metrics from `revision_meta` documents: revisions per document (rolling 30-day avg), contradictions per document, decay-flagged beliefs (count), pending revisions in inbox (count), revision verdict distribution (REINFORCED / REFINED / GAP-FILLING / REDUNDANT / CONTRADICTED / UNCERTAIN — pie chart), LLM revision cost per document (USD). |
+| FR-13.27 | Evidence-count and evidence-age signals in confidence | Multi-signal per-class confidence (§6.13.1) extends from 7 signals to 9 by adding `evidence_count` (weight 0.06) and `evidence_age` (weight 0.05). Other signal weights are rescaled to sum to 1.0. The two new signals are computed during materialization from `extracted_from` edges. |
 
 #### 6.13.2b Gated HITL Learning Artifacts
 
@@ -2506,6 +2521,174 @@ The `ontology_constraints` collection already exists in §5.1 with fields for `o
 5. Extraction pipeline uses effective graph as LLM context
 6. Export includes `owl:imports` declarations
 
+### 6.16 Iterative Refinement & Belief Revision
+
+**Description:** Real-world ontology construction is incremental. Documents arrive over weeks or months, and each new document is potential evidence to **revisit conclusions made from earlier documents**. Without an explicit revision mechanism, an ontology accumulates errors and stale assumptions: a class extracted from `D1` and curated as approved may be contradicted by `D2`, refined by `D3`, and rendered obsolete by `D4` — yet the system never re-examines it.
+
+This is a known and named need across the literature:
+
+- **Abductive refinement** — updating prior best-explanations as new evidence arrives
+- **Belief revision** — formal AGM operators (expansion, contraction, revision)
+- **Truth maintenance** — dependency-directed re-evaluation of beliefs
+- **Continual KG refinement** — modern LLM-era equivalents (TRAIL 2025, Evo-DKD 2025)
+
+AOE adopts the **Incremental Belief Revision (IBR)** substrate: a four-phase hybrid that combines mechanical rules (cheap, deterministic), LLM-based semantic judgment (expensive, only on contested cases), and human-in-the-loop fallback (low-confidence revisions become curation tasks). It runs over the existing temporal versioning substrate (§6.5) — every revision is a new version, never a destructive edit. See `docs/adr/008-belief-revision-substrate.md` for the full architectural rationale and rejected alternatives.
+
+**Why this matters:** Without IBR, ontology quality plateaus or degrades after the first ~10 documents per ontology, and curators must manually re-review every prior decision. With IBR, the ontology actively benefits from each new document — old conclusions get reinforced, refined, or retracted as new evidence supports or contradicts them.
+
+**Pipeline placement:**
+
+```
+new doc → strategy → extraction(N-pass) → consistency → ER → ★ Belief Revision Agent ★ → quality judge → pre-curation filter → staging
+                                                              │
+                                                              ├─ Phase 1: Touchpoint Discovery (mechanical, every doc)
+                                                              ├─ Phase 2: Mechanical Verdict (rule + score)
+                                                              ├─ Phase 3: LLM Revision Agent (only for contested cases)
+                                                              └─ Phase 4: Background Consolidation (periodic, separate job)
+```
+
+The Belief Revision Agent sits between Entity Resolution (which deduplicates extracted concepts) and the Quality Judge (which scores them). By this point in the pipeline, candidates have been deduplicated, so the agent focuses purely on **what to do with each touchpoint** between newly-extracted concepts and existing ontology entries.
+
+**The four phases:**
+
+**Phase 1 — Touchpoint discovery (mechanical, every doc):**
+For each newly-extracted concept, find candidate "touchpoints" in the existing ontology via:
+
+- Embedding similarity (cosine ≥ configurable threshold) on label + description
+- URI / label exact-match (and normalized variants — see §6.13.1c alias matching)
+- Entity overlap on `extracted_from` chunks (does the new concept's source text mention any existing concept?)
+
+Each touchpoint produces a `(extracted_concept, existing_belief)` pair for Phase 2.
+
+**Phase 2 — Mechanical verdict (rule + score, ~seconds per touchpoint):**
+For each touchpoint, classify with deterministic rules into exactly one of six verdicts:
+
+| Verdict | Trigger | Action | AGM Operator |
+|---|---|---|---|
+| **REINFORCED** | New evidence agrees with existing belief (compatible domain/range, label match, no rule violations) | Boost confidence; append chunk to provenance; no version bump | Expansion |
+| **REFINED** | New evidence enriches (new property, sharper description, narrower range) | Propose a new version that supersedes the old (Levi identity) | Revision |
+| **GAP-FILLING** | New edge connects existing classes that previously had no relationship | Create new edge directly | Expansion |
+| **REDUNDANT** | Extracted concept overlaps existing on multiple signals (high vector + label sim) | Hand off to ER as merge candidate | Expansion (handled by ER) |
+| **CONTRADICTED** | New evidence asserts incompatible domain/range, or the change would violate an ontology rule (R1, R2, disjointness, cardinality) | **Defer to Phase 3** | Revision (under review) |
+| **UNCERTAIN** | Mechanical rules can't decide (mixed signals, partial overlap) | **Defer to Phase 3** | TBD by Phase 3 |
+
+**Phase 3 — LLM revision agent (expensive; only for CONTRADICTED + UNCERTAIN):**
+
+The agent receives:
+- The existing belief (class + properties + relationships)
+- The existing belief's provenance text (chunks from earlier documents)
+- The new evidence text (chunks from the current document)
+- The mechanical verdict and the rule(s) that triggered it
+
+It emits exactly one of the following actions, each paired with a grounded textual justification (Evo-DKD pattern — every structured action must have a justification that the validator cross-checks):
+
+| Action | When |
+|---|---|
+| `REINFORCE` | The new evidence does not actually contradict the existing belief — apparent contradiction was a label/terminology mismatch |
+| `REVISE(new_version)` | The new evidence supports a refinement; agent proposes the new version content |
+| `RETRACT` | The new evidence supersedes the existing belief and the existing belief should be expired |
+| `FLAG_FOR_CURATION` | Agent's confidence in any of the above is below the auto-apply threshold |
+
+The agent must include `evidence_quotes[]` (verbatim quotes from both the existing provenance and the new chunks) and `reasoning` text. Outputs failing the cross-check (justification doesn't actually support the action) are downgraded to `FLAG_FOR_CURATION`.
+
+**Phase 4 — Background consolidation (periodic, separate job):**
+
+A "consolidation" job runs over the full ontology on a schedule (configurable; default daily) or on-demand (admin-triggered). It:
+
+- Re-runs ontology rules (R1, R2, disjointness, cardinality) and surfaces newly-detected contradictions that accumulated as new beliefs were added
+- Recomputes confidence with all current evidence (including evidence-age and evidence-count signals)
+- Applies **confidence decay** to beliefs whose supporting evidence is older than the decay half-life
+- Identifies stale beliefs (no new supporting evidence in N docs / N days) and flags them in a consolidation report
+
+The consolidation job runs with **safety guards** modeled on Graph-Native Cognitive Memory (2026):
+
+| Guard | Behavior |
+|---|---|
+| **Published-item protection** | Approved/published classes never auto-revise; structural changes always go to the Revisions Inbox |
+| **Circuit breaker** | If the revision rate exceeds a configurable threshold (default 50/min), the job halts and pages an admin |
+| **Dry-run mode** | `?dry_run=true` returns the proposed actions without applying them; used for previewing impact |
+| **Cursor-based resumption** | Job state is checkpointed; on failure, resumes from the last cursor instead of restarting |
+
+**Mapping to AGM operators:**
+
+| AGM Operator | Definition | IBR Realization | Temporal Mechanic |
+|---|---|---|---|
+| **Expansion** `K + φ` | Add belief; assume no conflict | Phase 2 GAP-FILLING / REINFORCED | Insert new version with `created = now` |
+| **Contraction** `K − φ` | Remove belief minimally | Phase 3 RETRACT | Set `expired = now` on current version |
+| **Revision** `K * φ = (K ÷ ¬φ) + φ` | Add a possibly-conflicting belief; revise to remain consistent (Levi identity) | Phase 2 REFINED + Phase 3 REVISE | `expire(old_version)` + `insert(new_version)` |
+
+The **minimal-change** postulate (Relevance) is honored: temporal versioning preserves the old belief — nothing is destroyed, only superseded. We **reject the Recovery postulate** following Hansson (1999) and Graph-Native Cognitive Memory (2026), preferring belief-base semantics for natural-language beliefs.
+
+**Revision metadata (`revision_meta`):**
+
+Every applied revision writes a `revision_meta` document linking to the affected ontology entries:
+
+| Field | Type | Purpose |
+|---|---|---|
+| `verdict` | enum | One of REINFORCED, REFINED, GAP-FILLING, REDUNDANT, CONTRADICTED, UNCERTAIN |
+| `action` | enum | One of REINFORCE, REVISE, RETRACT, FLAG_FOR_CURATION (Phase 3 only; Phase 2 mechanical actions implied by verdict) |
+| `agent_type` | enum | `mechanical` (Phase 2 rule) or `llm` (Phase 3 agent) |
+| `agent_version` | string | Rule engine version or LLM model + prompt version |
+| `triggering_doc_id` | string | The document whose extraction triggered this revision |
+| `existing_entity_id` | string | The pre-revision belief (class/edge `_id`) |
+| `existing_version` | string | Pre-revision version key (still resolvable via temporal history) |
+| `new_version` | string \| null | Post-revision version key (null for REINFORCED, RETRACT) |
+| `evidence_quotes` | list[string] | Verbatim quotes from supporting chunks |
+| `reasoning` | string | Justification text (LLM agent) or rule-name (mechanical) |
+| `confidence_before` | float | Belief's confidence prior to revision |
+| `confidence_after` | float | Belief's confidence post-revision |
+| `created` / `expired` | int | Standard temporal fields |
+
+The Revisions Inbox (FR-16.10) renders one row per `revision_meta` doc with `action: FLAG_FOR_CURATION`.
+
+**Revisions Inbox (UI):**
+
+A new workspace overlay accessible from the Asset Explorer (badge with pending-revision count) and the canvas context menu (right-click → "Show Pending Revisions"). Per the workspace UI architecture (`ui-architecture.mdc`), this is an overlay panel, not a new route.
+
+Each row shows:
+- The affected entity (class/edge), with a thumbnail of its current state
+- Verdict + action proposed (or applied if auto)
+- Before / after diff (using the existing temporal-diff visualization from §6.5)
+- Evidence panes: existing belief's provenance vs new chunks
+- Downstream impact: list of edges/classes that reference this belief
+- Actions: **Accept**, **Reject**, **Modify** (opens the standard class/edge editor with the agent's proposal pre-filled)
+
+Revisions are sortable by impact (default: revisions touching the most-referenced beliefs first), confidence delta, and recency.
+
+**Requirements:**
+
+| ID | Requirement | Acceptance Criteria |
+|----|-------------|-------------------|
+| FR-16.1 | Belief Revision Agent runs as a LangGraph node | New node inserted between Entity Resolution and Quality Judge; visible in Pipeline Monitor; emits `step_started` / `step_completed` WebSocket events |
+| FR-16.2 | Phase-1 touchpoint discovery | For each newly-extracted concept, the system identifies all existing-belief touchpoints via embedding similarity (cosine ≥ configurable threshold), URI/label match (incl. normalized variants), and `extracted_from` chunk overlap |
+| FR-16.3 | Phase-2 mechanical verdict classification | Every touchpoint receives exactly one verdict: REINFORCED, REFINED, GAP-FILLING, REDUNDANT, CONTRADICTED, or UNCERTAIN. Classification is deterministic and rule-based; same inputs always yield the same verdict. |
+| FR-16.4 | Phase-3 LLM revision agent invoked only for CONTRADICTED + UNCERTAIN | The LLM revision agent is **not** called for REINFORCED, REFINED, GAP-FILLING, or REDUNDANT verdicts (cost control). LLM cost per document grows with contradictions, not with corpus size. |
+| FR-16.5 | Every auto-applied revision creates a new temporal version | Revisions that change structure (REFINED, REVISE, RETRACT) execute via the Levi identity: `expire(old_version)` + `insert(new_version)`. No destructive edits. The pre-revision version remains resolvable via `/snapshot?at={pre_revision_ts}`. |
+| FR-16.6 | Revision metadata captured | Every revision writes a `revision_meta` document with the fields enumerated in this section. `revision_meta` documents are immutable and queryable via the API. |
+| FR-16.7 | Ontology rule engine | The system implements at minimum: R1 (subClassOf + synonym closes triangle), R2 (subClassOf transitivity), disjointness violation detection, cardinality violation detection. Rule violations are computable in a single AQL pass per ontology. |
+| FR-16.8 | Evidence-age and evidence-count signals | The multi-signal confidence (§6.13.1) is extended with two new signals: `evidence_age` (recency of supporting chunks; older = lower) and `evidence_count` (number of distinct supporting chunks across all documents). Total weight redistributes among 9 signals. |
+| FR-16.9 | Confidence decay | A configurable half-life (default 90 days) applies to belief confidence when no new supporting evidence arrives. Decayed confidence is stored separately from extraction confidence so the original score remains visible. |
+| FR-16.10 | Revisions Inbox in workspace | Workspace overlay listing pending `FLAG_FOR_CURATION` revisions with: before/after diff, evidence panes (existing vs new), downstream-impact list, and Accept/Reject/Modify actions. Sortable by impact, confidence delta, and recency. |
+| FR-16.11 | Background consolidation job | `POST /api/v1/admin/ontology/{id}/consolidate` triggers a consolidation pass. Supports `?dry_run=true`. Returns a `consolidation_report` with: rule violations found, confidence-decay candidates, stale-belief flags, and proposed actions (counts per verdict). |
+| FR-16.12 | Safety guards on revision pipelines | (a) Published-item protection: approved/published classes never auto-revise; structural changes go to the Revisions Inbox. (b) Circuit breaker: revision rate above configurable threshold (default 50/min) halts the agent and pages admin. (c) Dry-run support on consolidation jobs. (d) Cursor-based resumption on consolidation jobs. |
+| FR-16.13 | Belief-revision MCP tools | New MCP tools exposed: `list_pending_revisions(ontology_id)`, `get_revision(revision_id)`, `accept_revision(revision_id)`, `reject_revision(revision_id)`, `propose_revision(class_or_edge_id, action, justification, evidence_chunk_ids)`, `trigger_consolidation(ontology_id, dry_run?)`. |
+| FR-16.14 | Quality Dashboard surfaces revision metrics | New tiles on the Quality Dashboard show: revisions per document (rolling avg), contradictions per document, decay-flagged beliefs (count), pending revisions in inbox (count), revision verdict distribution (pie chart). |
+
+**Cost Model & Telemetry:**
+
+The revision pipeline introduces a new cost dimension. The system records per-revision-pass:
+
+| Metric | Purpose |
+|---|---|
+| `touchpoints_discovered` | Phase 1 output size |
+| `verdict_distribution` | Phase 2 verdict counts; tells us what % is "easy" vs "contested" |
+| `llm_calls` | Phase 3 invocations; should be `count(CONTRADICTED) + count(UNCERTAIN)` |
+| `tokens_used` / `estimated_cost_usd` | LLM cost per document for revision |
+| `auto_applied` / `flagged_for_curation` | What landed automatically vs requires human review |
+| `mean_revision_latency_ms` | End-to-end time for the revision pass |
+
+These metrics feed the Pipeline Monitor (per-run) and the Quality Dashboard (rolling aggregates).
+
 ---
 
 ## 7. API Specification (Backend)
@@ -2641,7 +2824,36 @@ The `ontology_constraints` collection already exists in §5.1 with fields for `o
 | `GET` | `/api/v1/quality/{ontology_id}/evaluation` | Qualitative evaluation (strengths / weaknesses) from the linked extraction run |
 | `GET` | `/api/v1/quality/{ontology_id}/class-scores` | Per-class faithfulness and semantic validity for charts |
 | `GET` | `/api/v1/quality/{ontology_id}/history` | Recent timestamped quality snapshots from `quality_history`, returned oldest-to-newest for trend charts. |
+| `GET` | `/api/v1/quality/{ontology_id}/revisions` | Belief-revision metrics for the ontology: revisions/doc, contradictions/doc, decay-flagged count, pending inbox count, verdict distribution, LLM revision cost (FR-13.26). |
 | `POST` | `/api/v1/quality/recall` | *(Not implemented yet.)* Upload reference OWL/TTL; compute recall against extracted ontology |
+
+### 7.7b Belief Revision Endpoints (§6.16)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/ontology/{ontology_id}/revisions` | List `revision_meta` documents for the ontology. Query params: `?action=` (filter by REINFORCE/REVISE/RETRACT/FLAG_FOR_CURATION), `?status=` (pending/applied/rejected), `?since=` (Unix ts), standard pagination. |
+| `GET` | `/api/v1/ontology/{ontology_id}/revisions/inbox` | List **pending** revisions awaiting curator decision (`action: FLAG_FOR_CURATION`, `status: pending`). Default sort: by impact (most-referenced beliefs first). Powers the workspace Revisions Inbox overlay. |
+| `GET` | `/api/v1/revision/{revision_id}` | Get a single revision's full detail: verdict, action, agent type/version, before/after diff, evidence quotes, reasoning, confidence delta, downstream-impact list. |
+| `POST` | `/api/v1/revision/{revision_id}/accept` | Curator accepts a pending revision. Applies the proposed action (REVISE creates new version via Levi identity; RETRACT expires the current version). |
+| `POST` | `/api/v1/revision/{revision_id}/reject` | Curator rejects a pending revision. The pre-revision belief stands; the rejection is recorded in the `revision_meta` document for telemetry. |
+| `POST` | `/api/v1/revision/{revision_id}/modify` | Curator modifies the proposed action (e.g., adjusts the proposed new version content) and accepts. Body: modified action payload. |
+| `POST` | `/api/v1/admin/ontology/{ontology_id}/consolidate` | Trigger a Phase 4 background consolidation pass. Body: `{ "dry_run": bool, "decay_half_life_days": int? }`. Returns a job ID; results are polled via the next endpoint. |
+| `GET` | `/api/v1/admin/consolidation/{job_id}` | Get consolidation job status + report (rule violations found, decay candidates, stale-belief flags, proposed actions per verdict). |
+| `GET` | `/api/v1/ontology/class/{class_key}/revisions` | All revisions touching a specific class — used by class detail panels to show "this class was revised N times based on documents X, Y, Z". |
+| `GET` | `/api/v1/ontology/edge/{edge_key}/revisions` | All revisions touching a specific edge (parity with the class endpoint above). |
+
+**MCP Tool Equivalents (FR-16.13):**
+
+The following MCP tools wrap the above endpoints for external-agent use:
+
+| MCP Tool | Wraps | Use Case |
+|---|---|---|
+| `list_pending_revisions(ontology_id)` | `GET /ontology/{id}/revisions/inbox` | Agent surveys the pending revision queue |
+| `get_revision(revision_id)` | `GET /revision/{id}` | Agent inspects a specific proposed revision |
+| `accept_revision(revision_id)` | `POST /revision/{id}/accept` | Agent (with curator-equivalent permissions) accepts a revision |
+| `reject_revision(revision_id)` | `POST /revision/{id}/reject` | Agent rejects a revision |
+| `propose_revision(class_or_edge_id, action, justification, evidence_chunk_ids)` | (new — no direct REST endpoint; writes a `revision_meta` doc) | External agent proposes a revision based on its own analysis |
+| `trigger_consolidation(ontology_id, dry_run?)` | `POST /admin/ontology/{id}/consolidate` | Agent triggers a consolidation pass (admin-scoped) |
 
 ### 7.9 API Conventions
 

@@ -12,7 +12,9 @@
 The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline, ontology editor, pipeline monitor, quality metrics, and multi-document support. This document details the remaining work required to achieve full PRD compliance and production readiness.
 
 **Completed:** ~78% of PRD requirements (§6.1–6.6, §6.10–6.13 incl. quality dashboard, most of §6.8, §7.2.1)
-**Remaining:** ~22% across 7 work streams + 2 future streams, estimated 8–10 weeks (core) + TBD (Streams 8–9)
+**Remaining:** ~22% across 7 work streams + 3 future / architectural streams, estimated 8–10 weeks (core) + 5 weeks (Stream 11, parallelizable) + TBD (Streams 8–9)
+
+**New as of v3.1:** Stream 11 — Iterative Refinement & Belief Revision (PRD §6.16, ADR-008). Adds the missing "when new evidence arrives, revisit earlier conclusions" capability via a four-phase Belief Revision pipeline (mechanical verdicts → LLM agent for contested cases → human-in-the-loop fallback → background consolidation) on top of our existing edge-interval temporal substrate. Closes a known gap that limits ontology quality past ~10 documents per ontology.
 
 **Recent completions (since v1.0 of this document):**
 - Multi-signal confidence scoring with 7 signals incl. LLM-as-Judge faithfulness + semantic validator
@@ -495,13 +497,102 @@ Ontology isolation switches from "separate collection" to "filter by `ontology_i
 
 ---
 
+### Stream 11: Iterative Refinement & Belief Revision
+**PRD:** §6.16 FR-16.1–16.14, §6.13 FR-13.26–13.27, §6.11 FR-11.14–11.16, §6.5 (substrate), §7.7b (endpoints)
+**ADR:** `docs/adr/008-belief-revision-substrate.md`
+**Duration:** ~5 weeks (3 phases)
+**Priority:** P1 — closes the loop on iterative knowledge construction; without this, ontology quality plateaus after ~10 documents per ontology
+**Dependencies:** Stream 0 (PGT alignment, complete) provides the property-collection split that revision verdicts depend on. Can run in parallel with Stream 1 Phase 2 (composition) and Stream 4 (quality dashboard).
+**Team Size:** 1 backend (heavy) + 0.5 frontend (Phase 3 Revisions Inbox UX)
+
+#### Problem Statement
+
+Each document is currently extracted as an independent event. When document `D2` arrives after `D1`:
+
+1. `D1` produced classes/properties/edges in the ontology.
+2. Domain experts curated `D1`'s output.
+3. `D2` is extracted and merged via Entity Resolution.
+4. **No backward pass occurs.** Conclusions made from `D1` are never revisited in light of `D2`'s evidence.
+
+This is a known need with established names: **abductive refinement**, **belief revision**, **iterative knowledge construction**, **continual KG refinement**. The literature (TRAIL 2025, Evo-DKD 2025, Evontree 2025, Graph-Native Cognitive Memory 2026) converges on a hybrid pattern: cheap mechanical rules first, expensive LLM judgment only where rules can't decide, and human-in-the-loop fallback for low-confidence cases.
+
+We have most of the substrate already (temporal versioning, provenance, multi-signal confidence, LangGraph orchestration, curation reject cascade). What we lack is the **revision controller** — the agent that, when new evidence arrives, decides what to do with each existing belief that the new evidence touches.
+
+#### Objectives
+
+- Insert a **Belief Revision Agent** into the LangGraph pipeline (between ER and Quality Judge) that revisits existing beliefs when new evidence arrives
+- Implement the four-phase pipeline (touchpoint discovery → mechanical verdict → LLM revision → background consolidation) with formal AGM-operator semantics on top of edge-interval temporal versioning
+- Add a **Revisions Inbox** to the workspace so curators can review FLAG_FOR_CURATION revisions
+- Add a **background consolidation job** for periodic ontology-wide rule re-runs and confidence decay
+- Add **safety guards** (published-item protection, circuit breaker, dry-run, cursor resumption)
+- Expose the revision lifecycle via REST + MCP for external agents
+
+#### Tasks — Phase 1: Substrate (1.5 weeks)
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| IBR.1 | `revision_meta` collection + temporal hooks | Backend | 4h | New collection storing one document per applied or proposed revision (verdict, action, agent type/version, before/after refs, evidence quotes, reasoning, confidence delta, `created`/`expired`). MDI-prefixed indexes on `[ontology_id, created]` and `[ontology_id, action, status]`. Migration file. |
+| IBR.2 | Evidence-age + evidence-count signals | Backend | 4h | Extend `compute_class_confidence()` to include the two new signals (FR-16.8, FR-13.27). Rescale existing weights to sum to 1.0. Backfill via migration. Update unit tests that assert weights. |
+| IBR.3 | Confidence decay function | Backend | 3h | `apply_confidence_decay(belief, half_life_days)` returns `confidence_with_decay` separately from `extraction_confidence`. Wired into the materialization path with a feature flag (default off until Phase 4 enables it). Unit tests for decay math. |
+| IBR.4 | Ontology rule engine (R1, R2, disjointness, cardinality) | Backend | 8h | New `app/services/ontology_rules.py` with: `R1: subclass_of(x,y) ∧ synonym(y,z) ⇒ subclass_of(x,z)`, `R2: subclass_of(x,y) ∧ subclass_of(y,z) ⇒ subclass_of(x,z)`, disjointness via `owl:disjointWith` edges, cardinality via existing `ontology_constraints` (where present). Single AQL pass per ontology returns violations. Unit tests + integration tests. |
+| IBR.5 | Touchpoint discovery service | Backend | 8h | New `app/services/touchpoint_discovery.py`. For each newly-extracted concept: (a) embedding similarity (cosine ≥ threshold) on label+description against existing classes, (b) URI/normalized-label exact match (reusing alias matching from FR-13.22), (c) chunk-overlap via `extracted_from`. Returns `list[Touchpoint]` with `(extracted, existing, match_signals)`. Unit tests + benchmark. |
+| IBR.6 | Foundation tests + telemetry | Backend | 4h | Cross-cutting tests for the substrate: confidence still computes correctly with 9 signals; rule engine returns deterministic violations; touchpoint discovery is bounded (< N seconds for typical extractions). Telemetry counters wired (touchpoints/run, rule violations/run). |
+
+**Phase 1 exit criteria:** `revision_meta` collection exists; 9-signal confidence works in production; rule engine catches obvious contradictions in existing ontologies (run the engine over the demo data and triage findings); touchpoint discovery is fast enough to run on every extraction.
+
+#### Tasks — Phase 2: Per-document Belief Revision (2 weeks)
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| IBR.7 | Mechanical verdict classifier (Phase 2 of pipeline) | Backend | 6h | New `app/services/revision_verdict.py`. Takes a `Touchpoint`, returns one of REINFORCED / REFINED / GAP-FILLING / REDUNDANT / CONTRADICTED / UNCERTAIN with rule-name justification. Deterministic; same inputs always yield the same verdict. Unit tests covering each verdict type. |
+| IBR.8 | LLM revision agent (Phase 3 of pipeline) | Backend | 10h | New `app/services/revision_agent.py`. Prompt includes existing belief, its provenance text, new evidence text, and the mechanical verdict. Output schema enforced via provider structured-output (action ∈ REINFORCE/REVISE/RETRACT/FLAG_FOR_CURATION + `evidence_quotes[]` + `reasoning`). Cross-check validates that the justification actually supports the action; failures downgrade to FLAG_FOR_CURATION (Evo-DKD pattern). Unit tests with mocked LLM; integration test against real LLM (gated behind env flag). |
+| IBR.9 | Levi-identity supersede helper | Backend | 4h | New `app/db/repositories/temporal_revisions.py::supersede(entity_id, new_doc, agent_meta)`. Atomic AQL transaction: `expire(old_version) + insert(new_version) + write(revision_meta)`. Idempotent. Unit + integration tests. |
+| IBR.10 | Belief Revision LangGraph node | Backend | 6h | New `app/extraction/agents/belief_revision.py` orchestrates Phase 1 + 2 + 3. Conditional edge: skip Phase 3 (LLM agent) when Phase 2 produced zero CONTRADICTED + UNCERTAIN verdicts (FR-11.15). Populates `revision_actions[]` in pipeline state. Emits step events. Unit tests for node behavior; integration test with real pipeline state. |
+| IBR.11 | Wire into pre-curation filter | Backend | 3h | Pre-curation filter receives `revision_actions[]`. Auto-applied revisions are already in the graph (via IBR.9); FLAG_FOR_CURATION revisions are added to staging alongside the new entities so the curator sees them in one place. |
+| IBR.12 | Revision metrics on extraction run | Backend | 3h | Extend `extraction_runs.stats` with: `touchpoints_discovered`, `verdict_distribution`, `llm_calls`, `tokens_used`, `estimated_cost_usd`, `auto_applied`, `flagged_for_curation`, `mean_revision_latency_ms`. Pipeline Monitor renders these on the run detail. |
+| IBR.13 | Phase 2 integration tests | Backend | 6h | End-to-end: ingest D1 → curate → ingest D2 (where D2 contradicts D1's belief) → assert revision is proposed with correct verdict, justification, and evidence. Same for D2 reinforcing D1, D2 refining D1, D2 gap-filling. Test fixtures live alongside existing pipeline tests. |
+
+**Phase 2 exit criteria:** A second document uploaded to an existing ontology produces `revision_meta` documents; mechanical verdicts correctly classify the easy cases; LLM agent only fires on contested cases; all auto-applied revisions create proper temporal versions; the demo can be re-played and the second document visibly revises the first document's conclusions.
+
+#### Tasks — Phase 3: Curation UX + Consolidation (1.5 weeks)
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| IBR.14 | Revisions Inbox overlay | Frontend | 8h | New workspace overlay component `RevisionsInbox.tsx`. Lists pending revisions with: affected entity + thumbnail, verdict + proposed action, before/after diff (reusing `temporal-diff` from §6.5), evidence panes (existing provenance vs new chunks), downstream-impact list. Sortable by impact / confidence delta / recency. Accessible from Asset Explorer (badge with pending count) and canvas right-click ("Show Pending Revisions"). Per `ui-architecture.mdc`: overlay, not a route; uses `viewportTopRight` placement; accept/reject/modify via right-click context menu on each row. |
+| IBR.15 | Revision detail panel | Frontend | 4h | When a row is selected, opens `RevisionDetailPanel.tsx` (reuses `FloatingDetailPanel` infrastructure with `mainColumnTopLeft` placement to avoid stacking with the inbox). Full diff visualization, expandable evidence quotes, downstream-impact graph mini-view. |
+| IBR.16 | Accept/Reject/Modify endpoints + service | Backend | 6h | Implements `POST /revision/{id}/accept`, `POST /revision/{id}/reject`, `POST /revision/{id}/modify`. Accept invokes the Levi-identity helper (IBR.9). Modify takes a modified action payload, validates it, then accepts. All three update `revision_meta.status`. Unit + integration tests. |
+| IBR.17 | Background consolidation job | Backend | 8h | New `app/services/consolidation.py`. Sweeps the ontology to: re-run rules (IBR.4), recompute confidence with all evidence (IBR.2), apply decay (IBR.3), flag stale beliefs. Returns a `consolidation_report`. Cursor-based resumption (LangGraph checkpoint pattern). Admin endpoint `POST /admin/ontology/{id}/consolidate` triggers it. Unit + integration tests with synthetic ontologies of varying sizes. |
+| IBR.18 | Safety guards | Backend | 4h | (a) Published-item protection: structural revisions on `status: approved` classes always FLAG_FOR_CURATION even when LLM agent's confidence is high. (b) Circuit breaker: a configurable revision rate (default 50/min) halts the LLM revision agent and writes an alertable log line. (c) Dry-run: `?dry_run=true` on consolidation returns the proposed actions without applying them. (d) Cursor resumption: consolidation jobs persist their cursor in `consolidation_jobs` collection and resume on restart. Unit tests for each guard. |
+| IBR.19 | Quality dashboard revision tiles | Frontend | 4h | New tiles on the Quality Dashboard surfacing the metrics from FR-13.26: revisions/doc, contradictions/doc, decay-flagged count, pending inbox count, verdict distribution (recharts pie), LLM revision cost. Reuses existing tile components. |
+| IBR.20 | Belief-revision MCP tools | Backend | 4h | Implement the six MCP tools from FR-16.13 / §7.7b table. Each wraps the corresponding REST endpoint. MCP integration tests. |
+| IBR.21 | Documentation + ADR cross-link | Docs | 2h | Update `backend/AGENTS.md` with the new module locations. Add a `docs/iterative-refinement-howto.md` walkthrough (curator's guide to the Revisions Inbox; admin's guide to consolidation jobs). Cross-link from the existing `docs/DELETION_AND_REFERENTIAL_INTEGRITY.md`. |
+
+**Phase 3 exit criteria:** Curators can accept/reject/modify revisions in the workspace overlay; admins can trigger consolidation passes (with dry-run) and see reports; all safety guards are exercised in tests; MCP tools are usable from external clients; the dashboard shows revision health metrics.
+
+#### Implementation Plan — Recommended Order
+
+| Phase | Tasks | Est. Duration | Prerequisites |
+|-------|-------|---------------|---------------|
+| **Phase 1: Substrate** | IBR.1, IBR.2, IBR.3, IBR.4, IBR.5, IBR.6 | 1.5 weeks | None beyond Stream 0 (PGT alignment, complete) |
+| **Phase 2: Per-doc revision** | IBR.7, IBR.8, IBR.9, IBR.10, IBR.11, IBR.12, IBR.13 | 2 weeks | Phase 1 |
+| **Phase 3: UX + consolidation** | IBR.14, IBR.15, IBR.16, IBR.17, IBR.18, IBR.19, IBR.20, IBR.21 | 1.5 weeks | Phase 2 |
+
+**Parallelization within phases:**
+- Phase 1: IBR.1, IBR.2/IBR.3, IBR.4, IBR.5 are independent and can run in parallel; IBR.6 is the integration step
+- Phase 2: IBR.7 and IBR.8 in parallel; then IBR.9 (Levi helper) is the bottleneck before IBR.10 (the node) can land
+- Phase 3: Frontend (IBR.14, IBR.15, IBR.19) can run in parallel with backend (IBR.16, IBR.17, IBR.18, IBR.20)
+
+**Exit Criteria (Stream 11 overall):** A second document uploaded to an ontology with prior curated content visibly revises the prior beliefs (REINFORCED boosts, REFINED supersedes, RETRACT expires, FLAG_FOR_CURATION lands in inbox); curators have a clear inbox UX; admin-triggered consolidation produces a useful report; all safety guards prevent runaway behavior; ADR-008 is the source of truth for the architecture.
+
+---
+
 ## Recommended Execution Order
 
 ```
-Week 1-2:    Stream 1 Phase 1 (Import Tracking & Catalog) + Stream 2 (ER) — in parallel
-Week 3:      Stream 1 Phase 2 (Ontology Composition) + Stream 3 (Constraints) — in parallel
-Week 4:      Stream 4 (Quality Dashboard) + Stream 5 Phase 1 (Core Schema Extraction) — in parallel
-Week 5:      Stream 5 Phase 2-3 (Named Graph Mapping & UI)
+Week 1-2:    Stream 1 Phase 1 (Import Tracking & Catalog) + Stream 2 (ER) + Stream 11 Phase 1 (IBR Substrate) — in parallel
+Week 3:      Stream 1 Phase 2 (Ontology Composition) + Stream 3 (Constraints) + Stream 11 Phase 2 (Per-doc Revision) — in parallel
+Week 4:      Stream 4 (Quality Dashboard) + Stream 5 Phase 1 (Core Schema Extraction) + Stream 11 Phase 2 cont. — in parallel
+Week 5:      Stream 5 Phase 2-3 (Named Graph Mapping & UI) + Stream 11 Phase 3 (UX + Consolidation) — in parallel
 Week 6:      Stream 6 (Testing & CI)
 Week 7:      Stream 7 (Production Polish)
              → v1.0.0 Release
@@ -516,6 +607,9 @@ Week 8-10:   Stream 8 (Sigma.js Migration) — post-release
 | Stream 1 Phase 2 (Composition) — backend | Stream 3 (Constraints) — backend | Composition depends on Phase 1 but not on Constraints |
 | Stream 4 (Quality Dashboard) — frontend | Stream 5 Phase 1 (Schema Core) — backend | No overlap |
 | Stream 5 Phase 2 (Named Graph) — backend | Stream 4 (Quality Dashboard) — frontend | Schema depends on Stream 1 for imports integration |
+| Stream 11 Phase 1 (IBR Substrate) — backend | Stream 1 Phase 1 + Stream 2 — backend | IBR substrate is self-contained; no dependency on other streams |
+| Stream 11 Phase 2 (Per-doc revision) — backend | Stream 1 Phase 2 (Composition) + Stream 3 (Constraints) — backend | IBR Phase 2 reads `ontology_constraints` if present (Stream 3) but does not require it; both can be developed in parallel and integrate via the rule engine (IBR.4) |
+| Stream 11 Phase 3 (UX + Consolidation) — backend + frontend | Stream 4 (Quality Dashboard) — frontend | Stream 11's revision tiles (IBR.19) reuse Stream 4's tile components; coordinate on shared components |
 
 ### Risk Factors
 
@@ -528,6 +622,11 @@ Week 8-10:   Stream 8 (Sigma.js Migration) — post-release
 | Effective ontology graph size explosion (deep import chains) | Stream 1 Phase 2 performance | Limit transitive depth (configurable, default 5), cache effective graph with ETag invalidation |
 | Cross-database schema extraction security | Stream 5 risk | Never persist target DB credentials; use connection pooling with timeout; document security model |
 | `arangodb-schema-analyzer` library unavailable | Stream 5 Phase 2 delay | Built-in direct mapping fallback (S.8) ensures core functionality without the optional library |
+| Stream 11: Runaway LLM revision cost | Per-doc cost spike | Phase 2 mechanical verdicts handle the easy 80% (REINFORCED + REFINED + GAP-FILLING + REDUNDANT); Phase 3 only fires on CONTRADICTED + UNCERTAIN. Circuit breaker (IBR.18) halts the LLM agent above 50 revisions/min (configurable). Per-org token budget enforced. |
+| Stream 11: Bad auto-applied revision damages curated content | User trust loss | Published-item protection (IBR.18) blocks structural auto-revisions on `status: approved` classes. Every revision is reversible via temporal revert (existing infrastructure). Every revision carries `revision_meta` with the agent's justification for spot-check audit. |
+| Stream 11: Curator overload from large Revisions Inbox | UX friction | Default sort by impact (revisions touching the most-referenced beliefs first) so high-leverage revisions get attention. Configurable confidence threshold for auto-apply. Stream 11 Phase 3 includes telemetry to detect inbox growth and alert before it becomes unmanageable. |
+| Stream 11: Confidence decay drifts users' mental model | Confidence scores look "wrong" | UI separates `extraction_confidence` (frozen at extraction time) from `current_confidence` (with decay). Tooltip explains the difference. Decay is configurable per-ontology and disabled by default until explicitly enabled. |
+| Stream 11: Background consolidation job is new infrastructure | Operational complexity | Admin-triggered first (IBR.17 ships without a scheduler); scheduled second (post-v1.0). Cursor-based resumption from day one means failures don't lose progress. Dry-run mode means impact can be previewed before applying. |
 
 ---
 
