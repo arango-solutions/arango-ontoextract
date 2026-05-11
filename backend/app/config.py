@@ -92,6 +92,19 @@ class Settings(BaseSettings):
     er_vector_weight: float = 0.6
     er_topo_weight: float = 0.4
 
+    # -- Belief Revision (PRD §6.16, Stream 11) ----------------------------
+    #: Master kill-switch for the confidence-decay job (IBR.3). Default OFF;
+    #: dry-runs (``apply_confidence_decay(..., dry_run=True)``) work even
+    #: when this is False, so an admin can preview decay before enabling.
+    belief_revision_decay_enabled: bool = False
+    #: Half-life for the decay curve. After this many days an
+    #: untouched class's confidence has halved (subject to the floor).
+    belief_revision_decay_half_life_days: float = 90.0
+    #: Hard floor for decayed confidence; we never decay below this so
+    #: a long-untouched class is always still ranked above a brand-new
+    #: zero-confidence one. Tune per ontology if needed.
+    belief_revision_decay_floor: float = 0.05
+
     # -- Ontology Defaults ---------------------------------------------------
     default_ontology_uri: str = "http://example.org/ontology#"
 
