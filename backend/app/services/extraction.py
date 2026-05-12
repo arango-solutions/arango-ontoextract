@@ -246,6 +246,19 @@ async def execute_run(
                         pass_agreement_rate = sum(rates.values()) / len(rates)
                     break
 
+        # Belief-revision summary (IBR.12). The belief_revision agent
+        # writes one summary dict to state with counts of touchpoints,
+        # verdicts, auto-applied / flagged revisions, and LLM calls --
+        # OR a ``status="skipped"`` payload (with ``reason`` like
+        # ``feature_flag_off`` / ``no_extraction_results``) when the
+        # phase short-circuited. Either way we surface it on the run
+        # so the Pipeline Monitor can render the IBR tiles without
+        # parsing audit step_logs. ``None`` here means the agent never
+        # ran (e.g. pipeline crashed before the IBR node fired); the
+        # frontend renders that as a neutral "no data" tile rather
+        # than zeros.
+        belief_revision_summary = final_state.get("belief_revision_summary")
+
         update_data: dict[str, Any] = {
             "completed_at": completed_at,
             "status": status,
@@ -257,6 +270,7 @@ async def execute_run(
                 "classes_extracted": classes_extracted,
                 "properties_extracted": properties_extracted,
                 "pass_agreement_rate": pass_agreement_rate,
+                "belief_revision": belief_revision_summary,
             },
         }
         col.update({"_key": run_id, **update_data})
@@ -316,8 +330,16 @@ async def execute_run(
     except Exception as exc:
         log.exception("extraction pipeline failed", extra={"run_id": run_id})
         partial_logs: list[dict[str, Any]] = []
+        partial_belief_revision: dict[str, Any] | None = None
         if final_state and final_state.get("step_logs"):
             partial_logs = [_serialize_step_log(sl) for sl in final_state["step_logs"]]
+        if final_state:
+            # If the IBR node ran before the crash (or was skipped via
+            # feature-flag), preserve its summary on the failed run so
+            # the Pipeline Monitor can still show "IBR ran: N
+            # touchpoints, then pipeline failed". ``None`` means the
+            # crash happened before the IBR node fired.
+            partial_belief_revision = final_state.get("belief_revision_summary")
         col.update(
             {
                 "_key": run_id,
@@ -328,6 +350,7 @@ async def execute_run(
                     "errors": [str(exc)],
                     "step_logs": partial_logs,
                     "token_usage": (final_state.get("token_usage", {}) if final_state else {}),
+                    "belief_revision": partial_belief_revision,
                 },
             }
         )
@@ -601,6 +624,14 @@ def get_run_cost(
         "output_cost_per_million_tokens": rates["output"],
         "avg_confidence": avg_confidence,
         "completeness_pct": completeness_pct,
+        # IBR.12: belief-revision summary surfaced for the Pipeline
+        # Monitor's IBR tiles. ``None`` means the agent never ran on
+        # this run (legacy run pre-IBR, or a crash before the IBR
+        # node fired). A populated dict carries the touchpoint /
+        # verdict / auto-applied / flagged-for-curation counts plus
+        # ``status`` / ``reason`` so the frontend can distinguish
+        # "ran with N revisions" from "skipped: feature_flag_off".
+        "belief_revision": stats.get("belief_revision"),
     }
 
 

@@ -624,7 +624,39 @@ class TestFailureIsolation:
 class TestStateDeltaContract:
     def test_returns_only_expected_keys(self) -> None:
         out = belief_revision_node(_state(consistency_result=None))
-        assert set(out.keys()) == {"revision_actions", "errors", "step_logs"}
+        # IBR.12: ``belief_revision_summary`` is the typed channel the
+        # extraction service reads when persisting
+        # ``stats.belief_revision`` on the run document. Locking the
+        # full set here means a future return-shape change can't
+        # silently drop the field on the floor.
+        assert set(out.keys()) == {
+            "revision_actions",
+            "errors",
+            "step_logs",
+            "belief_revision_summary",
+        }
+
+    def test_belief_revision_summary_mirrors_step_log_metadata(self) -> None:
+        """The typed summary on state must match the audit metadata in
+        the step log -- they're two views of the same numbers and
+        drift between them would confuse anyone debugging IBR."""
+        out = belief_revision_node(_state(consistency_result=None))
+        summary = out["belief_revision_summary"]
+        meta = out["step_logs"][0]["metadata"]
+        for key in (
+            "touchpoints_discovered",
+            "auto_applied",
+            "flagged_for_curation",
+            "llm_invocations",
+            "skipped_idempotency",
+            "verdict_counts",
+        ):
+            assert summary[key] == meta[key], f"summary/log mismatch on {key}"
+        # status / reason live only on the typed summary -- they let
+        # the Pipeline Monitor render "skipped: feature_flag_off"
+        # without inspecting the (status,error) tuple on StepLog.
+        assert "status" in summary
+        assert "reason" in summary
 
     def test_step_log_has_required_metadata(self) -> None:
         out = belief_revision_node(_state(consistency_result=None))
@@ -736,11 +768,27 @@ class TestFeatureFlagGating:
     ) -> None:
         monkeypatch.setattr(settings, "belief_revision_pipeline_enabled", False)
         out = belief_revision_node(_state())
-        assert set(out.keys()) == {"revision_actions", "errors", "step_logs"}
+        # Same return-key contract regardless of whether IBR ran or
+        # was skipped -- the summary is non-None ("skipped" with a
+        # reason) so the Pipeline Monitor always has something to
+        # render; see IBR.12.
+        assert set(out.keys()) == {
+            "revision_actions",
+            "errors",
+            "step_logs",
+            "belief_revision_summary",
+        }
         meta = out["step_logs"][0]["metadata"]
         assert meta["touchpoints_discovered"] == 0
         assert meta["auto_applied"] == 0
         assert meta["llm_invocations"] == 0
+        # The state-level summary signals *why* IBR was a no-op so the
+        # frontend can show "IBR disabled in this environment" instead
+        # of an ambiguous bag of zeros.
+        summary = out["belief_revision_summary"]
+        assert summary["status"] == "skipped"
+        assert summary["reason"] == "feature_flag_off"
+        assert summary["touchpoints_discovered"] == 0
 
 
 # ---------------------------------------------------------------------------

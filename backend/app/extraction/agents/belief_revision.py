@@ -181,10 +181,17 @@ def belief_revision_node(state: ExtractionPipelineState) -> dict[str, Any]:
         },
     )
 
+    # Surface the summary on state too (IBR.12). step_log.metadata is
+    # for audit; ``belief_revision_summary`` is the typed contract the
+    # extraction service reads when persisting ``stats.belief_revision``
+    # on the run document. Never None on a normal exit path -- ``summary``
+    # is initialised at the top of this function with the skipped/zero
+    # defaults, then populated by ``_run_phase`` when the pipeline runs.
     return {
         "revision_actions": revision_actions,
         "errors": errors,
         "step_logs": [step_log],
+        "belief_revision_summary": dict(summary),
     }
 
 
