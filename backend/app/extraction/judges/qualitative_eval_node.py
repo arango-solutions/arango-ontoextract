@@ -207,16 +207,48 @@ async def _map_phase(
     classes: list[ExtractedClass],
     chunks: list[dict[str, Any]],
     batch_size: int,
+    *,
+    max_concurrency: int | None = None,
 ) -> list[str]:
-    """Run map phase across all chunk batches concurrently."""
+    """Run map phase across chunk batches with bounded concurrency.
+
+    Without the ``asyncio.Semaphore`` gate, large documents fan out
+    dozens of simultaneous OpenAI calls — which trips per-minute rate
+    limits, triggers a long retry storm, and saturates the single
+    uvicorn worker so unrelated API and WebSocket traffic times out.
+
+    ``max_concurrency`` defaults to
+    :data:`app.config.settings.qualitative_eval_max_concurrency`
+    (override is exposed mainly for tests). A value of ``0`` or
+    negative restores fully-unbounded fan-out (not recommended).
+    """
+    cap = (
+        max_concurrency
+        if max_concurrency is not None
+        else settings.qualitative_eval_max_concurrency
+    )
     batch_texts = _batch_chunks(chunks, batch_size)
+
+    sem: asyncio.Semaphore | None = (
+        asyncio.Semaphore(cap) if cap and cap > 0 else None
+    )
+
+    async def _bounded(
+        batch_text: str,
+        batch_classes: list[ExtractedClass],
+        batch_idx: int,
+    ) -> list[str]:
+        if sem is None:
+            return await _map_single_batch(llm, batch_text, batch_classes, batch_idx)
+        async with sem:
+            return await _map_single_batch(llm, batch_text, batch_classes, batch_idx)
 
     tasks = []
     for batch_idx, batch_text in enumerate(batch_texts):
         start = batch_idx * batch_size
         batch_chunk_indices = list(range(start, min(start + batch_size, len(chunks))))
         batch_classes = _classes_for_batch(classes, batch_chunk_indices, chunks)
-        tasks.append(_map_single_batch(llm, batch_text, batch_classes, batch_idx))
+        tasks.append(_bounded(batch_text, batch_classes, batch_idx))
 
     results = await asyncio.gather(*tasks)
     all_observations: list[str] = []

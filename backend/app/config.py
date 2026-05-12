@@ -86,6 +86,14 @@ class Settings(BaseSettings):
     extraction_passes: int = 3
     extraction_consistency_threshold: int = 2
     extraction_confidence_min: float = 0.6
+    #: Maximum simultaneous LLM calls fired by the qualitative-evaluation
+    #: map phase. Caps unbounded ``asyncio.gather`` fan-out that, on large
+    #: documents, can produce dozens of parallel OpenAI requests, trip
+    #: provider rate limits, trigger long retry storms, and saturate the
+    #: single uvicorn worker (blocking unrelated API + WebSocket traffic).
+    #: A value of 5 keeps us well under typical TPM/RPM ceilings while
+    #: preserving most of the speed-up from concurrency.
+    qualitative_eval_max_concurrency: int = 5
 
     # -- Entity Resolution -------------------------------------------------
     er_vector_similarity_threshold: float = 0.85

@@ -20,6 +20,7 @@ from app.extraction.judges.faithfulness import (
     judge_faithfulness,
 )
 from app.extraction.judges.qualitative_eval_node import (
+    _map_phase,
     run_qualitative_evaluation,
 )
 from app.extraction.judges.quality_judge_node import quality_judge_node
@@ -423,3 +424,121 @@ class TestQualitativeEvaluation:
         # Map phase fails -> no observations -> specific weakness message
         weakness = result["weaknesses"][0].lower()
         assert "observations" in weakness or "could not" in weakness
+
+
+class TestQualitativeEvalConcurrencyCap:
+    """The map phase MUST cap parallelism so a large document cannot
+    fan out dozens of simultaneous OpenAI calls — that scenario trips
+    rate limits, triggers retry storms, and saturates the single
+    uvicorn worker so unrelated API/WebSocket traffic times out
+    (the regression that motivated this test class).
+    """
+
+    @staticmethod
+    def _make_chunks(n: int) -> list[dict[str, str]]:
+        return [{"_key": f"c{i}", "text": f"chunk {i}"} for i in range(n)]
+
+    @pytest.mark.asyncio
+    async def test_semaphore_caps_inflight_calls_at_max_concurrency(self):
+        max_concurrency = 3
+        n_batches = 12
+        in_flight = 0
+        peak = 0
+        lock = __import__("asyncio").Lock()
+
+        async def _fake_ainvoke(_messages):
+            nonlocal in_flight, peak
+            async with lock:
+                in_flight += 1
+                peak = max(peak, in_flight)
+            await __import__("asyncio").sleep(0.01)
+            async with lock:
+                in_flight -= 1
+            return MagicMock(content=json.dumps({"observations": ["obs"]}))
+
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output.side_effect = ValueError("Unsupported")
+        mock_llm.ainvoke = AsyncMock(side_effect=_fake_ainvoke)
+
+        observations = await _map_phase(
+            mock_llm,
+            classes=[_cls(f"u{i}", f"C{i}", "d") for i in range(n_batches)],
+            chunks=self._make_chunks(n_batches),
+            batch_size=1,
+            max_concurrency=max_concurrency,
+        )
+
+        assert len(observations) == n_batches
+        assert peak <= max_concurrency, (
+            f"semaphore failed: peak in-flight {peak} exceeded cap "
+            f"{max_concurrency}; the rate-limit-cascade regression is back"
+        )
+
+    @pytest.mark.asyncio
+    async def test_default_concurrency_pulled_from_settings(self):
+        from app.config import settings
+
+        original = settings.qualitative_eval_max_concurrency
+        settings.qualitative_eval_max_concurrency = 2
+        peak = 0
+        in_flight = 0
+        lock = __import__("asyncio").Lock()
+
+        async def _fake_ainvoke(_messages):
+            nonlocal in_flight, peak
+            async with lock:
+                in_flight += 1
+                peak = max(peak, in_flight)
+            await __import__("asyncio").sleep(0.01)
+            async with lock:
+                in_flight -= 1
+            return MagicMock(content=json.dumps({"observations": []}))
+
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output.side_effect = ValueError("Unsupported")
+        mock_llm.ainvoke = AsyncMock(side_effect=_fake_ainvoke)
+
+        try:
+            await _map_phase(
+                mock_llm,
+                classes=[_cls(f"u{i}") for i in range(10)],
+                chunks=self._make_chunks(10),
+                batch_size=1,
+            )
+        finally:
+            settings.qualitative_eval_max_concurrency = original
+
+        assert peak <= 2, f"settings-driven cap not honoured: peak={peak}"
+
+    @pytest.mark.asyncio
+    async def test_zero_or_negative_disables_cap(self):
+        """A 0/negative cap restores fully-unbounded fan-out (escape hatch)."""
+        in_flight = 0
+        peak = 0
+        lock = __import__("asyncio").Lock()
+
+        async def _fake_ainvoke(_messages):
+            nonlocal in_flight, peak
+            async with lock:
+                in_flight += 1
+                peak = max(peak, in_flight)
+            await __import__("asyncio").sleep(0.02)
+            async with lock:
+                in_flight -= 1
+            return MagicMock(content=json.dumps({"observations": []}))
+
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output.side_effect = ValueError("Unsupported")
+        mock_llm.ainvoke = AsyncMock(side_effect=_fake_ainvoke)
+
+        await _map_phase(
+            mock_llm,
+            classes=[_cls(f"u{i}") for i in range(8)],
+            chunks=self._make_chunks(8),
+            batch_size=1,
+            max_concurrency=0,
+        )
+        assert peak >= 4, (
+            f"max_concurrency=0 should disable the cap, but peak in-flight "
+            f"was only {peak} — semaphore is still being applied"
+        )
