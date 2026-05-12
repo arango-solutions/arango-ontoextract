@@ -88,7 +88,17 @@ class TestExtractionRoutes:
         assert len(background_tasks.tasks) == 1
 
     @pytest.mark.asyncio
-    async def test_list_runs_enriches_documents_and_counts(self):
+    async def test_list_runs_enriches_documents_and_per_run_stats(self):
+        """Document name + chunk count come from doc_get; per-run
+        ``classes_extracted`` / ``properties_extracted`` come from
+        ``run.stats`` (set by the extractor agent during the run)
+        and MUST NOT be overwritten by ontology-wide totals.
+
+        The earlier shape of this test asserted the buggy behaviour
+        where the route re-counted the live target ontology and
+        clobbered the per-run values; see the route's enrichment
+        comment for the bug rationale.
+        """
         db = MagicMock()
         db.has_collection.return_value = True
         documents = MagicMock()
@@ -99,7 +109,11 @@ class TestExtractionRoutes:
                 {
                     "_key": "r1",
                     "doc_ids": ["d1"],
-                    "stats": {"errors": []},
+                    "stats": {
+                        "errors": [],
+                        "classes_extracted": 7,
+                        "properties_extracted": 11,
+                    },
                     "started_at": 1,
                     "completed_at": 2,
                 }
@@ -110,20 +124,138 @@ class TestExtractionRoutes:
         }
         with (
             patch("app.api.extraction.get_db", return_value=db),
-            patch("app.api.extraction.extraction_service.list_runs", return_value=paginated),
+            patch(
+                "app.api.extraction.extraction_service.list_runs",
+                return_value=paginated,
+            ),
             patch(
                 "app.api.extraction.doc_get",
-                return_value={"_key": "d1", "filename": "doc.md", "chunk_count": 4},
+                return_value={
+                    "_key": "d1",
+                    "filename": "doc.md",
+                    "chunk_count": 4,
+                },
             ),
-            patch("app.api.extraction.run_aql", side_effect=[["onto1"], [3], [2]]),
+            # Exactly ONE run_aql call is now expected: the
+            # ontology_registry lookup that resolves ontology_id.
+            # If a future refactor re-adds count overrides, this
+            # side_effect will run out and the test fails loudly.
+            patch(
+                "app.api.extraction.run_aql",
+                side_effect=[["onto1"]],
+            ),
         ):
             result = await list_runs(limit=10)
         run = result["data"][0]
         assert run["document_name"] == "doc.md"
         assert run["chunk_count"] == 4
-        assert run["classes_extracted"] == 3
-        assert run["properties_extracted"] == 2
+        # Per-run stats survive untouched.
+        assert run["classes_extracted"] == 7
+        assert run["properties_extracted"] == 11
         assert run["duration_ms"] == 1000
+        # Ontology link still enriched.
+        assert run["ontology_id"] == "onto1"
+
+    @pytest.mark.asyncio
+    async def test_list_runs_does_not_query_legacy_ontology_properties(self):
+        """Regression: the previous override block queried
+        ``ontology_properties`` (the empty pre-PGT-split collection),
+        which always returned 0 and silently zeroed every run's
+        ``properties_extracted``. The new enrichment should only
+        touch ``ontology_registry`` -- if a future change reintroduces
+        a query against ``ontology_properties`` (or any other
+        collection), this test fails because the captured AQL doesn't
+        match the expected single registry lookup.
+        """
+        db = MagicMock()
+        db.has_collection.return_value = True
+        db.collection.return_value = MagicMock()
+        paginated = MagicMock()
+        paginated.model_dump.return_value = {
+            "data": [
+                {
+                    "_key": "r1",
+                    "doc_ids": [],
+                    "stats": {
+                        "errors": [],
+                        "classes_extracted": 42,
+                        "properties_extracted": 99,
+                    },
+                }
+            ],
+            "cursor": None,
+            "has_more": False,
+            "total_count": 1,
+        }
+
+        captured_queries: list[str] = []
+
+        def capture_aql(_db, query, bind_vars=None, **_kw):
+            captured_queries.append(query)
+            return iter(["onto1"])
+
+        with (
+            patch("app.api.extraction.get_db", return_value=db),
+            patch(
+                "app.api.extraction.extraction_service.list_runs",
+                return_value=paginated,
+            ),
+            patch("app.api.extraction.doc_get", return_value=None),
+            patch("app.api.extraction.run_aql", side_effect=capture_aql),
+        ):
+            result = await list_runs(limit=10)
+
+        run = result["data"][0]
+        # Per-run stats never overwritten by a "live count" query.
+        assert run["classes_extracted"] == 42
+        assert run["properties_extracted"] == 99
+        # No query against the legacy property collections, no query
+        # against ontology_classes for a count.
+        joined = "\n".join(captured_queries)
+        assert "ontology_properties" not in joined
+        assert "ontology_object_properties" not in joined
+        assert "ontology_datatype_properties" not in joined
+        assert "COLLECT WITH COUNT" not in joined
+        # And exactly one query: the registry lookup.
+        assert len(captured_queries) == 1
+        assert "ontology_registry" in captured_queries[0]
+
+    @pytest.mark.asyncio
+    async def test_list_runs_falls_back_to_target_ontology_id(self):
+        """When the registry lookup yields no row (e.g. an in-flight
+        run before the registry write happens, or a failed run that
+        never produced an ontology), ``ontology_id`` should fall back
+        to the user-requested ``target_ontology_id`` so the Pipeline
+        Monitor can still link the run card to a sensible ontology."""
+        db = MagicMock()
+        db.has_collection.return_value = True
+        db.collection.return_value = MagicMock()
+        paginated = MagicMock()
+        paginated.model_dump.return_value = {
+            "data": [
+                {
+                    "_key": "r1",
+                    "doc_ids": [],
+                    "stats": {"errors": []},
+                    "target_ontology_id": "target-onto",
+                }
+            ],
+            "cursor": None,
+            "has_more": False,
+            "total_count": 1,
+        }
+        with (
+            patch("app.api.extraction.get_db", return_value=db),
+            patch(
+                "app.api.extraction.extraction_service.list_runs",
+                return_value=paginated,
+            ),
+            patch("app.api.extraction.doc_get", return_value=None),
+            # Empty cursor -- no registry row exists yet.
+            patch("app.api.extraction.run_aql", side_effect=[[]]),
+        ):
+            result = await list_runs(limit=10)
+        assert result["data"][0]["ontology_id"] == "target-onto"
 
     @pytest.mark.asyncio
     async def test_get_run_delegates(self):

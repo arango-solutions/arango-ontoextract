@@ -9,7 +9,6 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.db.client import get_db
-from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import doc_get, run_aql
 from app.services import extraction as extraction_service
 
@@ -188,7 +187,31 @@ async def list_runs(
         else:
             run.setdefault("duration_ms", 0)
 
-        if db.has_collection("ontology_classes") and run.get("_key"):
+        # Enrich with ontology_id only -- DO NOT overwrite the per-run
+        # counts above. Earlier versions of this block also re-counted
+        # live ``ontology_classes`` + ``ontology_properties`` for the
+        # target ontology and clobbered ``classes_extracted`` /
+        # ``properties_extracted`` with whole-ontology totals. Two bugs
+        # in one place:
+        #
+        #   1. Wrong semantic: ``*_extracted`` should reflect what THIS
+        #      run contributed (the Pipeline Monitor's mental model),
+        #      not the post-merge size of the target ontology. When 4
+        #      docs share a domain, the override made every run look
+        #      like it produced N classes (the running total), not its
+        #      actual delta.
+        #   2. Wrong collection: ``ontology_properties`` is the legacy
+        #      pre-PGT-split collection and is empty -- live properties
+        #      now live in ``ontology_object_properties`` and
+        #      ``ontology_datatype_properties``. The override silently
+        #      reported ``properties_extracted: 0`` for every run that
+        #      had a registry entry. (Older runs that pre-dated the
+        #      registry write kept the right value via the stats
+        #      passthrough above.)
+        #
+        # Per-run stats are already populated from ``run.stats`` higher
+        # up; here we only resolve the *which ontology* link.
+        if db.has_collection("ontology_registry") and run.get("_key"):
             try:
                 oid_result = list(
                     run_aql(
@@ -198,31 +221,13 @@ async def list_runs(
                         bind_vars={"rid": run["_key"]},
                     )
                 )
-                oid = oid_result[0] if oid_result else None
-                if oid:
-                    run["ontology_id"] = oid
-                    cls_count = list(
-                        run_aql(
-                            db,
-                            "FOR c IN ontology_classes "
-                            "FILTER c.ontology_id == @oid AND c.expired == @never "
-                            "COLLECT WITH COUNT INTO cnt RETURN cnt",
-                            bind_vars={"oid": oid, "never": NEVER_EXPIRES},
-                        )
-                    )
-                    run["classes_extracted"] = cls_count[0] if cls_count else 0
-                    prop_count = list(
-                        run_aql(
-                            db,
-                            "FOR p IN ontology_properties "
-                            "FILTER p.ontology_id == @oid AND p.expired == @never "
-                            "COLLECT WITH COUNT INTO cnt RETURN cnt",
-                            bind_vars={"oid": oid, "never": NEVER_EXPIRES},
-                        )
-                    )
-                    run["properties_extracted"] = prop_count[0] if prop_count else 0
+                if oid_result:
+                    run["ontology_id"] = oid_result[0]
             except Exception:
-                log.debug("Could not fetch entity counts for run enrichment")
+                log.debug(
+                    "Could not resolve ontology_id for run enrichment",
+                    exc_info=True,
+                )
         if "ontology_id" not in run and run.get("target_ontology_id"):
             run["ontology_id"] = run["target_ontology_id"]
 
