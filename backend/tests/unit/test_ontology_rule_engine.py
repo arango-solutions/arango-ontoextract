@@ -19,6 +19,7 @@ from app.services.ontology_rule_engine import (
     RULE_R1_SYNONYM_TRIANGLE,
     RULE_R2_SUBCLASS_CYCLE,
     RULE_R3_ORPHAN_RANGE,
+    RULE_R4_REDUNDANT_CLASS,
     SEVERITY_ERROR,
     SEVERITY_WARNING,
     RuleEngineReport,
@@ -648,6 +649,257 @@ class TestR3OrphanObjectPropertyRange:
         assert violations == []
 
 
+# ---------------------------------------------------------------------------
+# R4 -- redundant class
+# ---------------------------------------------------------------------------
+
+
+class TestR4RedundantClass:
+    """The redundant-class rule clusters classes whose labels collapse
+    to the same normalised form, with a conservative singular/plural
+    union pass on top. Each cluster of size >=2 -> one warning
+    violation with ``suggested_action=REDUNDANT``."""
+
+    @staticmethod
+    def _patch_classes(monkeypatch, rows: list[dict[str, Any]]) -> None:
+        """Patch ``run_aql`` to return ``rows`` for the R4 query."""
+
+        def fake(_db, aql, *, bind_vars=None):
+            assert "FOR c IN ontology_classes" in aql
+            return iter(rows)
+
+        monkeypatch.setattr(engine, "run_aql", fake)
+
+    def test_returns_empty_when_collection_missing(self, monkeypatch):
+        db = _db_with_collections()
+        # Should short-circuit before ``run_aql`` -- patch it to fail
+        # if the rule reaches it.
+
+        def fake(*args, **kwargs):
+            raise AssertionError("R4 must short-circuit when collection missing")
+
+        monkeypatch.setattr(engine, "run_aql", fake)
+        assert engine._r4_redundant_class(db, "OID") == []
+
+    def test_returns_empty_when_fewer_than_two_classes(self, monkeypatch):
+        db = _db_with_collections("ontology_classes")
+        self._patch_classes(monkeypatch, [{"_key": "A", "label": "Alpha"}])
+        assert engine._r4_redundant_class(db, "OID") == []
+
+    def test_exact_normalised_match_clusters_classes(self, monkeypatch):
+        """The classic case: two classes with the same name modulo
+        whitespace + casing + punctuation."""
+        db = _db_with_collections("ontology_classes")
+        self._patch_classes(
+            monkeypatch,
+            [
+                {"_key": "TotalRewards", "label": "TotalRewards"},
+                {"_key": "Total_Rewards_v2", "label": "Total Rewards"},
+                {"_key": "Unrelated", "label": "Wellbeing"},
+            ],
+        )
+
+        violations = engine._r4_redundant_class(db, "OID")
+        assert len(violations) == 1
+        v = violations[0]
+        assert v.rule_id == RULE_R4_REDUNDANT_CLASS
+        assert v.severity == SEVERITY_WARNING
+        assert v.suggested_action == "REDUNDANT"
+        assert set(v.entity_ids) == {"TotalRewards", "Total_Rewards_v2"}
+        # Description must mention BOTH labels so a curator can decide
+        # which to keep without opening another panel.
+        assert "TotalRewards" in v.description
+        assert "Total Rewards" in v.description
+
+    def test_possessive_apostrophe_is_dropped(self, monkeypatch):
+        """``Customer's Risk Profile`` clusters with ``CustomerRiskProfile``."""
+        db = _db_with_collections("ontology_classes")
+        self._patch_classes(
+            monkeypatch,
+            [
+                {"_key": "CustomerRiskProfile", "label": "Customer Risk Profile"},
+                {"_key": "CustomersRiskProfile", "label": "Customer's Risk Profile"},
+            ],
+        )
+
+        violations = engine._r4_redundant_class(db, "OID")
+        assert len(violations) == 1
+        assert set(violations[0].entity_ids) == {
+            "CustomerRiskProfile",
+            "CustomersRiskProfile",
+        }
+
+    def test_singular_plural_pass_merges_employee_and_employees(self, monkeypatch):
+        db = _db_with_collections("ontology_classes")
+        self._patch_classes(
+            monkeypatch,
+            [
+                {"_key": "Employee", "label": "Employee"},
+                {"_key": "Employees", "label": "Employees"},
+            ],
+        )
+
+        violations = engine._r4_redundant_class(db, "OID")
+        assert len(violations) == 1
+        assert set(violations[0].entity_ids) == {"Employee", "Employees"}
+
+    def test_plural_es_form_merges(self, monkeypatch):
+        """``Class`` + ``Classes`` -- ``+es`` plural."""
+        db = _db_with_collections("ontology_classes")
+        self._patch_classes(
+            monkeypatch,
+            [
+                {"_key": "Class", "label": "Class"},
+                {"_key": "Classes", "label": "Classes"},
+            ],
+        )
+
+        violations = engine._r4_redundant_class(db, "OID")
+        assert len(violations) == 1
+
+    def test_plural_ies_form_merges(self, monkeypatch):
+        """``Country`` + ``Countries`` -- ``y`` -> ``ies`` plural."""
+        db = _db_with_collections("ontology_classes")
+        self._patch_classes(
+            monkeypatch,
+            [
+                {"_key": "Country", "label": "Country"},
+                {"_key": "Countries", "label": "Countries"},
+            ],
+        )
+
+        violations = engine._r4_redundant_class(db, "OID")
+        assert len(violations) == 1
+        assert set(violations[0].entity_ids) == {"Country", "Countries"}
+
+    def test_plural_pass_does_not_merge_when_only_one_form_present(
+        self, monkeypatch
+    ):
+        """``Address`` alone should NOT be flagged just because the
+        plural pass would generate ``Addresss``/``Addresses`` candidates."""
+        db = _db_with_collections("ontology_classes")
+        self._patch_classes(
+            monkeypatch,
+            [
+                {"_key": "Address", "label": "Address"},
+                {"_key": "Other", "label": "Something completely different"},
+            ],
+        )
+
+        violations = engine._r4_redundant_class(db, "OID")
+        assert violations == []
+
+    def test_short_words_are_excluded_from_plural_pass(self, monkeypatch):
+        """Plural pass skips forms shorter than 4 chars to avoid
+        ``Cat`` matching a hypothetical ``Cats`` only by length-3
+        coincidence -- prevents low-signal noise."""
+        db = _db_with_collections("ontology_classes")
+        self._patch_classes(
+            monkeypatch,
+            [
+                {"_key": "Cat", "label": "Cat"},
+                {"_key": "Cats", "label": "Cats"},
+            ],
+        )
+
+        # ``cat`` is 3 chars, below the threshold, so the plural pass
+        # does NOT union them. This is intentionally conservative; the
+        # cost of a false positive (curator merges legitimate distinct
+        # acronyms) is higher than missing a 3-letter duplicate.
+        violations = engine._r4_redundant_class(db, "OID")
+        assert violations == []
+
+    def test_falls_back_to_key_when_label_missing(self, monkeypatch):
+        db = _db_with_collections("ontology_classes")
+        self._patch_classes(
+            monkeypatch,
+            [
+                {"_key": "Account", "label": None},
+                {"_key": "ACCOUNT", "label": ""},
+            ],
+        )
+
+        violations = engine._r4_redundant_class(db, "OID")
+        assert len(violations) == 1
+        assert set(violations[0].entity_ids) == {"Account", "ACCOUNT"}
+
+    def test_three_way_cluster_emits_one_violation_listing_all(self, monkeypatch):
+        db = _db_with_collections("ontology_classes")
+        self._patch_classes(
+            monkeypatch,
+            [
+                {"_key": "HealthPlan", "label": "Health Plan"},
+                {"_key": "Health_plan", "label": "health-plan"},
+                {"_key": "HEALTHPLAN", "label": "HEALTHPLAN"},
+            ],
+        )
+
+        violations = engine._r4_redundant_class(db, "OID")
+        assert len(violations) == 1
+        v = violations[0]
+        assert len(v.entity_ids) == 3
+        assert set(v.entity_ids) == {"HealthPlan", "Health_plan", "HEALTHPLAN"}
+        assert "3 classes look redundant" in v.description
+
+    def test_no_violations_when_all_classes_unique(self, monkeypatch):
+        db = _db_with_collections("ontology_classes")
+        self._patch_classes(
+            monkeypatch,
+            [
+                {"_key": "A", "label": "Apple"},
+                {"_key": "B", "label": "Banana"},
+                {"_key": "C", "label": "Carrot"},
+            ],
+        )
+
+        violations = engine._r4_redundant_class(db, "OID")
+        assert violations == []
+
+    def test_violations_are_sorted_by_entity_ids_for_diffability(
+        self, monkeypatch
+    ):
+        """Two independent clusters in one ontology -- the report's
+        violation order MUST be deterministic so re-running the rule
+        produces a diffable output (audit log + reflection report).
+
+        Both base words are >= 4 chars so the plural-pass threshold
+        (see ``test_short_words_are_excluded_from_plural_pass``) does
+        not exclude them.
+        """
+        db = _db_with_collections("ontology_classes")
+        self._patch_classes(
+            monkeypatch,
+            [
+                {"_key": "Vehicle", "label": "Vehicle"},
+                {"_key": "Vehicles", "label": "Vehicles"},
+                {"_key": "Apple", "label": "Apple"},
+                {"_key": "Apples", "label": "Apples"},
+            ],
+        )
+
+        violations = engine._r4_redundant_class(db, "OID")
+        assert len(violations) == 2
+        # Apple cluster sorts before Vehicle cluster (lexicographic
+        # on the first entity id).
+        assert violations[0].entity_ids[0].startswith("Apple")
+        assert violations[1].entity_ids[0].startswith("Vehicle")
+
+    def test_skips_rows_with_blank_keys(self, monkeypatch):
+        """Defensive: a class doc without a key shouldn't crash the
+        rule or contribute to clusters."""
+        db = _db_with_collections("ontology_classes")
+        self._patch_classes(
+            monkeypatch,
+            [
+                {"_key": "", "label": "Phantom"},
+                {"_key": "RealClass", "label": "Real Class"},
+            ],
+        )
+
+        violations = engine._r4_redundant_class(db, "OID")
+        assert violations == []
+
+
 class TestEvaluateRulesOrchestrator:
     def test_collects_violations_from_all_registered_rules(self):
         db = MagicMock()
@@ -744,6 +996,7 @@ class TestDefaultRulesWiring:
             RULE_R1_SYNONYM_TRIANGLE,
             RULE_R2_SUBCLASS_CYCLE,
             RULE_R3_ORPHAN_RANGE,
+            RULE_R4_REDUNDANT_CLASS,
             RULE_DISJOINT_VIOLATION,
             RULE_CARDINALITY_VIOLATION,
         ]
@@ -762,6 +1015,7 @@ class TestDefaultRulesWiring:
                 RULE_R1_SYNONYM_TRIANGLE,
                 RULE_R2_SUBCLASS_CYCLE,
                 RULE_R3_ORPHAN_RANGE,
+                RULE_R4_REDUNDANT_CLASS,
                 RULE_DISJOINT_VIOLATION,
                 RULE_CARDINALITY_VIOLATION,
             ]

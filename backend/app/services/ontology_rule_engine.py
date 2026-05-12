@@ -30,6 +30,15 @@ Built-in rules
   ``GAP_FILLING`` -- the action is the same regardless of whether the
   matcher had a candidate; the difference is whether a curator can
   one-click apply or has to source new evidence.
+* **R4 -- Redundant Class.** Two or more classes whose labels (or
+  ``_key`` fragments when label is missing) collapse to the same
+  normalised form -- lowercase, alphanumeric only, possessive ``'s``
+  stripped, plus a conservative singular/plural pass that only
+  merges ``S`` with ``S+"s"`` / ``S+"es"`` / ``S[:-1]+"ies"`` when
+  *both* forms exist in the data. Catches the silent-duplicate case
+  R1 cannot see (R1 needs explicit ``equivalent_class`` /
+  ``subclass_of`` edges already in place). Suggested action is
+  ``REDUNDANT`` -- the merge target choice belongs to the curator.
 * **Disjointness.** When ``disjoint_with`` edges exist, any class C
   that is subClassOf both A and B (where A ``disjoint_with`` B) is
   a violation.
@@ -74,6 +83,7 @@ SEVERITY_ERROR = "error"
 RULE_R1_SYNONYM_TRIANGLE = "R1_synonym_triangle"
 RULE_R2_SUBCLASS_CYCLE = "R2_subclass_cycle"
 RULE_R3_ORPHAN_RANGE = "R3_orphan_object_property_range"
+RULE_R4_REDUNDANT_CLASS = "R4_redundant_class"
 RULE_DISJOINT_VIOLATION = "DISJOINT_violation"
 RULE_CARDINALITY_VIOLATION = "CARDINALITY_violation"
 
@@ -593,6 +603,162 @@ def _r3_orphan_object_property_range(db: Any, ontology_id: str) -> list[Violatio
 
 
 # ---------------------------------------------------------------------------
+# R4 -- Redundant class detector
+# ---------------------------------------------------------------------------
+
+
+def _r4_redundant_class(db: Any, ontology_id: str) -> list[Violation]:
+    """Detect classes that look like silent duplicates of each other.
+
+    Two classes are considered redundant when their labels (or, when
+    the label is missing, their ``_key`` fragments) collapse to the
+    same normalised form. Normalisation is the same one used by
+    :mod:`app.services.edge_repair` -- lowercase + strip
+    non-alphanumerics + drop possessive ``'s``. So
+    ``"Customer's Risk Profile"`` and ``"CustomerRiskProfile"``
+    both collapse to ``customerriskprofile``.
+
+    On top of exact-form clustering, a conservative singular/plural
+    pass merges any cluster whose normalised form ``S`` has another
+    cluster whose form is one of ``S+"s"``, ``S+"es"``, or
+    ``S[:-1]+"ies"`` -- but *only when both forms exist in the data*.
+    This avoids over-aggressive stemming (``Address`` would otherwise
+    incorrectly stem to ``Addres``) while still catching the common
+    ``Employee/Employees``, ``Class/Classes``, ``Country/Countries``
+    duplicates the user demo-flagged.
+
+    Distinct from R1 (synonym triangle) -- R1 needs explicit
+    ``equivalent_class`` / ``subclass_of`` edges already in place and
+    detects inconsistencies in those triangles. R4 needs no edges and
+    detects the class-was-extracted-twice case the LLM is prone to.
+
+    Each cluster of size >= 2 emits one ``warning`` violation with
+    ``suggested_action=REDUNDANT``. The merge target choice belongs
+    to the curator (the rule has no opinion on which member to
+    keep), so we do not pre-select one in the description.
+    """
+    if not db.has_collection("ontology_classes"):
+        return []
+
+    bind = {"oid": ontology_id, "never": NEVER_EXPIRES}
+    rows = list(
+        run_aql(
+            db,
+            "FOR c IN ontology_classes "
+            "FILTER c.ontology_id == @oid AND c.expired == @never "
+            "RETURN { _key: c._key, label: c.label }",
+            bind_vars=bind,
+        )
+    )
+    if len(rows) < 2:
+        return []
+
+    # Step 1: bucket by exact normalised form.
+    by_norm: dict[str, list[tuple[str, str]]] = {}
+    for row in rows:
+        key = str(row.get("_key") or "")
+        if not key:
+            continue
+        label = row.get("label")
+        # Fall back to the key (which is usually the URI fragment) when
+        # the label is missing -- this matches edge_repair's behaviour
+        # and means "Account" + an unlabeled "Account"-keyed class still
+        # cluster together.
+        canonical = _normalise_label_or_key(label, key)
+        if not canonical:
+            continue
+        by_norm.setdefault(canonical, []).append((key, str(label or key)))
+
+    # Step 2: conservative singular/plural pass. For each form S, check
+    # whether S+"s", S+"es", or S[:-1]+"ies" is also a form. When found,
+    # union the two buckets via a parent map (classic disjoint-set lite).
+    parent: dict[str, str] = {form: form for form in by_norm}
+
+    def _find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def _union(a: str, b: str) -> None:
+        ra, rb = _find(a), _find(b)
+        if ra != rb:
+            # Deterministic merge target so the description is stable
+            # across runs (helps tests + makes the audit log diffable).
+            parent[ra if ra < rb else rb] = ra if ra > rb else rb
+
+    for form in list(by_norm):
+        # Skip very short forms -- ``a`` -> ``as`` is just noise.
+        if len(form) < 4:
+            continue
+        for plural in _plural_candidates(form):
+            if plural in by_norm and plural != form:
+                _union(form, plural)
+
+    # Step 3: gather clusters keyed by their post-union root.
+    clusters: dict[str, list[tuple[str, str]]] = {}
+    for form, members in by_norm.items():
+        root = _find(form)
+        clusters.setdefault(root, []).extend(members)
+
+    violations: list[Violation] = []
+    for root, members in clusters.items():
+        if len(members) < 2:
+            continue
+        # Sort for stable output (description + entity_ids order).
+        members_sorted = sorted(members, key=lambda m: m[0])
+        keys = tuple(k for k, _ in members_sorted)
+        labels = [lbl for _, lbl in members_sorted]
+        violations.append(
+            Violation(
+                rule_id=RULE_R4_REDUNDANT_CLASS,
+                severity=SEVERITY_WARNING,
+                entity_ids=keys,
+                description=(
+                    f"{len(members_sorted)} classes look redundant "
+                    f"(normalised form '{root}'): "
+                    + ", ".join(repr(lbl) for lbl in labels)
+                    + ". Consider merging via curation."
+                ),
+                suggested_action=VERDICT_REDUNDANT,
+            )
+        )
+
+    # Stable order across runs so the report is diffable.
+    violations.sort(key=lambda v: v.entity_ids)
+    return violations
+
+
+def _normalise_label_or_key(label: Any, key: str) -> str:
+    """Reuse ``edge_repair._normalise`` against label-then-key fallback.
+
+    Imported lazily so the rule engine doesn't load ``edge_repair``
+    unless R4 actually runs (matches the R3 lazy-import pattern).
+    """
+    from app.services.edge_repair import _normalise
+
+    if isinstance(label, str) and label.strip():
+        return _normalise(label)
+    return _normalise(key)
+
+
+def _plural_candidates(form: str) -> tuple[str, ...]:
+    """Conservative plural variants for the singular/plural merge pass.
+
+    Returns the candidate plural forms whose presence in the data
+    would justify merging this singular cluster with the plural one.
+    Intentionally narrow -- we only want high-precision matches
+    (false positives turn into curator noise; false negatives just
+    miss a duplicate, which the user can spot manually).
+    """
+    cands = [form + "s", form + "es"]
+    if form.endswith("y") and len(form) > 2:
+        # ``country`` -> ``countries``
+        cands.append(form[:-1] + "ies")
+    return tuple(cands)
+
+
+# ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
 
@@ -601,6 +767,7 @@ _DEFAULT_RULES: tuple[tuple[str, RuleFn], ...] = (
     (RULE_R1_SYNONYM_TRIANGLE, _r1_synonym_triangle),
     (RULE_R2_SUBCLASS_CYCLE, _r2_subclass_cycle),
     (RULE_R3_ORPHAN_RANGE, _r3_orphan_object_property_range),
+    (RULE_R4_REDUNDANT_CLASS, _r4_redundant_class),
     (RULE_DISJOINT_VIOLATION, _disjoint_violation),
     (RULE_CARDINALITY_VIOLATION, _cardinality_violation),
 )
