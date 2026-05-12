@@ -44,6 +44,34 @@ class TestDocumentHelpers:
         with pytest.raises(ValidationError):
             _validate_mime(file)
 
+    def test_validate_mime_allows_pptx_by_declared_type(self):
+        file = _upload_file(
+            filename="deck.pptx",
+            content_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "presentationml.presentation"
+            ),
+        )
+        assert _validate_mime(file).endswith("presentationml.presentation")
+
+    def test_validate_mime_allows_pptx_by_extension_when_browser_lies(self):
+        # Some browsers send octet-stream for Office files; the
+        # extension fallback should still let the upload through.
+        file = _upload_file(filename="deck.pptx", content_type="application/octet-stream")
+        assert _validate_mime(file).endswith("presentationml.presentation")
+
+    def test_validate_mime_allows_legacy_doc_by_declared_type(self):
+        file = _upload_file(filename="memo.doc", content_type="application/msword")
+        assert _validate_mime(file) == "application/msword"
+
+    def test_validate_mime_allows_legacy_doc_by_extension(self):
+        file = _upload_file(filename="memo.doc", content_type="")
+        assert _validate_mime(file) == "application/msword"
+
+    def test_validate_mime_extension_match_is_case_insensitive(self):
+        file = _upload_file(filename="REPORT.PDF", content_type="application/octet-stream")
+        assert _validate_mime(file) == "application/pdf"
+
     def test_to_doc_response_fills_defaults(self):
         result = _to_doc_response({"_key": "d1"})
         assert result["filename"] == ""

@@ -32,21 +32,45 @@ _background_tasks: set[asyncio.Task[None]] = set()  # prevent GC of fire-and-for
 _ALLOWED_MIME_TYPES = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/msword",  # legacy .doc (pre-2007); requires LibreOffice on host
     "text/markdown",
+}
+
+# Browsers occasionally upload Office files with a generic or vendor-
+# specific MIME type. Map well-known cases by filename suffix when the
+# declared MIME doesn't match. Keep this list short -- it's a fallback,
+# not a primary path.
+_EXTENSION_FALLBACK: dict[str, str] = {
+    ".md": "text/markdown",
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".doc": "application/msword",
 }
 
 
 def _validate_mime(file: UploadFile) -> str:
-    """Return the validated MIME type, raising ValidationError if unsupported."""
+    """Return the validated MIME type, raising ValidationError if unsupported.
+
+    Falls back to filename-extension sniffing for known Office formats so
+    a misconfigured browser ("application/octet-stream") doesn't block a
+    legitimate upload.
+    """
     mime = file.content_type or ""
-    if mime not in _ALLOWED_MIME_TYPES:
-        if file.filename and file.filename.endswith(".md"):
-            return "text/markdown"
-        raise ValidationError(
-            f"Unsupported file type: {mime}",
-            details={"allowed": sorted(_ALLOWED_MIME_TYPES)},
-        )
-    return mime
+    if mime in _ALLOWED_MIME_TYPES:
+        return mime
+
+    if file.filename:
+        lower = file.filename.lower()
+        for suffix, fallback in _EXTENSION_FALLBACK.items():
+            if lower.endswith(suffix):
+                return fallback
+
+    raise ValidationError(
+        f"Unsupported file type: {mime}",
+        details={"allowed": sorted(_ALLOWED_MIME_TYPES)},
+    )
 
 
 def _to_doc_response(doc: dict[str, Any]) -> dict[str, Any]:

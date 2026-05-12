@@ -20,9 +20,11 @@ from app.services.ingestion import (
     Chunk,
     ParsedDocument,
     chunk_document,
+    parse_doc,
     parse_docx,
     parse_markdown,
     parse_pdf,
+    parse_pptx,
 )
 
 log = logging.getLogger(__name__)
@@ -32,6 +34,12 @@ _MIME_PARSERS: dict[str, Callable[[bytes], ParsedDocument]] = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": (
         lambda file_bytes: parse_docx(file_bytes)
     ),
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": (
+        lambda file_bytes: parse_pptx(file_bytes)
+    ),
+    # Legacy Word binary; requires LibreOffice on the host.
+    # parse_doc raises a clear RuntimeError if soffice is missing.
+    "application/msword": lambda file_bytes: parse_doc(file_bytes),
 }
 
 

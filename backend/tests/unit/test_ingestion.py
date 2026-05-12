@@ -240,3 +240,266 @@ class TestChunkDocument:
         parsed = ParsedDocument(sections=[Section(heading="S", text=text, page_number=1)])
         chunks = chunk_document(parsed, max_tokens=15)
         assert len(chunks) >= 2
+
+
+# ---------------------------------------------------------------------------
+# parse_pptx (real round-trip with python-pptx)
+# ---------------------------------------------------------------------------
+
+
+def _build_synthetic_pptx() -> bytes:
+    """Create an in-memory .pptx with three slides for round-trip tests."""
+    import io as _io
+
+    from pptx import Presentation as _Pres
+    from pptx.util import Inches as _In
+
+    prs = _Pres()
+
+    # Slide 1: title + bullets layout, with notes.
+    layout = prs.slide_layouts[1]  # "Title and Content"
+    s1 = prs.slides.add_slide(layout)
+    s1.shapes.title.text = "Healthcare Survey 2024"
+    body = s1.placeholders[1]
+    body.text = "Key finding: claim costs up 8%"
+    p2 = body.text_frame.add_paragraph()
+    p2.text = "Mental health utilisation up 15%"
+    s1.notes_slide.notes_text_frame.text = "Speaker note: emphasise mental-health spike"
+
+    # Slide 2: blank layout + a freeform text box + a table.
+    blank = prs.slide_layouts[5]  # "Title Only"
+    s2 = prs.slides.add_slide(blank)
+    s2.shapes.title.text = "Benefit Preferences"
+    tx = s2.shapes.add_textbox(_In(1), _In(2), _In(5), _In(2))
+    tx.text_frame.text = "Most-valued benefit: 401(k) match"
+    rows, cols = 2, 2
+    table = s2.shapes.add_table(rows, cols, _In(1), _In(4), _In(5), _In(1.5)).table
+    table.cell(0, 0).text = "Benefit"
+    table.cell(0, 1).text = "Rank"
+    table.cell(1, 0).text = "Health insurance"
+    table.cell(1, 1).text = "1"
+
+    # Slide 3: deliberately empty (Blank layout has no title placeholder
+    # and we add no shapes) -> should be skipped by parse_pptx.
+    prs.slides.add_slide(prs.slide_layouts[6])  # "Blank"
+
+    buf = _io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
+
+
+class TestParsePptx:
+    """Round-trip tests using python-pptx to build deterministic fixtures."""
+
+    def test_parses_real_pptx_into_sections_per_slide(self):
+        from app.services.ingestion import parse_pptx
+
+        pptx_bytes = _build_synthetic_pptx()
+        parsed = parse_pptx(pptx_bytes)
+
+        # Slide 3 is dropped (empty), so only 2 sections.
+        assert len(parsed.sections) == 2
+        # page_count reflects raw slide count, not filtered sections.
+        assert parsed.page_count == 3
+
+    def test_first_slide_title_and_body_extracted(self):
+        from app.services.ingestion import parse_pptx
+
+        parsed = parse_pptx(_build_synthetic_pptx())
+        s1 = parsed.sections[0]
+        assert s1.heading == "Healthcare Survey 2024"
+        assert s1.page_number == 1
+        assert "claim costs up 8%" in s1.text
+        assert "Mental health utilisation up 15%" in s1.text
+
+    def test_speaker_notes_appended_with_marker(self):
+        from app.services.ingestion import parse_pptx
+
+        parsed = parse_pptx(_build_synthetic_pptx())
+        assert "[Notes]" in parsed.sections[0].text
+        assert "mental-health spike" in parsed.sections[0].text
+
+    def test_title_not_double_counted_in_body(self):
+        from app.services.ingestion import parse_pptx
+
+        parsed = parse_pptx(_build_synthetic_pptx())
+        # The slide title appears exactly once -- as the heading, not also in body.
+        assert parsed.sections[0].heading.count("Healthcare Survey 2024") == 1
+        assert "Healthcare Survey 2024" not in parsed.sections[0].text
+
+    def test_text_boxes_and_tables_extracted(self):
+        from app.services.ingestion import parse_pptx
+
+        parsed = parse_pptx(_build_synthetic_pptx())
+        s2 = parsed.sections[1]
+        assert s2.heading == "Benefit Preferences"
+        assert "Most-valued benefit: 401(k) match" in s2.text
+        # Table rows joined as `cell | cell`.
+        assert "Benefit | Rank" in s2.text
+        assert "Health insurance | 1" in s2.text
+
+    def test_empty_slide_is_dropped(self):
+        from app.services.ingestion import parse_pptx
+
+        parsed = parse_pptx(_build_synthetic_pptx())
+        # Slide 3 produced no heading and no body -> not in sections.
+        page_numbers = {s.page_number for s in parsed.sections}
+        assert 3 not in page_numbers
+
+    def test_invalid_bytes_raises(self):
+        """Garbage bytes -> the underlying zipfile layer rejects it.
+
+        python-pptx wraps a ZIP container, so non-ZIP input surfaces as
+        ``zipfile.BadZipFile``. We accept any subclass of OSError /
+        zipfile.BadZipFile to stay tolerant of future python-pptx
+        version changes that may wrap this in their own exception.
+        """
+        import zipfile
+
+        import pytest as _pytest
+
+        from app.services.ingestion import parse_pptx
+
+        with _pytest.raises((zipfile.BadZipFile, OSError, ValueError)):
+            parse_pptx(b"definitely not a real pptx")
+
+
+# ---------------------------------------------------------------------------
+# parse_doc (mocked LibreOffice subprocess + real parse_docx on output)
+# ---------------------------------------------------------------------------
+
+
+class TestParseDoc:
+    def test_raises_when_libreoffice_missing(self):
+        import pytest as _pytest
+
+        from app.services import ingestion as _ing
+
+        with patch.object(_ing, "_find_libreoffice", return_value=None), _pytest.raises(
+            RuntimeError, match="LibreOffice"
+        ):
+            _ing.parse_doc(b"fake-doc-bytes")
+
+    def test_calls_soffice_with_expected_args(self, tmp_path):
+        # Build a real .docx (one paragraph) that we'll pretend soffice produced.
+        from docx import Document as _Document
+
+        from app.services import ingestion as _ing
+
+        d = _Document()
+        d.add_heading("Converted Heading", level=1)
+        d.add_paragraph("Converted body text.")
+        import io as _io
+
+        buf = _io.BytesIO()
+        d.save(buf)
+        docx_bytes = buf.getvalue()
+
+        captured: dict[str, list[str]] = {}
+
+        def _fake_run(cmd, **kwargs):
+            captured["cmd"] = list(cmd)
+            # Mimic LibreOffice: drop a .docx into the --outdir.
+            outdir_idx = cmd.index("--outdir") + 1
+            outdir = cmd[outdir_idx]
+            with open(f"{outdir}/in.docx", "wb") as fh:
+                fh.write(docx_bytes)
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = b""
+            return result
+
+        with patch.object(_ing, "_find_libreoffice", return_value="/fake/soffice"), patch(
+            "app.services.ingestion.subprocess.run", side_effect=_fake_run
+        ):
+            parsed = _ing.parse_doc(b"fake-doc-bytes")
+
+        assert captured["cmd"][0] == "/fake/soffice"
+        assert "--headless" in captured["cmd"]
+        assert "--convert-to" in captured["cmd"]
+        assert captured["cmd"][captured["cmd"].index("--convert-to") + 1] == "docx"
+        # parse_docx round-tripped the converted output.
+        assert parsed.sections[0].heading == "Converted Heading"
+        assert "Converted body text" in parsed.sections[0].text
+
+    def test_subprocess_failure_raises_with_stderr(self):
+        import pytest as _pytest
+
+        from app.services import ingestion as _ing
+
+        result = MagicMock()
+        result.returncode = 2
+        result.stderr = b"soffice: source file not found"
+
+        with patch.object(_ing, "_find_libreoffice", return_value="/fake/soffice"), patch(
+            "app.services.ingestion.subprocess.run", return_value=result
+        ), _pytest.raises(RuntimeError, match="exit=2"):
+            _ing.parse_doc(b"fake")
+
+    def test_timeout_raises_with_clear_message(self):
+        import subprocess as _sp
+
+        import pytest as _pytest
+
+        from app.services import ingestion as _ing
+
+        with patch.object(_ing, "_find_libreoffice", return_value="/fake/soffice"), patch(
+            "app.services.ingestion.subprocess.run",
+            side_effect=_sp.TimeoutExpired(cmd="soffice", timeout=60),
+        ), _pytest.raises(RuntimeError, match="timed out"):
+            _ing.parse_doc(b"fake")
+
+    def test_no_docx_output_raises(self):
+        import pytest as _pytest
+
+        from app.services import ingestion as _ing
+
+        result = MagicMock()
+        result.returncode = 0
+        result.stderr = b""
+
+        # subprocess returns success but produces no .docx (LO gone weird)
+        with patch.object(_ing, "_find_libreoffice", return_value="/fake/soffice"), patch(
+            "app.services.ingestion.subprocess.run", return_value=result
+        ), _pytest.raises(RuntimeError, match=r"no \.docx output"):
+            _ing.parse_doc(b"fake")
+
+
+# ---------------------------------------------------------------------------
+# _find_libreoffice
+# ---------------------------------------------------------------------------
+
+
+class TestFindLibreoffice:
+    def test_prefers_path_soffice(self):
+        from app.services import ingestion as _ing
+
+        with patch("app.services.ingestion.shutil.which") as which:
+            which.side_effect = lambda name: "/usr/local/bin/soffice" if name == "soffice" else None
+            assert _ing._find_libreoffice() == "/usr/local/bin/soffice"
+
+    def test_falls_back_to_libreoffice_name(self):
+        from app.services import ingestion as _ing
+
+        with patch("app.services.ingestion.shutil.which") as which:
+            which.side_effect = lambda name: (
+                "/usr/bin/libreoffice" if name == "libreoffice" else None
+            )
+            assert _ing._find_libreoffice() == "/usr/bin/libreoffice"
+
+    def test_falls_back_to_mac_default_when_path_empty(self):
+        from app.services import ingestion as _ing
+
+        mac_path = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+        with patch("app.services.ingestion.shutil.which", return_value=None), patch(
+            "app.services.ingestion.os.path.isfile", return_value=True
+        ), patch("app.services.ingestion.os.access", return_value=True):
+            assert _ing._find_libreoffice() == mac_path
+
+    def test_returns_none_when_truly_absent(self):
+        from app.services import ingestion as _ing
+
+        with patch("app.services.ingestion.shutil.which", return_value=None), patch(
+            "app.services.ingestion.os.path.isfile", return_value=False
+        ):
+            assert _ing._find_libreoffice() is None

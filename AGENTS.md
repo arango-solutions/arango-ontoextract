@@ -17,6 +17,20 @@
 - **UI:** Primary actions via context menus on `/workspace`; avoid new top-level routes except `/login`.
 - **Tests:** Unit tests mock I/O; integration tests use Arango (see `tests/conftest.py`). Run `make test` from repo root.
 
+## System dependencies
+
+Pure-Python deps live in `backend/pyproject.toml`. A few formats need a host-level binary:
+
+| Format | Backend dep | Host dep | macOS install | Debian/Ubuntu install |
+| --- | --- | --- | --- | --- |
+| `.pdf` | `pymupdf` | none | — | — |
+| `.docx` | `python-docx` | none | — | — |
+| `.pptx` | `python-pptx` | none | — | — |
+| `.doc` (legacy Word) | `python-docx` (post-conversion) | LibreOffice (`soffice`) | `brew install --cask libreoffice` | `apt install libreoffice-core` |
+| `.md` | (stdlib) | none | — | — |
+
+The `.doc` parser fails loudly with an actionable install hint if `soffice` is missing — it does not silently skip.
+
 ## Deeper docs
 
 - `backend/AGENTS.md` — backend module boundaries
