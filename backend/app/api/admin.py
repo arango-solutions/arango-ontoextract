@@ -12,6 +12,10 @@ from fastapi import APIRouter, HTTPException, Query
 from app.config import settings
 from app.db.client import get_db
 from app.services.confidence_decay import apply_confidence_decay
+from app.services.edge_dedup import (
+    DEDUPABLE_COLLECTIONS,
+    dedupe_live_edges,
+)
 from app.services.edge_repair import repair_orphan_object_property_ranges
 from app.services.feedback_learning import build_feedback_learning_examples
 from app.services.ontology_rule_engine import evaluate_rules
@@ -142,6 +146,74 @@ async def repair_ontology_edges(
             dry_run,
         )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
+@router.post("/ontology/{ontology_id}/dedupe-edges")
+async def dedupe_ontology_edges(
+    ontology_id: str,
+    collection: str = Query(
+        default="rdfs_domain",
+        description=(
+            "Edge collection to dedupe. Must be in the dedup allowlist "
+            "(currently rdfs_domain / rdfs_range_class). subclass_of "
+            "is intentionally excluded -- its edges carry per-edge "
+            "evidence and need a different cleanup contract."
+        ),
+    ),
+    dry_run: bool = Query(
+        default=True,
+        description=(
+            "When true, return the would-be dedup report without "
+            "expiring any edges. Defaults to true so a curl typo "
+            "doesn't quietly mutate live data."
+        ),
+    ),
+) -> dict[str, Any]:
+    """Find and (optionally) expire duplicate live structural edges.
+
+    Companion to the writer-side fix in
+    :func:`app.db.utils.insert_temporal_edge_if_absent`. Ontologies
+    extracted before that helper landed accumulated duplicate live
+    ``rdfs_domain`` edges -- one per logical pair per re-extraction
+    pass. This endpoint expires the extras (keeping the oldest
+    ``created`` so provenance reads "this relationship has held
+    since X") and stamps each expired edge with ``dedup_meta`` so
+    a future audit can find them.
+
+    Idempotent: re-running against a clean collection finds zero
+    duplicates and is a no-op.
+
+    Returns the :class:`DedupReport` as a dict so the caller can
+    inspect every (kept, expired) decision.
+    """
+    if collection not in DEDUPABLE_COLLECTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"collection {collection!r} is not in the dedup allowlist "
+                f"{sorted(DEDUPABLE_COLLECTIONS)}"
+            ),
+        )
+    try:
+        db = get_db()
+        report = dedupe_live_edges(
+            db, ontology_id, collection, dry_run=dry_run
+        )
+        return report.to_dict()
+    except ValueError as exc:
+        # Defensive: dedupe_live_edges has its own allowlist gate
+        # that raises ValueError; surface as 400, not 500.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        log.exception(
+            "edge dedup failed for ontology %s (collection=%s, dry_run=%s)",
+            ontology_id,
+            collection,
+            dry_run,
+        )
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from exc
 
 
 @router.get("/ontology/{ontology_id}/reflection-report")

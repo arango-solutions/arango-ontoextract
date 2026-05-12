@@ -21,7 +21,7 @@ from app.config import settings
 from app.db.client import get_db
 from app.db.pagination import paginate
 from app.db.temporal_constants import NEVER_EXPIRES
-from app.db.utils import doc_get, run_aql
+from app.db.utils import doc_get, insert_temporal_edge_if_absent, run_aql
 from app.extraction.judges.qualitative_eval_node import run_qualitative_evaluation
 from app.extraction.pipeline import run_pipeline
 from app.models.common import PaginatedResponse
@@ -867,15 +867,20 @@ def _materialize_to_graph(
             except Exception as exc:
                 log.warning("datatype property insert failed for %s: %s", prop_key, exc)
 
+            # Idempotent: a re-extraction of the same class from a
+            # second document used to silently insert a duplicate
+            # rdfs_domain edge here, leaving N>1 live rows for the
+            # same logical (datatype-property, class) pair. See
+            # ``app.db.utils.insert_temporal_edge_if_absent`` for the
+            # full bug-history rationale.
             with contextlib.suppress(Exception):
-                rdfs_domain_col.insert(
-                    {
-                        "_from": f"ontology_datatype_properties/{prop_key}",
-                        "_to": f"ontology_classes/{key}",
-                        "ontology_id": ontology_id,
-                        "created": now,
-                        "expired": NEVER_EXPIRES,
-                    }
+                insert_temporal_edge_if_absent(
+                    db,
+                    rdfs_domain_col,
+                    from_id=f"ontology_datatype_properties/{prop_key}",
+                    to_id=f"ontology_classes/{key}",
+                    ontology_id=ontology_id,
+                    now=now,
                 )
 
         # Collect relationships for deferred processing (need all class_keys first)
@@ -976,15 +981,19 @@ def _materialize_to_graph(
             log.warning("object property insert failed for %s: %s", prop_key, exc)
 
         domain_key = rel["domain_key"]
+        # Idempotent (see datatype-property branch above for the bug
+        # rationale). The previous bare insert here was the dominant
+        # source of duplicate live rdfs_domain edges in the wild --
+        # an audit on WTW Ontology found 6 duplicated pairs, all
+        # from object-property re-extraction across documents.
         try:
-            rdfs_domain_col.insert(
-                {
-                    "_from": f"ontology_object_properties/{prop_key}",
-                    "_to": f"ontology_classes/{domain_key}",
-                    "ontology_id": ontology_id,
-                    "created": now,
-                    "expired": NEVER_EXPIRES,
-                }
+            insert_temporal_edge_if_absent(
+                db,
+                rdfs_domain_col,
+                from_id=f"ontology_object_properties/{prop_key}",
+                to_id=f"ontology_classes/{domain_key}",
+                ontology_id=ontology_id,
+                now=now,
             )
         except Exception as exc:
             log.warning(
@@ -1008,15 +1017,21 @@ def _materialize_to_graph(
                     resolution.class_key,
                     resolution.target_label,
                 )
+            # Idempotent: live audit on WTW Ontology found zero
+            # duplicate pairs here (rdfs_range_class is more
+            # brittle to re-resolve, so the second extraction
+            # often skipped this insert anyway), but the fix is
+            # cheap and the contract is the same as rdfs_domain --
+            # one live edge per logical (property, range-class)
+            # pair, no exceptions.
             try:
-                rdfs_range_col.insert(
-                    {
-                        "_from": f"ontology_object_properties/{prop_key}",
-                        "_to": f"ontology_classes/{resolution.class_key}",
-                        "ontology_id": ontology_id,
-                        "created": now,
-                        "expired": NEVER_EXPIRES,
-                    }
+                insert_temporal_edge_if_absent(
+                    db,
+                    rdfs_range_col,
+                    from_id=f"ontology_object_properties/{prop_key}",
+                    to_id=f"ontology_classes/{resolution.class_key}",
+                    ontology_id=ontology_id,
+                    now=now,
                 )
             except Exception as exc:
                 log.warning(
