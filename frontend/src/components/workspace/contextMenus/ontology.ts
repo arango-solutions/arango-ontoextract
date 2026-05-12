@@ -91,6 +91,15 @@ export function buildOntologyContextMenu(
       },
     },
     {
+      label: "Repair Orphan Properties…",
+      icon: "🔧",
+      onClick: () => {
+        if (!ontKey) return;
+        const n = String(data.name ?? data.label ?? ontKey).trim();
+        actions.setEdgeRepair({ key: ontKey, name: n || ontKey });
+      },
+    },
+    {
       label: "Export",
       icon: "📤",
       submenu: [

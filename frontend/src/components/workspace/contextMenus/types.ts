@@ -55,6 +55,12 @@ export type ManageImportsArg = {
   name: string;
 } | null;
 
+/** Argument shape for ``setEdgeRepair`` (``null`` closes the overlay). */
+export type EdgeRepairArg = {
+  key: string;
+  name: string;
+} | null;
+
 /** Typed-name confirmation gate for ``ConfirmRequest``. Mirrors
  *  ``ConfirmDialogTypedName`` in ``ConfirmDialog.tsx`` so builders don't have
  *  to import the React component just to reference the type. */
@@ -150,6 +156,12 @@ export interface WorkspaceContextMenuActions {
   setShowCreateOntology: (show: boolean) => void;
   setManageImports: (arg: ManageImportsArg) => void;
   setFeedbackLearning: (arg: FeedbackLearningArg) => void;
+  /** Opens the ``EdgeRepairOverlay`` for one ontology -- preview +
+   *  apply for orphan ``ontology_object_properties`` (R3 violations).
+   *  ``null`` closes the overlay. Per ``ui-architecture.mdc`` rule 9
+   *  this surface is an overlay over the workspace canvas, never a
+   *  separate route. */
+  setEdgeRepair: (arg: EdgeRepairArg) => void;
   exportOntology: (ontologyKey: string, format: "turtle" | "jsonld" | "csv") => void;
 
   // ── Pipeline ──────────────────────────────────────────────────────────

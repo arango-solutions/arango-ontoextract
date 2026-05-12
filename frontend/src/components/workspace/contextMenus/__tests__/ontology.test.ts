@@ -30,6 +30,7 @@ function makeActions(): WorkspaceContextMenuActions {
     setShowCreateOntology: jest.fn(),
     setManageImports: jest.fn(),
     setFeedbackLearning: jest.fn(),
+    setEdgeRepair: jest.fn(),
     exportOntology: jest.fn(),
     retryRun: jest.fn(),
     pipelineRunId: null,
@@ -69,9 +70,43 @@ describe("buildOntologyContextMenu", () => {
       "Manage Imports",
       "View Quality Report",
       "View Feedback Learning",
+      "Repair Orphan Properties…",
       "Export",
       "Delete",
     ]);
+  });
+
+  it("Repair Orphan Properties seeds the edge-repair overlay with key + name", () => {
+    const actions = makeActions();
+    const items = buildOntologyContextMenu(
+      { _key: "ont-1", name: "WTW Ontology" },
+      actions,
+    );
+
+    items.find((it) => it.label === "Repair Orphan Properties…")!.onClick!();
+    expect(actions.setEdgeRepair).toHaveBeenCalledWith({
+      key: "ont-1",
+      name: "WTW Ontology",
+    });
+  });
+
+  it("Repair Orphan Properties is a no-op when key is missing", () => {
+    const actions = makeActions();
+    const items = buildOntologyContextMenu({ name: "Orphan" }, actions);
+
+    items.find((it) => it.label === "Repair Orphan Properties…")!.onClick!();
+    expect(actions.setEdgeRepair).not.toHaveBeenCalled();
+  });
+
+  it("Repair Orphan Properties falls back to the key when name + label are missing", () => {
+    const actions = makeActions();
+    const items = buildOntologyContextMenu({ _key: "ont-bare" }, actions);
+
+    items.find((it) => it.label === "Repair Orphan Properties…")!.onClick!();
+    expect(actions.setEdgeRepair).toHaveBeenCalledWith({
+      key: "ont-bare",
+      name: "ont-bare",
+    });
   });
 
   it("Open in Canvas dispatches handleSelectOntology with the key", () => {

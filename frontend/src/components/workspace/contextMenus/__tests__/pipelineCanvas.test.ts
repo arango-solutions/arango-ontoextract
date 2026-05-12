@@ -46,6 +46,7 @@ function makeActions(
     setShowCreateOntology: jest.fn(),
     setManageImports: jest.fn(),
     setFeedbackLearning: jest.fn(),
+    setEdgeRepair: jest.fn(),
     exportOntology: jest.fn(),
     retryRun: jest.fn(),
     pipelineRunId: null,

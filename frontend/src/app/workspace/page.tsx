@@ -54,6 +54,11 @@ const QualityReportOverlay = dynamic(
   { ssr: false },
 );
 
+const EdgeRepairOverlay = dynamic(
+  () => import("@/components/workspace/EdgeRepairOverlay"),
+  { ssr: false },
+);
+
 const SigmaCanvas = dynamic(() => import("@/components/workspace/SigmaCanvas"), {
   ssr: false,
   loading: () => (
@@ -143,6 +148,10 @@ function WorkspacePageInner() {
   const [feedbackLearning, setFeedbackLearning] = useState<{
     ontologyId?: string | null;
     ontologyName?: string | null;
+  } | null>(null);
+  const [edgeRepair, setEdgeRepair] = useState<{
+    key: string;
+    name: string;
   } | null>(null);
 
   // Outstanding ConfirmDialog request, populated by builders via
@@ -788,6 +797,7 @@ function WorkspacePageInner() {
     setShowCreateOntology,
     setManageImports,
     setFeedbackLearning,
+    setEdgeRepair,
     exportOntology,
     retryRun,
     pipelineRunId,
@@ -1085,6 +1095,20 @@ function WorkspacePageInner() {
           ontologyName={manageImports.name}
           onClose={() => setManageImports(null)}
           onChanged={() => setExplorerLibraryNonce((n) => n + 1)}
+        />
+      )}
+
+      {edgeRepair && (
+        <EdgeRepairOverlay
+          ontologyId={edgeRepair.key}
+          ontologyName={edgeRepair.name}
+          onClose={() => setEdgeRepair(null)}
+          onApplied={() => {
+            // Re-fetch the canvas so the newly-inserted rdfs_range_class
+            // edges become visible without a full page reload.
+            refreshGraph();
+            setExplorerLibraryNonce((n) => n + 1);
+          }}
         />
       )}
 
