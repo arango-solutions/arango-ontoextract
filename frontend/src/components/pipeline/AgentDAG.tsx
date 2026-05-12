@@ -12,6 +12,7 @@ import ReactFlow, {
   BackgroundVariant,
 } from "reactflow";
 import "reactflow/dist/style.css";
+import { reactFlowErrorFilter } from "@/lib/reactFlowErrorFilter";
 import type { StepStatus, StepStatusValue } from "@/types/pipeline";
 import { PIPELINE_STEPS, STEP_LABELS, type PipelineStep } from "@/types/pipeline";
 
@@ -220,6 +221,7 @@ export default function AgentDAG({ steps, onContextMenu, onApi }: AgentDAGProps)
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        onError={reactFlowErrorFilter}
         onInit={onInit}
         onNodeContextMenu={handleNodeContextMenu}
         onPaneContextMenu={handlePaneContextMenu}

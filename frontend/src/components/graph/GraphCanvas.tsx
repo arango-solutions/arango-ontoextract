@@ -15,6 +15,7 @@ import ReactFlow, {
   MarkerType,
 } from "reactflow";
 import "reactflow/dist/style.css";
+import { reactFlowErrorFilter } from "@/lib/reactFlowErrorFilter";
 import type {
   OntologyClass,
   OntologyProperty,
@@ -487,6 +488,7 @@ export default function GraphCanvas({
         nodes={nodes}
         edges={flowEdges}
         nodeTypes={nodeTypes}
+        onError={reactFlowErrorFilter}
         onInit={onInit}
         onNodeClick={handleNodeClick}
         onEdgeClick={handleEdgeClick}

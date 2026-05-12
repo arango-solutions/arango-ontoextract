@@ -11,6 +11,7 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import dagre from "dagre";
+import { reactFlowErrorFilter } from "@/lib/reactFlowErrorFilter";
 import ClassBoxNode, { type ClassBoxNodeData, type ClassBoxProperty } from "./ClassBoxNode";
 import type { OntologyClass, OntologyEdge, CurationStatus } from "@/types/curation";
 import {
@@ -396,6 +397,7 @@ export default function BoxArrowCanvas({
         nodes={flowNodes}
         edges={flowEdges}
         nodeTypes={nodeTypes}
+        onError={reactFlowErrorFilter}
         onInit={onInit}
         onNodeClick={handleNodeClick}
         onEdgeClick={handleEdgeClick}
