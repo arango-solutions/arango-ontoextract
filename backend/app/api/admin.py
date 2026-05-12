@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import logging
+import time
+from collections import Counter
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
 from app.config import settings
 from app.db.client import get_db
+from app.services.confidence_decay import apply_confidence_decay
 from app.services.edge_repair import repair_orphan_object_property_ranges
 from app.services.feedback_learning import build_feedback_learning_examples
+from app.services.ontology_rule_engine import evaluate_rules
 
 log = logging.getLogger(__name__)
 
@@ -136,6 +140,92 @@ async def repair_ontology_edges(
             "edge repair failed for ontology %s (dry_run=%s)",
             ontology_id,
             dry_run,
+        )
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
+@router.get("/ontology/{ontology_id}/reflection-report")
+async def ontology_reflection_report(
+    ontology_id: str,
+    half_life_days: float | None = Query(
+        default=None,
+        gt=0,
+        description=(
+            "Override decay half-life (days) for this what-if. "
+            "Defaults to settings.belief_revision_decay_half_life_days."
+        ),
+    ),
+    floor: float | None = Query(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Override decay floor for this what-if. "
+            "Defaults to settings.belief_revision_decay_floor."
+        ),
+    ),
+) -> dict[str, Any]:
+    """Read-only reflection: rule-engine violations + decay preview.
+
+    Composes two existing services with no DB writes:
+
+    * :func:`app.services.ontology_rule_engine.evaluate_rules` --
+      runs the four built-in rule families (synonym triangles,
+      subClassOf cycles, disjointness, cardinality) against the live
+      ontology and returns structured ``Violation`` records.
+    * :func:`app.services.confidence_decay.apply_confidence_decay`
+      with ``dry_run=True`` -- previews what each class's confidence
+      would become if decay were applied right now, without touching
+      the graph.
+
+    The combined response is the artifact a curator (or the planned
+    IBR.14 background-consolidation pass) inspects to decide whether
+    a corrective belief-revision cycle is warranted. ALWAYS dry-run
+    by definition: hitting this endpoint cannot mutate the ontology.
+
+    The ``half_life_days`` and ``floor`` query params let curators
+    explore "what if we tightened the decay floor?" without changing
+    deployment configuration.
+    """
+    try:
+        db = get_db()
+
+        rules_report = evaluate_rules(db, ontology_id)
+        decay_report = apply_confidence_decay(
+            db,
+            ontology_id,
+            dry_run=True,
+            half_life_days=half_life_days,
+            floor=floor,
+        )
+
+        violations_by_severity: dict[str, int] = dict(
+            Counter(v.severity for v in rules_report.violations)
+        )
+        violations_by_rule: dict[str, int] = dict(
+            Counter(v.rule_id for v in rules_report.violations)
+        )
+
+        return {
+            "ontology_id": ontology_id,
+            "evaluated_at": time.time(),
+            "rule_violations": rules_report.to_dict(),
+            "decay_preview": decay_report.to_dict(),
+            "summary": {
+                "total_violations": len(rules_report.violations),
+                "violations_by_severity": violations_by_severity,
+                "violations_by_rule": violations_by_rule,
+                "rules_evaluated": list(rules_report.rules_evaluated),
+                "rules_skipped": list(rules_report.rules_skipped),
+                "decay_classes_examined": decay_report.classes_examined,
+                "decay_classes_would_change": decay_report.classes_decayed,
+                "decay_skipped_no_age": decay_report.skipped_no_age,
+            },
+        }
+    except Exception as exc:
+        log.exception(
+            "reflection report failed for ontology %s",
+            ontology_id,
         )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 

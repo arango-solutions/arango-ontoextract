@@ -171,3 +171,252 @@ class TestFeedbackLearningArtifacts:
                 await feedback_learning_artifacts(ontology_id=None, limit=100)
 
         assert exc.value.status_code == 500
+
+
+class TestOntologyReflectionReport:
+    """The reflection-report endpoint is the read-only path that the
+    planned IBR.14 background-consolidation pass (and curators today)
+    use to ask "what would a reflection cycle change?" without writing
+    anything. Two contracts MUST hold:
+
+    1. It composes ``evaluate_rules`` (rule violations) with
+       ``apply_confidence_decay(..., dry_run=True)`` (decay preview)
+       and never writes -- the dry-run flag must always be True.
+    2. It returns a stable ``summary`` shape that future UIs and
+       background jobs can consume without re-aggregating.
+    """
+
+    @staticmethod
+    def _stub_rules_report(ontology_id: str = "wtw"):
+        from app.services.ontology_rule_engine import (
+            RULE_R1_SYNONYM_TRIANGLE,
+            RULE_R2_SUBCLASS_CYCLE,
+            SEVERITY_ERROR,
+            SEVERITY_WARNING,
+            RuleEngineReport,
+            Violation,
+        )
+
+        return RuleEngineReport(
+            ontology_id=ontology_id,
+            rules_evaluated=[
+                RULE_R1_SYNONYM_TRIANGLE,
+                RULE_R2_SUBCLASS_CYCLE,
+                "DISJOINT_violation",
+            ],
+            rules_skipped=["CARDINALITY_violation"],
+            violations=[
+                Violation(
+                    rule_id=RULE_R1_SYNONYM_TRIANGLE,
+                    severity=SEVERITY_WARNING,
+                    entity_ids=("classes/A", "classes/B", "classes/C"),
+                    description="A subClassOf B, B equiv C, but no A subClassOf C",
+                    suggested_action="REFINED",
+                ),
+                Violation(
+                    rule_id=RULE_R1_SYNONYM_TRIANGLE,
+                    severity=SEVERITY_ERROR,
+                    entity_ids=("classes/X", "classes/Y"),
+                    description="Synonym cycle X subClassOf Y AND Y equiv X",
+                    suggested_action="REDUNDANT",
+                ),
+                Violation(
+                    rule_id=RULE_R2_SUBCLASS_CYCLE,
+                    severity=SEVERITY_ERROR,
+                    entity_ids=("classes/P", "classes/Q"),
+                    description="Cycle P -> Q -> P in subclass_of",
+                    suggested_action="CONTRADICTED",
+                ),
+            ],
+        )
+
+    @staticmethod
+    def _stub_decay_report(ontology_id: str = "wtw"):
+        from app.services.confidence_decay import DecayedClass, DecayReport
+
+        return DecayReport(
+            ontology_id=ontology_id,
+            enabled=False,
+            dry_run=True,
+            half_life_days=90.0,
+            floor=0.05,
+            classes_examined=10,
+            classes_decayed=2,
+            decayed=[
+                DecayedClass(
+                    class_key="cls_old",
+                    confidence_before=0.9,
+                    confidence_after=0.55,
+                    age_seconds=90 * 86400,
+                ),
+                DecayedClass(
+                    class_key="cls_older",
+                    confidence_before=0.7,
+                    confidence_after=0.34,
+                    age_seconds=120 * 86400,
+                ),
+            ],
+            skipped_no_age=1,
+        )
+
+    @pytest.mark.asyncio
+    async def test_endpoint_composes_rule_engine_and_dry_run_decay(self):
+        rules_stub = self._stub_rules_report()
+        decay_stub = self._stub_decay_report()
+
+        with (
+            patch("app.api.admin.get_db", return_value=MagicMock(name="db")) as mock_get_db,
+            patch(
+                "app.api.admin.evaluate_rules",
+                return_value=rules_stub,
+            ) as mock_rules,
+            patch(
+                "app.api.admin.apply_confidence_decay",
+                return_value=decay_stub,
+            ) as mock_decay,
+        ):
+            from app.api.admin import ontology_reflection_report
+
+            result = await ontology_reflection_report(
+                ontology_id="wtw",
+                half_life_days=None,
+                floor=None,
+            )
+
+        mock_rules.assert_called_once_with(mock_get_db.return_value, "wtw")
+        # CRITICAL CONTRACT: dry_run MUST be True so the endpoint is
+        # provably read-only. Asserted explicitly (not as default) so a
+        # future refactor that drops the kwarg fails this test loudly.
+        mock_decay.assert_called_once_with(
+            mock_get_db.return_value,
+            "wtw",
+            dry_run=True,
+            half_life_days=None,
+            floor=None,
+        )
+        assert result["ontology_id"] == "wtw"
+        assert result["rule_violations"] == rules_stub.to_dict()
+        assert result["decay_preview"] == decay_stub.to_dict()
+        assert isinstance(result["evaluated_at"], float)
+
+    @pytest.mark.asyncio
+    async def test_summary_aggregates_violations_correctly(self):
+        rules_stub = self._stub_rules_report()
+        decay_stub = self._stub_decay_report()
+
+        with (
+            patch("app.api.admin.get_db", return_value=MagicMock()),
+            patch("app.api.admin.evaluate_rules", return_value=rules_stub),
+            patch("app.api.admin.apply_confidence_decay", return_value=decay_stub),
+        ):
+            from app.api.admin import ontology_reflection_report
+
+            result = await ontology_reflection_report(
+                ontology_id="wtw",
+                half_life_days=None,
+                floor=None,
+            )
+
+        s = result["summary"]
+        assert s["total_violations"] == 3
+        assert s["violations_by_severity"] == {"warning": 1, "error": 2}
+        assert s["violations_by_rule"] == {
+            "R1_synonym_triangle": 2,
+            "R2_subclass_cycle": 1,
+        }
+        assert s["rules_evaluated"] == [
+            "R1_synonym_triangle",
+            "R2_subclass_cycle",
+            "DISJOINT_violation",
+        ]
+        assert s["rules_skipped"] == ["CARDINALITY_violation"]
+        assert s["decay_classes_examined"] == 10
+        assert s["decay_classes_would_change"] == 2
+        assert s["decay_skipped_no_age"] == 1
+
+    @pytest.mark.asyncio
+    async def test_what_if_overrides_flow_through_to_decay(self):
+        """``half_life_days`` and ``floor`` query params must reach the
+        decay service so curators can preview tighter/looser settings.
+        """
+        with (
+            patch("app.api.admin.get_db", return_value=MagicMock()),
+            patch("app.api.admin.evaluate_rules", return_value=self._stub_rules_report()),
+            patch(
+                "app.api.admin.apply_confidence_decay",
+                return_value=self._stub_decay_report(),
+            ) as mock_decay,
+        ):
+            from app.api.admin import ontology_reflection_report
+
+            await ontology_reflection_report(
+                ontology_id="wtw",
+                half_life_days=30.0,
+                floor=0.10,
+            )
+
+        kwargs = mock_decay.call_args.kwargs
+        assert kwargs["dry_run"] is True
+        assert kwargs["half_life_days"] == 30.0
+        assert kwargs["floor"] == 0.10
+
+    @pytest.mark.asyncio
+    async def test_handles_empty_ontology_with_zero_violations(self):
+        from app.services.confidence_decay import DecayReport
+        from app.services.ontology_rule_engine import RuleEngineReport
+
+        empty_rules = RuleEngineReport(
+            ontology_id="wtw",
+            rules_evaluated=[],
+            rules_skipped=[],
+            violations=[],
+        )
+        empty_decay = DecayReport(
+            ontology_id="wtw",
+            enabled=False,
+            dry_run=True,
+            half_life_days=90.0,
+            floor=0.05,
+        )
+
+        with (
+            patch("app.api.admin.get_db", return_value=MagicMock()),
+            patch("app.api.admin.evaluate_rules", return_value=empty_rules),
+            patch("app.api.admin.apply_confidence_decay", return_value=empty_decay),
+        ):
+            from app.api.admin import ontology_reflection_report
+
+            result = await ontology_reflection_report(
+                ontology_id="wtw",
+                half_life_days=None,
+                floor=None,
+            )
+
+        # Stable shape MUST hold even when both services find nothing,
+        # so the future UI / IBR.14 pass can render "all clean" without
+        # special-casing missing keys.
+        assert result["summary"]["total_violations"] == 0
+        assert result["summary"]["violations_by_severity"] == {}
+        assert result["summary"]["violations_by_rule"] == {}
+        assert result["summary"]["decay_classes_examined"] == 0
+        assert result["summary"]["decay_classes_would_change"] == 0
+
+    @pytest.mark.asyncio
+    async def test_wraps_service_error_in_500(self):
+        with (
+            patch("app.api.admin.get_db", return_value=MagicMock()),
+            patch(
+                "app.api.admin.evaluate_rules",
+                side_effect=RuntimeError("AQL exploded"),
+            ),
+        ):
+            from app.api.admin import ontology_reflection_report
+
+            with pytest.raises(HTTPException) as exc:
+                await ontology_reflection_report(
+                    ontology_id="wtw",
+                    half_life_days=None,
+                    floor=None,
+                )
+
+        assert exc.value.status_code == 500
