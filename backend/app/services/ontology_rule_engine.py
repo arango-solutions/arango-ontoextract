@@ -20,6 +20,16 @@ Built-in rules
   must be a strict partial order. Any cycle (``A -> B -> A`` or
   longer) is a hard violation: the LLM extracted contradictory
   hierarchy. Detected via WCC on the ``subclass_of`` edge set.
+* **R3 -- Orphan Object Property Range.** Object properties whose
+  ``rdfs_domain`` edge is present but ``rdfs_range_class`` edge is
+  missing are invisible on the workspace canvas (the synthetic-edge
+  builder requires both endpoints). Wraps
+  :func:`app.services.edge_repair.repair_orphan_object_property_ranges`
+  in dry-run mode to surface every orphan along with its inferred
+  range candidate (when the matcher finds one). Always
+  ``GAP_FILLING`` -- the action is the same regardless of whether the
+  matcher had a candidate; the difference is whether a curator can
+  one-click apply or has to source new evidence.
 * **Disjointness.** When ``disjoint_with`` edges exist, any class C
   that is subClassOf both A and B (where A ``disjoint_with`` B) is
   a violation.
@@ -48,6 +58,7 @@ from typing import Any
 
 from app.db.revision_meta_repo import (
     VERDICT_CONTRADICTED,
+    VERDICT_GAP_FILLING,
     VERDICT_REDUNDANT,
     VERDICT_REFINED,
 )
@@ -62,6 +73,7 @@ SEVERITY_ERROR = "error"
 
 RULE_R1_SYNONYM_TRIANGLE = "R1_synonym_triangle"
 RULE_R2_SUBCLASS_CYCLE = "R2_subclass_cycle"
+RULE_R3_ORPHAN_RANGE = "R3_orphan_object_property_range"
 RULE_DISJOINT_VIOLATION = "DISJOINT_violation"
 RULE_CARDINALITY_VIOLATION = "CARDINALITY_violation"
 
@@ -467,6 +479,120 @@ def _cardinality_violation(db: Any, ontology_id: str) -> list[Violation]:
 
 
 # ---------------------------------------------------------------------------
+# R3 -- Orphan object property range
+# ---------------------------------------------------------------------------
+
+
+def _r3_orphan_object_property_range(db: Any, ontology_id: str) -> list[Violation]:
+    """Detect object properties missing their ``rdfs_range_class`` edge.
+
+    An *orphan* object property has a live ``rdfs_domain`` edge but no
+    live ``rdfs_range_class`` edge (or, in the worst case, has neither).
+    Such properties are invisible on the workspace canvas because the
+    synthetic-edge builder
+    (``frontend/src/components/graph/graphCanvasEdges.ts::buildSyntheticRdfsRangeClassEdges``)
+    requires both endpoints to emit a class-to-class edge.
+
+    Wraps :func:`app.services.edge_repair.repair_orphan_object_property_ranges`
+    in dry-run mode and converts each item in the report into a
+    :class:`Violation`. Three cases:
+
+    * **Repairable orphan** (``severity=warning``,
+      ``suggested_action=GAP-FILLING``): the matcher inferred a range
+      class candidate from the property's own description / evidence
+      text. A curator can one-click apply via
+      ``POST /admin/ontology/{id}/repair-edges``.
+    * **Unrecoverable orphan** (``severity=warning``,
+      ``suggested_action=GAP-FILLING``): no candidate was found; the
+      gap requires either new evidence or human curation.
+    * **Structurally broken** (``severity=error``,
+      ``suggested_action=GAP-FILLING``): the property has neither
+      domain nor range; it is unusable as currently extracted.
+
+    Reuses ``edge_repair`` instead of re-implementing the AQL so the
+    "what counts as an orphan" definition stays in one place; if it
+    ever changes (e.g. to allow data-property ranges), only one
+    module needs to update.
+    """
+    if not (
+        db.has_collection("ontology_object_properties")
+        and db.has_collection("ontology_classes")
+        and db.has_collection("rdfs_domain")
+        and db.has_collection("rdfs_range_class")
+    ):
+        return []
+
+    # Local import: ``edge_repair`` is a higher-level service that
+    # already imports things from ``app.db``; importing it at module
+    # top would force every consumer of the rule engine to pull in
+    # edge_repair's transitive deps. Keeping it local also makes it
+    # easier to mock in tests via ``monkeypatch.setattr(engine, ...)``.
+    from app.services.edge_repair import repair_orphan_object_property_ranges
+
+    report = repair_orphan_object_property_ranges(
+        db, ontology_id, dry_run=True
+    )
+
+    violations: list[Violation] = []
+
+    for r in report.repaired:
+        violations.append(
+            Violation(
+                rule_id=RULE_R3_ORPHAN_RANGE,
+                severity=SEVERITY_WARNING,
+                entity_ids=(r.prop_key, r.domain_class_key, r.range_class_key),
+                description=(
+                    f"Orphan object property '{r.prop_key}' "
+                    f"(domain={r.domain_class_key}) missing rdfs_range_class. "
+                    f"Inferred range='{r.range_class_key}' via "
+                    f"{r.matched_via}. One-click apply via "
+                    f"POST /api/v1/admin/ontology/{ontology_id}/repair-edges."
+                ),
+                suggested_action=VERDICT_GAP_FILLING,
+            )
+        )
+
+    for u in report.unrecoverable:
+        entity_ids: tuple[str, ...] = (
+            (u.prop_key,)
+            if u.domain_class_key is None
+            else (u.prop_key, u.domain_class_key)
+        )
+        violations.append(
+            Violation(
+                rule_id=RULE_R3_ORPHAN_RANGE,
+                severity=SEVERITY_WARNING,
+                entity_ids=entity_ids,
+                description=(
+                    f"Orphan object property '{u.prop_key}' "
+                    f"(label={u.label!r}, domain={u.domain_class_key}) "
+                    f"missing rdfs_range_class. No candidate range class "
+                    f"matched the property's description or evidence text; "
+                    f"likely requires new evidence or human curation."
+                ),
+                suggested_action=VERDICT_GAP_FILLING,
+            )
+        )
+
+    for prop_key in report.no_domain:
+        violations.append(
+            Violation(
+                rule_id=RULE_R3_ORPHAN_RANGE,
+                severity=SEVERITY_ERROR,
+                entity_ids=(prop_key,),
+                description=(
+                    f"Object property '{prop_key}' has neither rdfs_domain "
+                    f"nor rdfs_range_class. Property is structurally broken "
+                    f"and cannot appear on the canvas."
+                ),
+                suggested_action=VERDICT_GAP_FILLING,
+            )
+        )
+
+    return violations
+
+
+# ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
 
@@ -474,6 +600,7 @@ def _cardinality_violation(db: Any, ontology_id: str) -> list[Violation]:
 _DEFAULT_RULES: tuple[tuple[str, RuleFn], ...] = (
     (RULE_R1_SYNONYM_TRIANGLE, _r1_synonym_triangle),
     (RULE_R2_SUBCLASS_CYCLE, _r2_subclass_cycle),
+    (RULE_R3_ORPHAN_RANGE, _r3_orphan_object_property_range),
     (RULE_DISJOINT_VIOLATION, _disjoint_violation),
     (RULE_CARDINALITY_VIOLATION, _cardinality_violation),
 )

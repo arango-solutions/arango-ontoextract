@@ -18,6 +18,7 @@ from app.services.ontology_rule_engine import (
     RULE_DISJOINT_VIOLATION,
     RULE_R1_SYNONYM_TRIANGLE,
     RULE_R2_SUBCLASS_CYCLE,
+    RULE_R3_ORPHAN_RANGE,
     SEVERITY_ERROR,
     SEVERITY_WARNING,
     RuleEngineReport,
@@ -396,6 +397,257 @@ class TestCardinalityViolation:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# R3 -- orphan object property range
+# ---------------------------------------------------------------------------
+
+
+class TestR3OrphanObjectPropertyRange:
+    """The orphan-range rule wraps ``edge_repair`` in dry-run mode and
+    must convert all three categories from ``RepairReport`` (repaired,
+    unrecoverable, no_domain) into ``Violation`` records with the right
+    severity and a stable ``GAP-FILLING`` action."""
+
+    @staticmethod
+    def _required_collections() -> tuple[str, ...]:
+        return (
+            "ontology_object_properties",
+            "ontology_classes",
+            "rdfs_domain",
+            "rdfs_range_class",
+        )
+
+    @staticmethod
+    def _stub_repair(monkeypatch, report):
+        """Patch the rule's local import target so we don't have to
+        construct a full DB fixture for the orphan-detection AQL.
+        ``edge_repair`` is the source of truth for what counts as an
+        orphan; this rule's job is only the conversion to Violations.
+        """
+        from app.services import edge_repair
+
+        monkeypatch.setattr(
+            edge_repair,
+            "repair_orphan_object_property_ranges",
+            lambda _db, _oid, *, dry_run: report,
+        )
+
+    def test_returns_empty_when_required_collections_missing(self, monkeypatch):
+        db = _db_with_collections()
+        # Stub edge_repair to ensure it's NOT called when collections are missing
+        # (rule must short-circuit before touching the service).
+        called = {"n": 0}
+
+        def _spy(_db, _oid, *, dry_run):
+            called["n"] += 1
+            raise AssertionError("edge_repair must not be invoked when collections are missing")
+
+        from app.services import edge_repair
+
+        monkeypatch.setattr(edge_repair, "repair_orphan_object_property_ranges", _spy)
+        assert engine._r3_orphan_object_property_range(db, "OID") == []
+        assert called["n"] == 0
+
+    def test_repaired_orphan_emits_warning_with_gap_filling(self, monkeypatch):
+        from app.services.edge_repair import RepairedEdge, RepairReport
+
+        report = RepairReport(
+            ontology_id="OID",
+            orphans_found=1,
+            repaired=[
+                RepairedEdge(
+                    prop_key="LSA_is_contributed_to_by",
+                    domain_class_key="LifestyleSpendingAccount",
+                    range_class_key="Employer",
+                    matched_text="employer matched in description",
+                    matched_via="label",
+                )
+            ],
+        )
+        db = _db_with_collections(*self._required_collections())
+        self._stub_repair(monkeypatch, report)
+
+        violations = engine._r3_orphan_object_property_range(db, "OID")
+
+        assert len(violations) == 1
+        v = violations[0]
+        assert v.rule_id == RULE_R3_ORPHAN_RANGE
+        assert v.severity == SEVERITY_WARNING
+        assert v.suggested_action == "GAP-FILLING"
+        assert v.entity_ids == (
+            "LSA_is_contributed_to_by",
+            "LifestyleSpendingAccount",
+            "Employer",
+        )
+        # Description must include the inferred range AND a hint at how
+        # to apply it -- this is the curator's primary affordance.
+        assert "Employer" in v.description
+        assert "/repair-edges" in v.description
+
+    def test_unrecoverable_orphan_emits_warning_with_gap_filling(self, monkeypatch):
+        from app.services.edge_repair import RepairReport, UnrecoverableOrphan
+
+        report = RepairReport(
+            ontology_id="OID",
+            orphans_found=1,
+            unrecoverable=[
+                UnrecoverableOrphan(
+                    prop_key="MaskMandatePolicy_applies_in_location",
+                    domain_class_key="MaskMandatePolicy",
+                    label="applies in location",
+                    description="A policy that applies in a given location.",
+                )
+            ],
+        )
+        db = _db_with_collections(*self._required_collections())
+        self._stub_repair(monkeypatch, report)
+
+        violations = engine._r3_orphan_object_property_range(db, "OID")
+
+        assert len(violations) == 1
+        v = violations[0]
+        assert v.severity == SEVERITY_WARNING
+        assert v.suggested_action == "GAP-FILLING"
+        assert v.entity_ids == (
+            "MaskMandatePolicy_applies_in_location",
+            "MaskMandatePolicy",
+        )
+        # Must explain WHY no candidate matched so the curator knows
+        # to look for new evidence rather than an existing class.
+        assert (
+            "no candidate" in v.description.lower()
+            or "new evidence" in v.description.lower()
+        )
+
+    def test_unrecoverable_with_no_domain_class_uses_single_entity(self, monkeypatch):
+        """Edge case: an orphan with no domain SHOULD still emit a
+        violation, just with a one-element entity_ids tuple."""
+        from app.services.edge_repair import RepairReport, UnrecoverableOrphan
+
+        report = RepairReport(
+            ontology_id="OID",
+            orphans_found=1,
+            unrecoverable=[
+                UnrecoverableOrphan(
+                    prop_key="loose_property",
+                    domain_class_key=None,
+                    label="loose",
+                    description="",
+                )
+            ],
+        )
+        db = _db_with_collections(*self._required_collections())
+        self._stub_repair(monkeypatch, report)
+
+        violations = engine._r3_orphan_object_property_range(db, "OID")
+        assert violations[0].entity_ids == ("loose_property",)
+
+    def test_no_domain_emits_error_severity(self, monkeypatch):
+        """A property with neither domain nor range is structurally
+        broken (the canvas can't render it at all) -- must escalate to
+        ``error``, not ``warning``."""
+        from app.services.edge_repair import RepairReport
+
+        report = RepairReport(
+            ontology_id="OID",
+            orphans_found=0,
+            no_domain=["floating_property_1", "floating_property_2"],
+        )
+        db = _db_with_collections(*self._required_collections())
+        self._stub_repair(monkeypatch, report)
+
+        violations = engine._r3_orphan_object_property_range(db, "OID")
+
+        assert len(violations) == 2
+        assert all(v.severity == SEVERITY_ERROR for v in violations)
+        assert all(v.suggested_action == "GAP-FILLING" for v in violations)
+        assert {v.entity_ids for v in violations} == {
+            ("floating_property_1",),
+            ("floating_property_2",),
+        }
+
+    def test_mixed_report_aggregates_all_three_buckets(self, monkeypatch):
+        """End-to-end: a real-world report mixing all three categories
+        must produce one violation per item with the right shape."""
+        from app.services.edge_repair import (
+            RepairedEdge,
+            RepairReport,
+            UnrecoverableOrphan,
+        )
+
+        report = RepairReport(
+            ontology_id="OID",
+            orphans_found=4,
+            repaired=[
+                RepairedEdge(
+                    prop_key="p1",
+                    domain_class_key="D1",
+                    range_class_key="R1",
+                    matched_text="r1 matched",
+                    matched_via="label",
+                ),
+                RepairedEdge(
+                    prop_key="p2",
+                    domain_class_key="D2",
+                    range_class_key="R2",
+                    matched_text="r2 matched",
+                    matched_via="key",
+                ),
+            ],
+            unrecoverable=[
+                UnrecoverableOrphan(
+                    prop_key="p3",
+                    domain_class_key="D3",
+                    label="p3 label",
+                    description="",
+                ),
+            ],
+            no_domain=["p4"],
+        )
+        db = _db_with_collections(*self._required_collections())
+        self._stub_repair(monkeypatch, report)
+
+        violations = engine._r3_orphan_object_property_range(db, "OID")
+
+        assert len(violations) == 4
+        sev = [v.severity for v in violations]
+        assert sev.count(SEVERITY_WARNING) == 3
+        assert sev.count(SEVERITY_ERROR) == 1
+        # All four MUST share the same suggested action so a downstream
+        # consumer can group them under one curator workflow.
+        assert {v.suggested_action for v in violations} == {"GAP-FILLING"}
+
+    def test_orchestrator_isolates_edge_repair_failure(self, monkeypatch):
+        """If ``edge_repair`` raises, the rule must surface the
+        exception to the orchestrator so the orchestrator marks R3 as
+        ``skipped`` (per IBR.4 contract) instead of silently returning
+        zero violations."""
+        from app.services import edge_repair
+
+        def _boom(_db, _oid, *, dry_run):
+            raise RuntimeError("AQL exploded")
+
+        monkeypatch.setattr(edge_repair, "repair_orphan_object_property_ranges", _boom)
+        db = _db_with_collections(*self._required_collections())
+
+        report = evaluate_rules(
+            db, "OID", rules=((RULE_R3_ORPHAN_RANGE, engine._r3_orphan_object_property_range),)
+        )
+        assert RULE_R3_ORPHAN_RANGE in report.rules_skipped
+        assert RULE_R3_ORPHAN_RANGE not in report.rules_evaluated
+        assert report.violations == []
+
+    def test_empty_report_yields_no_violations(self, monkeypatch):
+        from app.services.edge_repair import RepairReport
+
+        report = RepairReport(ontology_id="OID")
+        db = _db_with_collections(*self._required_collections())
+        self._stub_repair(monkeypatch, report)
+
+        violations = engine._r3_orphan_object_property_range(db, "OID")
+        assert violations == []
+
+
 class TestEvaluateRulesOrchestrator:
     def test_collects_violations_from_all_registered_rules(self):
         db = MagicMock()
@@ -486,11 +738,12 @@ class TestDefaultRulesWiring:
     consumes the engine. Lock it in so silent re-ordering / removal is a
     test failure rather than a behaviour change."""
 
-    def test_default_set_includes_all_four_rules(self):
+    def test_default_set_includes_all_registered_rules(self):
         ids = [rid for rid, _ in engine._DEFAULT_RULES]
         assert ids == [
             RULE_R1_SYNONYM_TRIANGLE,
             RULE_R2_SUBCLASS_CYCLE,
+            RULE_R3_ORPHAN_RANGE,
             RULE_DISJOINT_VIOLATION,
             RULE_CARDINALITY_VIOLATION,
         ]
@@ -508,6 +761,7 @@ class TestDefaultRulesWiring:
             [
                 RULE_R1_SYNONYM_TRIANGLE,
                 RULE_R2_SUBCLASS_CYCLE,
+                RULE_R3_ORPHAN_RANGE,
                 RULE_DISJOINT_VIOLATION,
                 RULE_CARDINALITY_VIOLATION,
             ]
