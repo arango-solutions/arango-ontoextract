@@ -150,8 +150,10 @@ class TestNextStepsMapping:
         assert _NEXT_STEPS["strategy_selector"] == ["extractor"]
         assert _NEXT_STEPS["extractor"] == ["consistency_checker"]
         assert _NEXT_STEPS["consistency_checker"] == ["quality_judge", "er_agent"]
-        assert _NEXT_STEPS["quality_judge"] == ["filter"]
-        assert _NEXT_STEPS["er_agent"] == ["filter"]
+        # Stream 11 IBR.11: belief_revision sits between QJ/ER and filter.
+        assert _NEXT_STEPS["quality_judge"] == ["belief_revision"]
+        assert _NEXT_STEPS["er_agent"] == ["belief_revision"]
+        assert _NEXT_STEPS["belief_revision"] == ["filter"]
 
     def test_filter_not_in_next_steps(self):
         assert "filter" not in _NEXT_STEPS

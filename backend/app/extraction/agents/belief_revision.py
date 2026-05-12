@@ -114,7 +114,13 @@ def belief_revision_node(state: ExtractionPipelineState) -> dict[str, Any]:
     }
 
     try:
-        if consistency_result is None or not getattr(
+        if not settings.belief_revision_pipeline_enabled:
+            summary["reason"] = "feature_flag_off"
+            log.info(
+                "belief_revision skipped: feature flag off",
+                extra={"run_id": run_id},
+            )
+        elif consistency_result is None or not getattr(
             consistency_result, "classes", None
         ):
             summary["reason"] = "no_extraction_results"

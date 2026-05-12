@@ -13,6 +13,7 @@ from typing import Any, cast
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
+from app.extraction.agents.belief_revision import belief_revision_node
 from app.extraction.agents.consistency import consistency_checker_node
 from app.extraction.agents.er_agent import er_agent_node
 from app.extraction.agents.extractor import extractor_node
@@ -29,8 +30,9 @@ _NEXT_STEPS: dict[str, list[str]] = {
     "strategy_selector": ["extractor"],
     "extractor": ["consistency_checker"],
     "consistency_checker": ["quality_judge", "er_agent"],
-    "quality_judge": ["filter"],
-    "er_agent": ["filter"],
+    "quality_judge": ["belief_revision"],
+    "er_agent": ["belief_revision"],
+    "belief_revision": ["filter"],
 }
 
 
@@ -73,12 +75,15 @@ def build_pipeline() -> StateGraph[Any]:
 
     Pipeline topology (parallel fork/join after consistency checker):
 
-    Strategy → Extraction → Consistency ─┬─→ Quality Judge ─┬─→ Filter
-                                          └─→ ER Agent ──────┘
+    Strategy -> Extraction -> Consistency -+-> Quality Judge -+-> Belief Revision -> Filter
+                                           +-> ER Agent ------+
 
     Quality Judge and ER Agent run in parallel since they both only
     depend on the consistency result and don't depend on each other.
-    Filter waits for both to complete before running.
+    Belief Revision (Stream 11) joins them: it reads the ER results to
+    avoid revising entities that ER will merge, and it gates writes
+    behind ``settings.belief_revision_pipeline_enabled`` (default OFF).
+    Filter is the final pre-staging step.
     """
     graph = StateGraph(ExtractionPipelineState)
 
@@ -87,6 +92,7 @@ def build_pipeline() -> StateGraph[Any]:
     graph.add_node("consistency_checker", consistency_checker_node)
     graph.add_node("quality_judge", quality_judge_node)
     graph.add_node("er_agent", er_agent_node)
+    graph.add_node("belief_revision", belief_revision_node)
     graph.add_node("filter", filter_agent_node)
 
     graph.set_entry_point("strategy_selector")
@@ -114,8 +120,9 @@ def build_pipeline() -> StateGraph[Any]:
         ["quality_judge", "er_agent"],
     )
 
-    graph.add_edge("quality_judge", "filter")
-    graph.add_edge("er_agent", "filter")
+    graph.add_edge("quality_judge", "belief_revision")
+    graph.add_edge("er_agent", "belief_revision")
+    graph.add_edge("belief_revision", "filter")
 
     graph.add_conditional_edges(
         "filter",

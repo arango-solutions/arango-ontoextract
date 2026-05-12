@@ -104,6 +104,13 @@ class Settings(BaseSettings):
     #: a long-untouched class is always still ranked above a brand-new
     #: zero-confidence one. Tune per ontology if needed.
     belief_revision_decay_floor: float = 0.05
+    #: Master kill-switch for the per-document Belief Revision pipeline
+    #: stage (IBR.10/11). Default OFF: every new upload runs the legacy
+    #: extract+ER+filter path with no touchpoint discovery, no LLM
+    #: revision agent, and no temporal supersedes. Flip to True to
+    #: activate the four-phase IBR pipeline. Setting only -- no code
+    #: deploy required to roll out or roll back.
+    belief_revision_pipeline_enabled: bool = False
 
     # -- Ontology Defaults ---------------------------------------------------
     default_ontology_uri: str = "http://example.org/ontology#"

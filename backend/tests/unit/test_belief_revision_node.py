@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.config import settings
 from app.db.revision_meta_repo import (
     ACTION_FLAG_FOR_CURATION,
     ACTION_GAP_FILL,
@@ -132,6 +133,16 @@ def _state(**overrides: Any) -> dict[str, Any]:
     }
     base.update(overrides)
     return base
+
+
+@pytest.fixture(autouse=True)
+def _enable_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default IBR.10 tests run with the feature flag ON.
+
+    Tests that need the flag OFF (the new IBR.11 gating tests) override
+    this fixture explicitly via ``monkeypatch.setattr``.
+    """
+    monkeypatch.setattr(settings, "belief_revision_pipeline_enabled", True)
 
 
 # ---------------------------------------------------------------------------
@@ -682,3 +693,92 @@ class TestEmptyAfterFiltering:
             out = belief_revision_node(_state(consistency_result=_result(classes)))
         disco.assert_not_called()
         assert out["revision_actions"] == []
+
+
+# ---------------------------------------------------------------------------
+# IBR.11: feature-flag gating
+# ---------------------------------------------------------------------------
+
+
+class TestFeatureFlagGating:
+    def test_flag_off_skips_immediately_without_calling_services(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the feature flag is OFF the node returns immediately.
+
+        No DB lookup, no touchpoint discovery, no classification, no
+        LLM. Only the empty state delta and a "feature_flag_off"
+        step-log reason.
+        """
+        monkeypatch.setattr(settings, "belief_revision_pipeline_enabled", False)
+        with patch(
+            "app.extraction.agents.belief_revision.get_db"
+        ) as get_db, patch(
+            "app.extraction.agents.belief_revision.discover_touchpoints"
+        ) as disco, patch(
+            "app.extraction.agents.belief_revision.classify"
+        ) as clas, patch(
+            "app.extraction.agents.belief_revision.asyncio.run"
+        ) as asyrun, patch(
+            "app.extraction.agents.belief_revision.supersede_from_mechanical_revision"
+        ) as supmech:
+            out = belief_revision_node(_state())
+        get_db.assert_not_called()
+        disco.assert_not_called()
+        clas.assert_not_called()
+        asyrun.assert_not_called()
+        supmech.assert_not_called()
+        assert out["revision_actions"] == []
+        assert out["step_logs"][0]["status"] == "completed"
+
+    def test_flag_off_state_delta_is_minimal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "belief_revision_pipeline_enabled", False)
+        out = belief_revision_node(_state())
+        assert set(out.keys()) == {"revision_actions", "errors", "step_logs"}
+        meta = out["step_logs"][0]["metadata"]
+        assert meta["touchpoints_discovered"] == 0
+        assert meta["auto_applied"] == 0
+        assert meta["llm_invocations"] == 0
+
+
+# ---------------------------------------------------------------------------
+# IBR.11: pipeline topology
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineTopologyWiring:
+    """Belief revision must sit between ER/QualityJudge and the filter.
+
+    Verified via the ``_NEXT_STEPS`` table the WebSocket emitter uses:
+    quality_judge -> belief_revision, er_agent -> belief_revision,
+    belief_revision -> filter. We don't instantiate the LangGraph
+    object here -- it requires a checkpointer, ASGI, etc. -- but the
+    NEXT_STEPS table is the source of truth for the WS-event order
+    and is what would have to drift first if someone broke the wiring.
+    """
+
+    def test_quality_judge_routes_to_belief_revision(self) -> None:
+        from app.extraction.pipeline import _NEXT_STEPS
+
+        assert "belief_revision" in _NEXT_STEPS["quality_judge"]
+        assert "filter" not in _NEXT_STEPS["quality_judge"]
+
+    def test_er_agent_routes_to_belief_revision(self) -> None:
+        from app.extraction.pipeline import _NEXT_STEPS
+
+        assert "belief_revision" in _NEXT_STEPS["er_agent"]
+        assert "filter" not in _NEXT_STEPS["er_agent"]
+
+    def test_belief_revision_routes_to_filter(self) -> None:
+        from app.extraction.pipeline import _NEXT_STEPS
+
+        assert _NEXT_STEPS["belief_revision"] == ["filter"]
+
+    def test_build_pipeline_includes_belief_revision_node(self) -> None:
+        from app.extraction.pipeline import build_pipeline
+
+        graph = build_pipeline()
+        # StateGraph stores nodes on .nodes; private but stable across LG versions.
+        assert "belief_revision" in graph.nodes

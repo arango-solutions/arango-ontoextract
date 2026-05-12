@@ -71,8 +71,15 @@ def filter_agent_node(state: ExtractionPipelineState) -> dict[str, Any]:
     if consistency_result is None or not consistency_result.classes:
         log.info("filter_agent skipped: no results to filter", extra={"run_id": run_id})
         step_log = _build_step_log(start, "completed", 0, 0, 0)
+        revision_actions = list(state.get("revision_actions") or [])
+        revision_summary = _summarise_revision_actions(revision_actions)
         return {
-            "filter_results": {"status": "skipped", "reason": "no_input"},
+            "filter_results": {
+                "status": "skipped",
+                "reason": "no_input",
+                "revision_summary": revision_summary,
+                "pending_revisions": revision_summary["pending"],
+            },
             "step_logs": [step_log],
         }
 
@@ -95,6 +102,9 @@ def filter_agent_node(state: ExtractionPipelineState) -> dict[str, Any]:
     removed_count = input_count - len(annotated)
     removal_ratio = removed_count / input_count if input_count > 0 else 0.0
 
+    revision_actions = list(state.get("revision_actions") or [])
+    revision_summary = _summarise_revision_actions(revision_actions)
+
     filter_results: dict[str, Any] = {
         "status": "completed",
         "input_count": input_count,
@@ -102,6 +112,12 @@ def filter_agent_node(state: ExtractionPipelineState) -> dict[str, Any]:
         "removed_count": removed_count,
         "removal_ratio": round(removal_ratio, 3),
         "confidence_tiers": _count_tiers(annotated),
+        "revision_summary": revision_summary,
+        # Pending revisions land in staging alongside new entities so
+        # the curator sees them in the same review queue (FR-16.10).
+        # Auto-applied revisions are NOT surfaced here -- they are
+        # already in the live graph via supersede() (IBR.9).
+        "pending_revisions": revision_summary["pending"],
     }
 
     duration = time.time() - start
@@ -240,6 +256,55 @@ def _count_tiers(classes: list[ExtractedClass]) -> dict[str, int]:
         else:
             tiers["low"] += 1
     return tiers
+
+
+def _summarise_revision_actions(actions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarise belief-revision outcomes for the curation queue.
+
+    Returns a stable shape:
+
+    * ``applied`` / ``pending_count`` / ``failed`` / ``skipped`` -- counts
+    * ``pending`` -- compact list of the revisions the curator must
+      review (only fields they need; private state is dropped).
+
+    Auto-applied revisions are counted but not enumerated -- they are
+    already in the live graph via supersede() (IBR.9).
+    """
+    applied = 0
+    pending_count = 0
+    failed = 0
+    skipped = 0
+    pending: list[dict[str, Any]] = []
+    for a in actions:
+        if a.get("skipped"):
+            skipped += 1
+            continue
+        status = str(a.get("status") or "")
+        if status == "applied":
+            applied += 1
+        elif status == "failed":
+            failed += 1
+        elif status:
+            pending_count += 1
+            pending.append(
+                {
+                    "revision_meta_key": a.get("revision_meta_key"),
+                    "verdict": a.get("verdict"),
+                    "action": a.get("action"),
+                    "agent_type": a.get("agent_type"),
+                    "rule_id": a.get("rule_id"),
+                    "existing_entity_id": a.get("existing_entity_id"),
+                    "new_concept_label": a.get("new_concept_label"),
+                    "reasoning": a.get("reasoning"),
+                }
+            )
+    return {
+        "applied": applied,
+        "pending_count": pending_count,
+        "failed": failed,
+        "skipped": skipped,
+        "pending": pending,
+    }
 
 
 def _build_step_log(

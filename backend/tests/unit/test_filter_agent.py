@@ -7,6 +7,7 @@ from app.extraction.agents.filter import (
     _remove_generic_terms,
     _remove_low_confidence_single_words,
     _remove_within_run_duplicates,
+    _summarise_revision_actions,
     filter_agent_node,
 )
 from app.extraction.state import ExtractionPipelineState
@@ -221,3 +222,97 @@ class TestFilterAgentNode:
 
         tiers = result["filter_results"]["confidence_tiers"]
         assert tiers["high"] >= 1
+
+
+class TestSummariseRevisionActions:
+    """IBR.11: filter must surface pending revisions and count outcomes."""
+
+    def test_empty_returns_zero_counts_and_no_pending(self):
+        out = _summarise_revision_actions([])
+        assert out["applied"] == 0
+        assert out["failed"] == 0
+        assert out["skipped"] == 0
+        assert out["pending"] == []
+
+    def test_counts_each_status_kind(self):
+        actions = [
+            {"status": "applied", "skipped": False},
+            {"status": "applied", "skipped": False},
+            {"status": "pending", "skipped": False, "revision_meta_key": "r1",
+             "verdict": "UNCERTAIN", "action": "FLAG_FOR_CURATION",
+             "agent_type": "llm", "rule_id": "R7_UNCERTAIN_SUFFIX",
+             "existing_entity_id": "oc/Account",
+             "new_concept_label": "AccountStatus", "reasoning": "suffix"},
+            {"status": "failed", "skipped": False, "error": "boom"},
+            {"status": "applied", "skipped": True, "skipped_reason": "prior"},
+        ]
+        out = _summarise_revision_actions(actions)
+        assert out["applied"] == 2
+        assert out["pending_count"] == 1
+        assert out["failed"] == 1
+        assert out["skipped"] == 1
+        assert len(out["pending"]) == 1
+        assert out["pending"][0]["new_concept_label"] == "AccountStatus"
+        assert out["pending"][0]["revision_meta_key"] == "r1"
+
+    def test_pending_payload_only_curator_relevant_fields(self):
+        actions = [
+            {"status": "pending", "skipped": False, "revision_meta_key": "r1",
+             "verdict": "UNCERTAIN", "action": "FLAG_FOR_CURATION",
+             "agent_type": "llm", "rule_id": "R7", "existing_entity_id": "oc/X",
+             "new_concept_label": "Y", "reasoning": "r",
+             "private_field_we_dont_want": "secret"},
+        ]
+        out = _summarise_revision_actions(actions)
+        assert "private_field_we_dont_want" not in out["pending"][0]
+
+
+class TestFilterPropagatesRevisionSummary:
+    """IBR.11: filter_results must include revision_summary + pending_revisions."""
+
+    def _state_with_revisions(self, classes, revision_actions):
+        s = _make_state(classes=classes)
+        s["revision_actions"] = revision_actions
+        return s
+
+    def test_no_revisions_yields_zero_summary(self):
+        state = _make_state(classes=[_cls("http://ex.org#X", "Foo", 0.9)])
+        out = filter_agent_node(state)
+        fr = out["filter_results"]
+        assert fr["revision_summary"]["applied"] == 0
+        assert fr["revision_summary"]["pending_count"] == 0
+        assert fr["pending_revisions"] == []
+
+    def test_pending_revision_surfaces_in_filter_results(self):
+        actions = [
+            {"status": "pending", "skipped": False, "revision_meta_key": "r1",
+             "verdict": "UNCERTAIN", "action": "FLAG_FOR_CURATION",
+             "agent_type": "llm", "rule_id": "R7_UNCERTAIN_SUFFIX",
+             "existing_entity_id": "oc/Account",
+             "new_concept_label": "AccountStatus", "reasoning": "suffix"},
+        ]
+        state = self._state_with_revisions(
+            [_cls("http://ex.org#X", "Foo", 0.9)], actions
+        )
+        out = filter_agent_node(state)
+        fr = out["filter_results"]
+        assert fr["revision_summary"]["pending_count"] == 1
+        assert len(fr["pending_revisions"]) == 1
+        assert fr["pending_revisions"][0]["new_concept_label"] == "AccountStatus"
+
+    def test_skip_path_still_reports_revisions(self):
+        """If consistency_result is None the filter still surfaces revisions."""
+        actions = [
+            {"status": "pending", "skipped": False, "revision_meta_key": "r1",
+             "verdict": "CONTRADICTED", "action": "FLAG_FOR_CURATION",
+             "agent_type": "llm", "rule_id": "R7_CONTRADICTED",
+             "existing_entity_id": "oc/X",
+             "new_concept_label": "Y", "reasoning": "contradicts"},
+        ]
+        state = _make_state(classes=None)
+        state["revision_actions"] = actions
+        out = filter_agent_node(state)
+        fr = out["filter_results"]
+        assert fr["status"] == "skipped"
+        assert fr["revision_summary"]["pending_count"] == 1
+        assert len(fr["pending_revisions"]) == 1
