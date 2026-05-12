@@ -237,9 +237,16 @@ export default function FloatingDetailPanel({
                       Attributes ({attributes.length})
                     </dt>
                     <div className="space-y-1.5">
-                      {attributes.map((attr) => (
+                      {/* Composite key: a property may legally appear with the
+                          same _key more than once if the backend join over
+                          rdfs_domain emits one row per matching domain edge
+                          (see backend/app/api/ontology.py::get_class_detail).
+                          The backend deduplicates server-side, but we keep
+                          ${idx} as a defensive guard so a stray duplicate
+                          never crashes the panel. */}
+                      {attributes.map((attr, idx) => (
                         <div
-                          key={attr._key}
+                          key={`${attr._key}-${idx}`}
                           className="flex items-baseline gap-2 text-xs bg-gray-50 rounded-md px-2.5 py-1.5"
                         >
                           <span className="font-medium text-gray-800">{attr.label ?? attr._key}</span>
@@ -259,9 +266,9 @@ export default function FloatingDetailPanel({
                       Relationships ({relationships.length})
                     </dt>
                     <div className="space-y-1.5">
-                      {relationships.map((rel) => (
+                      {relationships.map((rel, idx) => (
                         <div
-                          key={rel._key}
+                          key={`${rel._key}-${idx}`}
                           className="flex items-baseline gap-2 text-xs bg-blue-50 rounded-md px-2.5 py-1.5"
                         >
                           <span className="font-medium text-gray-800">{rel.label ?? rel._key}</span>
@@ -281,9 +288,9 @@ export default function FloatingDetailPanel({
                       Properties ({legacyProps.length})
                     </dt>
                     <div className="space-y-1.5">
-                      {legacyProps.map((prop) => (
+                      {legacyProps.map((prop, idx) => (
                         <div
-                          key={prop._key}
+                          key={`${prop._key}-${idx}`}
                           className="flex items-baseline gap-2 text-xs bg-gray-50 rounded-md px-2.5 py-1.5"
                         >
                           <span className="font-medium text-gray-800">{prop.label ?? prop._key}</span>

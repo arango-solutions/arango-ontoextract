@@ -1247,14 +1247,29 @@ async def get_class_detail(ontology_id: str, class_key: str) -> dict[str, Any]:
     attributes: list[dict[str, Any]] = []
     relationships: list[dict[str, Any]] = []
 
+    # NOTE on dedup pattern (applies to all three queries below):
+    # The previous shape was a Cartesian-style ``FOR e IN <edge> FOR p IN
+    # <prop>`` join, which emits one row per matching edge. When a property
+    # has more than one live edge to the same class (e.g. the writer
+    # re-asserted ``rdfs_domain`` on re-extraction without expiring the
+    # prior edge), the property document was returned twice -- causing
+    # React duplicate-key warnings in ``FloatingDetailPanel``. We now
+    # pre-collect property IDs via ``RETURN DISTINCT``, then look each
+    # property up exactly once. Cleaner shape, cheaper plan, and the
+    # contract of "one property document per logical property" matches
+    # what every consumer expects.
+
     if db.has_collection("rdfs_domain") and db.has_collection("ontology_datatype_properties"):
         attributes = list(
             run_aql(
                 db,
-                "FOR e IN rdfs_domain "
-                "FILTER e._to == @cid AND e.expired == @never "
+                "LET prop_ids = ("
+                "  FOR e IN rdfs_domain "
+                "  FILTER e._to == @cid AND e.expired == @never "
+                "  RETURN DISTINCT e._from"
+                ") "
                 "FOR p IN ontology_datatype_properties "
-                "FILTER p._id == e._from AND p.expired == @never "
+                "FILTER p._id IN prop_ids AND p.expired == @never "
                 "RETURN p",
                 bind_vars={"cid": class_id, "never": NEVER_EXPIRES},
             )
@@ -1275,10 +1290,13 @@ async def get_class_detail(ontology_id: str, class_key: str) -> dict[str, Any]:
         relationships = list(
             run_aql(
                 db,
-                "FOR e IN rdfs_domain "
-                "FILTER e._to == @cid AND e.expired == @never "
+                "LET prop_ids = ("
+                "  FOR e IN rdfs_domain "
+                "  FILTER e._to == @cid AND e.expired == @never "
+                "  RETURN DISTINCT e._from"
+                ") "
                 "FOR p IN ontology_object_properties "
-                f"FILTER p._id == e._from AND p.expired == @never "
+                f"FILTER p._id IN prop_ids AND p.expired == @never "
                 f"{range_sub}",
                 bind_vars={"cid": class_id, "never": NEVER_EXPIRES},
             )
@@ -1294,10 +1312,13 @@ async def get_class_detail(ontology_id: str, class_key: str) -> dict[str, Any]:
         legacy_properties = list(
             run_aql(
                 db,
-                "FOR e IN has_property "
-                "FILTER e._from == @cid AND e.expired == @never "
-                "LET prop = DOCUMENT(e._to) "
-                "FILTER prop != null AND prop.expired == @never "
+                "LET prop_ids = ("
+                "  FOR e IN has_property "
+                "  FILTER e._from == @cid AND e.expired == @never "
+                "  RETURN DISTINCT e._to"
+                ") "
+                "FOR prop IN ontology_properties "
+                "FILTER prop._id IN prop_ids AND prop.expired == @never "
                 "RETURN prop",
                 bind_vars={"cid": class_id, "never": NEVER_EXPIRES},
             )

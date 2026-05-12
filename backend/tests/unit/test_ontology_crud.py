@@ -207,6 +207,56 @@ class TestGetClassDetail:
             resp = client.get("/api/v1/ontology/test_onto/classes/Person")
         assert resp.status_code == 404
 
+    def test_relationships_query_uses_distinct_to_dedup_property_ids(
+        self, client, _mock_db
+    ):
+        """Regression: the previous Cartesian-style ``FOR e IN rdfs_domain
+        FOR p IN ontology_object_properties`` join emitted one row per
+        matching domain edge, so a property with two live ``rdfs_domain``
+        edges to the same class came back twice -- triggering a React
+        ``Encountered two children with the same key`` warning in
+        ``FloatingDetailPanel``. The new shape pre-collects property
+        IDs via ``RETURN DISTINCT`` so each property document appears
+        at most once regardless of how many domain edges point to it.
+
+        We assert the *query shape* (rather than fabricating a real
+        duplicate-edge fixture) because the AQL change is the actual
+        contract: any future refactor that loses ``RETURN DISTINCT``
+        re-introduces the bug. The query also still honours per-row
+        ``expired`` filters on both the edge and the property.
+        """
+        cls = _class_doc()
+        captured_queries: list[str] = []
+
+        def _mock_aql(db, query, bind_vars=None):
+            captured_queries.append(query)
+            return iter([])
+
+        with patch("app.api.ontology.ontology_repo") as repo:
+            repo.get_class.return_value = cls
+            with patch("app.api.ontology.run_aql", side_effect=_mock_aql):
+                resp = client.get("/api/v1/ontology/test_onto/classes/Person")
+
+        assert resp.status_code == 200
+
+        # Both PGT queries must use the distinct-prop-ids pattern.
+        attr_query = next(
+            q for q in captured_queries if "ontology_datatype_properties" in q
+        )
+        rel_query = next(
+            q for q in captured_queries if "ontology_object_properties" in q
+        )
+        for q in (attr_query, rel_query):
+            assert "RETURN DISTINCT e._from" in q, (
+                "PGT query must pre-collect distinct property ids -- the "
+                "Cartesian join shape that came before this caused duplicate "
+                "rows when rdfs_domain had multiple live edges per property."
+            )
+            assert "p._id IN prop_ids" in q
+            # Per-row expired filters on BOTH sides must remain in place.
+            assert "e.expired == @never" in q
+            assert "p.expired == @never" in q
+
     def test_legacy_fallback_when_no_pgt_data(self, client, _mock_db):
         cls = _class_doc()
         _mock_db.has_collection.side_effect = lambda name: (
@@ -223,8 +273,10 @@ class TestGetClassDetail:
             "label": "email",
             "expired": NEVER_EXPIRES,
         }
+        captured: list[str] = []
 
         def _mock_aql(db, query, bind_vars=None):
+            captured.append(query)
             if "has_property" in query:
                 return iter([legacy_prop])
             return iter([])
@@ -240,6 +292,12 @@ class TestGetClassDetail:
         assert data["relationships"] == []
         assert len(data["legacy_properties"]) == 1
         assert data["legacy_properties"][0]["label"] == "email"
+
+        # The legacy fallback query must also use the distinct-prop-ids
+        # pattern -- the same duplicate-edge bug exists on has_property.
+        legacy_query = next(q for q in captured if "has_property" in q)
+        assert "RETURN DISTINCT e._to" in legacy_query
+        assert "prop._id IN prop_ids" in legacy_query
 
 
 class TestCreateClass:
