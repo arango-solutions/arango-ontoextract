@@ -27,7 +27,15 @@ _MAX_CONCURRENCY = 40
 
 
 def _get_llm(model_name: str) -> Any:
-    """Instantiate the LLM based on model name."""
+    """Instantiate the LLM based on model name.
+
+    Both providers receive ``timeout=settings.llm_request_timeout_seconds``
+    so a hung provider connection raises after the configured ceiling
+    instead of pinning an asyncio task forever. See
+    ``Settings.llm_request_timeout_seconds`` for the rationale and
+    incident history.
+    """
+    timeout = settings.llm_request_timeout_seconds
     if "claude" in model_name.lower() or "anthropic" in model_name.lower():
         from langchain_anthropic import ChatAnthropic
 
@@ -35,6 +43,7 @@ def _get_llm(model_name: str) -> Any:
             model=model_name,  # type: ignore[call-arg]
             api_key=settings.anthropic_api_key,  # type: ignore[arg-type]
             max_tokens=4096,
+            timeout=timeout,
         )
     from langchain_openai import ChatOpenAI
 
@@ -42,6 +51,7 @@ def _get_llm(model_name: str) -> Any:
         "model": model_name,
         "api_key": settings.openai_api_key,
         "max_tokens": 4096,
+        "timeout": timeout,
     }
     if settings.openai_base_url:
         kwargs["base_url"] = settings.openai_base_url

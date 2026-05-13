@@ -81,6 +81,23 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     llm_extraction_model: str = "claude-sonnet-4-20250514"
     embedding_model: str = "text-embedding-3-small"
+    #: Per-request HTTP timeout for LLM calls, in seconds. Without an
+    #: explicit timeout, ``ChatAnthropic`` and ``ChatOpenAI`` inherit
+    #: their underlying httpx client default (``None`` = wait forever
+    #: in the SDK builds we depend on), so a hung provider connection
+    #: ties up the asyncio task indefinitely. With a single uvicorn
+    #: worker, enough hung tasks starve the threadpool and the API
+    #: stops responding to anything -- exactly the symptom we hit
+    #: during the WTW Ontology document load (worker in ``S 0%``,
+    #: ``/runs`` healthcheck timing out, REST poll fallbacks failing
+    #: into the WS connection storm).
+    #:
+    #: 60s is a deliberately generous ceiling: the qualitative-eval
+    #: map step legitimately needs 30-45s on long chunks under the
+    #: GPT-4o tier, while a real outage will trip well inside the
+    #: minute. Tune downward in production if your deployment fronts
+    #: a cheaper / faster judge model.
+    llm_request_timeout_seconds: float = 60.0
 
     # -- Extraction --------------------------------------------------------
     extraction_passes: int = 3

@@ -33,6 +33,7 @@ class TestGetLlm:
             patch.dict("sys.modules", {"langchain_anthropic": mock_module}),
         ):
             mock_settings.anthropic_api_key = "sk-test"
+            mock_settings.llm_request_timeout_seconds = 60.0
             _get_llm("claude-3-opus")
         mock_anthropic_cls.assert_called_once()
 
@@ -46,8 +47,74 @@ class TestGetLlm:
         ):
             mock_settings.openai_api_key = "sk-test"
             mock_settings.openai_base_url = ""
+            mock_settings.llm_request_timeout_seconds = 60.0
             _get_llm("gpt-4o")
         mock_openai_cls.assert_called_once()
+
+    # ---- Timeout wiring ---------------------------------------------------
+    # Without an explicit ``timeout`` kwarg, the underlying httpx clients
+    # in both providers wait forever on hung connections. With a single
+    # uvicorn worker that means one stuck call freezes the whole API
+    # (this was the WTW Ontology hang). These tests pin that the value
+    # from ``settings.llm_request_timeout_seconds`` reaches both
+    # constructors as the canonical ``timeout`` alias (both providers
+    # accept it: Anthropic field ``default_request_timeout``, OpenAI
+    # field ``request_timeout`` -- both have ``validation_alias='timeout'``).
+
+    def test_anthropic_receives_timeout_from_settings(self):
+        mock_anthropic_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.ChatAnthropic = mock_anthropic_cls
+        with (
+            patch("app.extraction.agents.extractor.settings") as mock_settings,
+            patch.dict("sys.modules", {"langchain_anthropic": mock_module}),
+        ):
+            mock_settings.anthropic_api_key = "sk-test"
+            mock_settings.llm_request_timeout_seconds = 42.5
+            _get_llm("claude-3-opus")
+        _, kwargs = mock_anthropic_cls.call_args
+        assert kwargs.get("timeout") == 42.5, (
+            "ChatAnthropic must receive ``timeout=settings.llm_request_timeout_seconds`` "
+            "or hung Anthropic API calls will pin the asyncio task forever."
+        )
+
+    def test_openai_receives_timeout_from_settings(self):
+        mock_openai_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.ChatOpenAI = mock_openai_cls
+        with (
+            patch("app.extraction.agents.extractor.settings") as mock_settings,
+            patch.dict("sys.modules", {"langchain_openai": mock_module}),
+        ):
+            mock_settings.openai_api_key = "sk-test"
+            mock_settings.openai_base_url = ""
+            mock_settings.llm_request_timeout_seconds = 42.5
+            _get_llm("gpt-4o")
+        _, kwargs = mock_openai_cls.call_args
+        assert kwargs.get("timeout") == 42.5, (
+            "ChatOpenAI must receive ``timeout=settings.llm_request_timeout_seconds`` "
+            "or hung OpenAI API calls will pin the asyncio task forever."
+        )
+
+    def test_openai_timeout_preserved_when_base_url_set(self):
+        # Regression: the ``base_url`` branch had its own kwargs dict
+        # build path; make sure the timeout still reaches it when a
+        # custom ``OPENAI_BASE_URL`` is configured (Azure / proxy /
+        # local llama.cpp deployments).
+        mock_openai_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.ChatOpenAI = mock_openai_cls
+        with (
+            patch("app.extraction.agents.extractor.settings") as mock_settings,
+            patch.dict("sys.modules", {"langchain_openai": mock_module}),
+        ):
+            mock_settings.openai_api_key = "sk-test"
+            mock_settings.openai_base_url = "https://proxy.example/v1"
+            mock_settings.llm_request_timeout_seconds = 30.0
+            _get_llm("gpt-4o")
+        _, kwargs = mock_openai_cls.call_args
+        assert kwargs.get("timeout") == 30.0
+        assert kwargs.get("base_url") == "https://proxy.example/v1"
 
 
 # ---------------------------------------------------------------------------
