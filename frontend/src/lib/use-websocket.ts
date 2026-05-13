@@ -136,6 +136,53 @@ async function fetchStepsFromRest(
 
 const MAX_WS_RETRIES = 5;
 
+/**
+ * Run statuses for which there is no point opening a WebSocket.
+ *
+ * The pipeline broadcaster only emits events for in-flight runs;
+ * for completed/failed/skipped runs the backend has nothing to
+ * stream, the connection is held idle until heartbeat timeout, and
+ * each retry burns one of the browser's per-origin TCP slots
+ * (Chrome caps at six). Scrubbing the run-history slider through
+ * a list of completed runs would otherwise open + retry up to
+ * MAX_WS_RETRIES connections per visited run, saturate the
+ * connection pool, and produce a "WebSocket is closed before the
+ * connection is established" storm in the console -- with the
+ * side effect of starving the page event loop badly enough that
+ * the slider itself stops responding to drag events.
+ *
+ * The REST snapshot path (``fetchStepsFromRest``) populates the
+ * step map for terminal runs without needing a socket.
+ */
+export const TERMINAL_RUN_STATUSES = new Set([
+  "completed",
+  "completed_with_errors",
+  "failed",
+  "skipped",
+  "cancelled",
+]);
+
+/**
+ * Best-effort run-status probe used to gate WebSocket connection.
+ *
+ * Returns the run's ``status`` string if the backend responds,
+ * otherwise ``null``. ``null`` does NOT short-circuit -- callers
+ * should treat unknown status as "maybe active" and try the WS
+ * anyway, so a transient REST blip doesn't deny a real-time view
+ * of an in-flight pipeline.
+ */
+export async function probeRunStatus(runId: string): Promise<string | null> {
+  try {
+    const res = await fetch(backendUrl(`/api/v1/extraction/runs/${runId}`));
+    if (!res.ok) return null;
+    const run = await res.json();
+    const status = run?.status;
+    return typeof status === "string" ? status : null;
+  } catch {
+    return null;
+  }
+}
+
 export function useExtractionSocket(
   runId: string | null,
 ): UseExtractionSocketReturn {
@@ -265,8 +312,13 @@ export function useExtractionSocket(
       return;
     }
 
+    // Tracks the currently-mounted runId so a slow status probe that
+    // resolves AFTER the user has scrubbed to a different run doesn't
+    // open a stale WebSocket against the original run.
+    let cancelled = false;
+
     function connect() {
-      if (!mountedRef.current || !runId) return;
+      if (!mountedRef.current || cancelled || !runId) return;
 
       if (retriesRef.current >= MAX_WS_RETRIES) {
         setError(null);
@@ -313,9 +365,24 @@ export function useExtractionSocket(
     setSteps(buildInitialSteps());
     retriesRef.current = 0;
     wsHasDeliveredRef.current = false;
-    connect();
+
+    // Probe run status before opening WS. For terminal runs the
+    // broadcaster has nothing to stream and the connection just
+    // burns a browser TCP slot until heartbeat timeout, so we skip
+    // WS entirely and let the REST poll path render the snapshot.
+    // See TERMINAL_RUN_STATUSES rationale for why this matters.
+    (async () => {
+      const status = await probeRunStatus(runId);
+      if (cancelled || !mountedRef.current) return;
+      if (status !== null && TERMINAL_RUN_STATUSES.has(status)) {
+        // Terminal run: REST poll has the data; no socket needed.
+        return;
+      }
+      connect();
+    })();
 
     return () => {
+      cancelled = true;
       clearTimer();
       if (wsRef.current) {
         wsRef.current.onclose = null;
