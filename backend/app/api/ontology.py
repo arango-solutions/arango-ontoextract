@@ -1509,6 +1509,148 @@ async def list_ontology_edges(
     return {"data": edges}
 
 
+@router.get("/{ontology_id}/edges/{edge_key}")
+async def get_edge_detail(
+    ontology_id: str,
+    edge_key: str,
+    include: str = Query(
+        "full",
+        description=(
+            "Field projection profile. Defaults to ``full`` since detail "
+            "panels render evidence and the full description; the canvas "
+            "uses ``GET /{ontology_id}/edges`` (the list endpoint) with "
+            "``?include=summary``."
+        ),
+    ),
+) -> dict[str, Any]:
+    """Get a single live ontology edge by key.
+
+    Replaces the N+1 anti-pattern where the workspace ``FloatingDetailPanel``
+    used to fetch the entire ``GET /edges`` list (1219 edges / 555 KB / 3.3 s
+    on the WTW Ontology) just to ``.find()`` one edge by key. This endpoint
+    does at most one indexed primary lookup per edge collection (``.get``
+    by ``_key``), so the same operation now costs 1-2 WAN round-trips and
+    a few KB.
+
+    Enrichment parity with the list endpoint
+    ----------------------------------------
+
+    For ``rdfs_range_class`` edges the canvas + detail panel expect the
+    relationship label, description, confidence, and evidence to be
+    *lifted* from the owning ``ontology_object_properties`` document --
+    without that, the panel would display ``owl:ObjectProperty`` and no
+    confidence. We replicate the list endpoint's :func:`enrich_rdfs_range_
+    class_edges` step here, but only fetch the ONE property document
+    referenced by ``edge._from`` (one extra primary lookup) instead of
+    pulling the entire property collection.
+
+    Confidence is then derived from ``evidence[]`` the same way the list
+    endpoint does (see :func:`compute_edge_confidence`), so the wire
+    contract for a single-edge fetch matches what the same edge would
+    look like inside the list response.
+    """
+    db = get_db()
+    found = _find_edge_collection_for_key(db, edge_key)
+    if found is None:
+        raise NotFoundError(f"Edge '{edge_key}' not found")
+    edge_col, doc = found
+    if doc.get("ontology_id") != ontology_id:
+        raise NotFoundError(
+            f"Edge '{edge_key}' does not belong to ontology '{ontology_id}'"
+        )
+    if doc.get("expired") != NEVER_EXPIRES:
+        # Older, expired versions are reachable via /edge/{edge_key}/history,
+        # not via this point-in-time live-edge endpoint.
+        raise NotFoundError(f"Edge '{edge_key}' is no longer live")
+
+    edge = dict(doc)
+    edge["edge_type"] = edge_col
+
+    # Single-property enrichment for rdfs_range_class. ``_from`` is the
+    # full ``collection/key`` reference to the owning property document
+    # (object-property or, in legacy data, datatype-property). One
+    # primary-key lookup is enough -- no need to scan the whole
+    # collection like the list endpoint does.
+    if edge_col == "rdfs_range_class":
+        from_id = edge.get("_from")
+        if isinstance(from_id, str) and "/" in from_id:
+            prop_col_name, prop_key = from_id.split("/", 1)
+            if db.has_collection(prop_col_name):
+                try:
+                    prop_doc = cast(
+                        "dict[str, Any] | None",
+                        db.collection(prop_col_name).get(prop_key),
+                    )
+                except Exception:
+                    prop_doc = None
+                if prop_doc is not None:
+                    enrich_rdfs_range_class_edges([edge], {from_id: prop_doc})
+
+    conf = compute_edge_confidence(edge)
+    if conf is not None and edge.get("confidence") in (None, ""):
+        edge["confidence"] = conf
+
+    if normalize_include(include) == INCLUDE_SUMMARY:
+        edge = summarize_edge(edge)
+
+    return edge
+
+
+@router.get("/{ontology_id}/properties/{prop_key}")
+async def get_property_detail(ontology_id: str, prop_key: str) -> dict[str, Any]:
+    """Get a single live ontology property (object or datatype) by key.
+
+    Replaces the N+1 anti-pattern where the workspace ``FloatingDetailPanel``
+    used to fetch the entire ``GET /properties`` list to ``.find()`` one
+    property. We do at most one indexed primary lookup per property
+    collection.
+
+    Properties live in two collections in PGT-aligned ontologies
+    (``ontology_object_properties`` for relationships, ``ontology_datatype_
+    properties`` for attributes), with a legacy ``ontology_properties``
+    collection still present in some older ontologies. We probe in that
+    order; the first match within the requested ontology wins.
+
+    Note: there is no ``?include=`` parameter here -- a single property
+    document is small (label + description + URI + range + confidence)
+    and detail panels always need the full shape. The bandwidth win is
+    "fetch one row instead of all rows", not "shrink the row".
+    """
+    db = get_db()
+    for col_name in (
+        "ontology_object_properties",
+        "ontology_datatype_properties",
+        "ontology_properties",
+    ):
+        if not db.has_collection(col_name):
+            continue
+        try:
+            doc = cast(
+                "dict[str, Any] | None",
+                db.collection(col_name).get(prop_key),
+            )
+        except Exception:
+            doc = None
+        if doc is None:
+            continue
+        if doc.get("ontology_id") != ontology_id:
+            # The same _key could in principle exist in another ontology;
+            # keep probing rather than returning the wrong document.
+            continue
+        if doc.get("expired") != NEVER_EXPIRES:
+            # Skip expired versions -- versioned history is exposed
+            # elsewhere (property repo helpers), not via this live
+            # point-in-time endpoint.
+            continue
+        # Annotate which collection owns this property so the detail
+        # panel can branch on object vs datatype without a second
+        # round-trip.
+        return dict(doc, property_collection=col_name)
+    raise NotFoundError(
+        f"Property '{prop_key}' not found in ontology '{ontology_id}'"
+    )
+
+
 def _live_properties_by_id(db: Any, ontology_id: str) -> dict[str, dict[str, Any]]:
     """Return ``{_id: property_doc}`` for live object/datatype properties.
 
