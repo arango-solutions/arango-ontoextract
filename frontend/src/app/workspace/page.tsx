@@ -21,6 +21,11 @@ import {
   type ConfirmRequest,
 } from "@/components/workspace/contextMenus";
 import { api, ApiError, type PaginatedResponse } from "@/lib/api-client";
+import {
+  fetchOntologyData,
+  invalidateOntology,
+  invalidateOntologyKind,
+} from "@/lib/ontologyDataCache";
 import { withBasePath } from "@/lib/base-path";
 import {
   buildQualityReportMetrics,
@@ -337,12 +342,24 @@ function WorkspacePageInner() {
       // /classes round-trip from 909 KB / 2.2s into 360 KB / 0.4s
       // (5.3x faster, 2.5x smaller). The /edges round-trip drops to
       // 445 KB on the same projection (1.25x smaller).
+      //
+      // fetchOntologyData wraps each request in a module-level cache
+      // keyed on (ontologyId, kind, profile). Selecting an ontology
+      // we've already loaded once in this session returns synchronously
+      // (no network round-trip at all) -- the back-and-forth-between-
+      // ontologies case the user reported. Mutations (approve / reject
+      // / delete) call invalidateOntologyKind below to drop the cached
+      // entry so the next selection sees fresh data.
       const [classesRes, edgesRes] = await Promise.all([
-        api.get<PaginatedResponse<OntologyClass>>(
-          `/api/v1/ontology/${ontologyId}/classes?include=summary`,
+        fetchOntologyData(ontologyId, "classes", "summary", () =>
+          api.get<PaginatedResponse<OntologyClass>>(
+            `/api/v1/ontology/${ontologyId}/classes?include=summary`,
+          ),
         ),
-        api.get<PaginatedResponse<OntologyEdge>>(
-          `/api/v1/ontology/${ontologyId}/edges?include=summary`,
+        fetchOntologyData(ontologyId, "edges", "summary", () =>
+          api.get<PaginatedResponse<OntologyEdge>>(
+            `/api/v1/ontology/${ontologyId}/edges?include=summary`,
+          ),
         ),
       ]);
       const classesList = Array.isArray(classesRes) ? classesRes : classesRes.data;
@@ -382,8 +399,17 @@ function WorkspacePageInner() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await api.get<{ data: OntologyProperty[] }>(
-          `/api/v1/ontology/${selectedOntologyId}/properties`,
+        // Cached the same way as classes/edges -- toggling between
+        // network and box-arrow views, or coming back to box-arrow
+        // after switching ontologies, should not pay the WAN cost again.
+        const res = await fetchOntologyData(
+          selectedOntologyId,
+          "properties",
+          "full",
+          () =>
+            api.get<{ data: OntologyProperty[] }>(
+              `/api/v1/ontology/${selectedOntologyId}/properties`,
+            ),
         );
         if (cancelled) return;
         const list = Array.isArray(res) ? res : res.data;
@@ -580,15 +606,28 @@ function WorkspacePageInner() {
       if (pipelineRunId === key) {
         setPipelineRunId(null);
       }
+      // Deleting a run can change the live class/edge set for the
+      // ontology that run produced. We do not have the run -> ontology
+      // mapping in scope here, so invalidate the currently-selected
+      // ontology if any (the most likely target of the user's interest)
+      // -- if the run belonged to a different ontology, that one's
+      // cache will rebuild on next visit.
+      if (selectedOntologyId) invalidateOntology(selectedOntologyId);
     } catch (err) {
       console.error("Failed to delete run", err);
     }
-  }, [pipelineRunId]);
+  }, [pipelineRunId, selectedOntologyId]);
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
   const refreshGraph = useCallback(() => {
-    if (selectedOntologyId) fetchGraphData(selectedOntologyId);
+    if (!selectedOntologyId) return;
+    // Force refresh: drop the cache for this ontology before refetching so
+    // the user gets authoritative server data (the cache is the whole point
+    // of the back-and-forth fast-path -- the refresh button explicitly
+    // wants to bypass it).
+    invalidateOntology(selectedOntologyId);
+    fetchGraphData(selectedOntologyId);
   }, [selectedOntologyId, fetchGraphData]);
 
   const approveClass = useCallback(async (key: string) => {
@@ -600,8 +639,15 @@ function WorkspacePageInner() {
     );
     try {
       await api.put(`/api/v1/ontology/${selectedOntologyId}/classes/${key}`, { status: "approved" });
+      // Drop the cached classes entry so a future ontology selection
+      // refetches the server's authoritative view rather than serving
+      // the pre-mutation cached payload. Local state already reflects
+      // the optimistic update, so no immediate refetch is needed.
+      invalidateOntologyKind(selectedOntologyId, "classes");
     } catch (err) {
       console.error("Failed to approve class", err);
+      // refreshGraph() invalidates and refetches -- correctly drops the
+      // optimistic update if the server rejected it.
       refreshGraph();
     }
   }, [selectedOntologyId, refreshGraph]);
@@ -615,6 +661,7 @@ function WorkspacePageInner() {
     );
     try {
       await api.put(`/api/v1/ontology/${selectedOntologyId}/classes/${key}`, { status: "rejected" });
+      invalidateOntologyKind(selectedOntologyId, "classes");
     } catch (err) {
       console.error("Failed to reject class", err);
       refreshGraph();
@@ -632,6 +679,7 @@ function WorkspacePageInner() {
       await api.put(`/api/v1/ontology/${selectedOntologyId}/edges/${key}`, {
         status: "approved",
       });
+      invalidateOntologyKind(selectedOntologyId, "edges");
     } catch (err) {
       console.error("Failed to approve edge", err);
       refreshGraph();
@@ -649,6 +697,7 @@ function WorkspacePageInner() {
       await api.put(`/api/v1/ontology/${selectedOntologyId}/edges/${key}`, {
         status: "rejected",
       });
+      invalidateOntologyKind(selectedOntologyId, "edges");
     } catch (err) {
       console.error("Failed to reject edge", err);
       refreshGraph();
@@ -660,6 +709,7 @@ function WorkspacePageInner() {
     if (!oid) return;
     try {
       await api.put(`/api/v1/ontology/${oid}/properties/${key}`, { status: "approved" });
+      invalidateOntologyKind(oid, "properties");
     } catch (err) {
       console.error("Failed to approve property", err);
     }
@@ -670,6 +720,7 @@ function WorkspacePageInner() {
     if (!oid) return;
     try {
       await api.put(`/api/v1/ontology/${oid}/properties/${key}`, { status: "rejected" });
+      invalidateOntologyKind(oid, "properties");
     } catch (err) {
       console.error("Failed to reject property", err);
     }
@@ -679,6 +730,11 @@ function WorkspacePageInner() {
     if (!selectedOntologyId) return;
     try {
       await api.del(`/api/v1/ontology/${selectedOntologyId}/classes/${key}`);
+      // Deleting a class can break edges that referenced it (rdfs_domain,
+      // rdfs_range_class, subclass_of), so invalidate both kinds, not
+      // just classes. refreshGraph then refetches both from the server.
+      invalidateOntologyKind(selectedOntologyId, "classes");
+      invalidateOntologyKind(selectedOntologyId, "edges");
       refreshGraph();
     } catch (err) {
       console.error("Failed to delete class", err);
@@ -693,6 +749,10 @@ function WorkspacePageInner() {
   const deleteOntology = useCallback(async (key: string) => {
     try {
       await api.del(`/api/v1/ontology/library/${key}?confirm=true&hard_delete=true`);
+      // Drop every cached entry for the deleted ontology -- if a future
+      // import recreates the same _key, we must not serve the old graph
+      // from cache.
+      invalidateOntology(key);
       if (selectedOntologyId === key) {
         setSelectedOntologyId(null);
         setOntologyName(null);
@@ -925,7 +985,7 @@ function WorkspacePageInner() {
                   </div>
                   <p className="text-sm text-red-400 font-medium">{graphError}</p>
                   <button
-                    onClick={() => selectedOntologyId && fetchGraphData(selectedOntologyId)}
+                    onClick={refreshGraph}
                     className="text-xs text-indigo-400 hover:text-indigo-300 underline"
                   >
                     Retry

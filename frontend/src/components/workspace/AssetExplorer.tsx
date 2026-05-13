@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { api, ApiError, type PaginatedResponse } from "@/lib/api-client";
+import { fetchOntologyData } from "@/lib/ontologyDataCache";
 import type { OntologyRegistryEntry } from "@/types/curation";
 import type { ExtractionRun } from "@/types/pipeline";
 
@@ -570,8 +571,16 @@ function OntologyItem({
     // reads _key / label / uri / status / confidence, all of which are
     // in the summary projection. Drops the WTW Ontology /classes
     // payload from 909 KB to 360 KB.
-    api
-      .get<{ data: OntologyClassEntry[] }>(`/api/v1/ontology/${ont._key}/classes?include=summary`)
+    //
+    // Also goes through fetchOntologyData so the explorer shares the
+    // canvas's cache: once the canvas has loaded WTW classes, expanding
+    // the explorer's "classes" tree for the same ontology costs zero
+    // extra network round-trips.
+    fetchOntologyData(ont._key, "classes", "summary", () =>
+      api.get<{ data: OntologyClassEntry[] }>(
+        `/api/v1/ontology/${ont._key}/classes?include=summary`,
+      ),
+    )
       .then((res) => {
         if (!cancelled) {
           const list = Array.isArray(res) ? res : res.data;
@@ -592,19 +601,32 @@ function OntologyItem({
     // OntologyEdgeEntry only reads _key / _from / _to / label /
     // edge_type, all in the summary projection. Drops the WTW edges
     // payload from 555 KB to 445 KB.
+    //
+    // Also routed through fetchOntologyData: in-flight dedup means the
+    // canvas's parallel /classes fetch and this explorer's /classes
+    // fetch share one network round when they happen at the same time
+    // (e.g. user clicks an ontology that auto-expands the relations
+    // section).
     const classesPromise = classes.length > 0
       ? Promise.resolve(classes)
-      : api.get<{ data: OntologyClassEntry[] }>(`/api/v1/ontology/${ont._key}/classes?include=summary`)
-          .then((res) => {
-            const list = Array.isArray(res) ? res : res.data;
-            const arr = Array.isArray(list) ? list : [];
-            if (!cancelled && classes.length === 0) setClasses(arr);
-            return arr;
-          });
+      : fetchOntologyData(ont._key, "classes", "summary", () =>
+          api.get<{ data: OntologyClassEntry[] }>(
+            `/api/v1/ontology/${ont._key}/classes?include=summary`,
+          ),
+        ).then((res) => {
+          const list = Array.isArray(res) ? res : res.data;
+          const arr = Array.isArray(list) ? list : [];
+          if (!cancelled && classes.length === 0) setClasses(arr);
+          return arr;
+        });
 
     Promise.all([
       classesPromise,
-      api.get<{ data: OntologyEdgeEntry[] }>(`/api/v1/ontology/${ont._key}/edges?include=summary`),
+      fetchOntologyData(ont._key, "edges", "summary", () =>
+        api.get<{ data: OntologyEdgeEntry[] }>(
+          `/api/v1/ontology/${ont._key}/edges?include=summary`,
+        ),
+      ),
     ])
       .then(([clsList, edgeRes]) => {
         if (cancelled) return;
