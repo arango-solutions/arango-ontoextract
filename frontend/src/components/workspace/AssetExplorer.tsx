@@ -566,8 +566,12 @@ function OntologyItem({
     if (!classesOpen || classes.length > 0) return;
     let cancelled = false;
     setClassesLoading(true);
+    // ?include=summary -- the AssetExplorer's OntologyClassEntry only
+    // reads _key / label / uri / status / confidence, all of which are
+    // in the summary projection. Drops the WTW Ontology /classes
+    // payload from 909 KB to 360 KB.
     api
-      .get<{ data: OntologyClassEntry[] }>(`/api/v1/ontology/${ont._key}/classes`)
+      .get<{ data: OntologyClassEntry[] }>(`/api/v1/ontology/${ont._key}/classes?include=summary`)
       .then((res) => {
         if (!cancelled) {
           const list = Array.isArray(res) ? res : res.data;
@@ -584,9 +588,13 @@ function OntologyItem({
     let cancelled = false;
     setEdgesLoading(true);
 
+    // Same ?include=summary rationale as the classes loader above --
+    // OntologyEdgeEntry only reads _key / _from / _to / label /
+    // edge_type, all in the summary projection. Drops the WTW edges
+    // payload from 555 KB to 445 KB.
     const classesPromise = classes.length > 0
       ? Promise.resolve(classes)
-      : api.get<{ data: OntologyClassEntry[] }>(`/api/v1/ontology/${ont._key}/classes`)
+      : api.get<{ data: OntologyClassEntry[] }>(`/api/v1/ontology/${ont._key}/classes?include=summary`)
           .then((res) => {
             const list = Array.isArray(res) ? res : res.data;
             const arr = Array.isArray(list) ? list : [];
@@ -596,7 +604,7 @@ function OntologyItem({
 
     Promise.all([
       classesPromise,
-      api.get<{ data: OntologyEdgeEntry[] }>(`/api/v1/ontology/${ont._key}/edges`),
+      api.get<{ data: OntologyEdgeEntry[] }>(`/api/v1/ontology/${ont._key}/edges?include=summary`),
     ])
       .then(([clsList, edgeRes]) => {
         if (cancelled) return;

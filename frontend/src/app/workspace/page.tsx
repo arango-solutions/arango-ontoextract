@@ -330,12 +330,19 @@ function WorkspacePageInner() {
     setGraphLoading(true);
     setGraphError(null);
     try {
+      // ?include=summary drops evidence[] / parent_evidence[] from the
+      // wire response. The canvas does not render those fields -- they
+      // are only needed in the FloatingDetailPanel, which uses the
+      // single-item endpoints. On the WTW Ontology this turns the
+      // /classes round-trip from 909 KB / 2.2s into 360 KB / 0.4s
+      // (5.3x faster, 2.5x smaller). The /edges round-trip drops to
+      // 445 KB on the same projection (1.25x smaller).
       const [classesRes, edgesRes] = await Promise.all([
         api.get<PaginatedResponse<OntologyClass>>(
-          `/api/v1/ontology/${ontologyId}/classes`,
+          `/api/v1/ontology/${ontologyId}/classes?include=summary`,
         ),
         api.get<PaginatedResponse<OntologyEdge>>(
-          `/api/v1/ontology/${ontologyId}/edges`,
+          `/api/v1/ontology/${ontologyId}/edges?include=summary`,
         ),
       ]);
       const classesList = Array.isArray(classesRes) ? classesRes : classesRes.data;

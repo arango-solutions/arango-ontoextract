@@ -64,38 +64,56 @@ export default function FloatingDetailPanel({
   useEffect(() => {
     let cancelled = false;
 
+    // Single-item endpoints, one per entity type. We used to fetch the
+    // entire ``/edges`` or ``/properties`` list and call ``.find()`` on
+    // the result, which on the WTW Ontology meant pulling 555 KB of
+    // edge data over the WAN every time the user clicked one edge in
+    // the canvas. The backend now exposes ``GET /edges/{key}`` and
+    // ``GET /properties/{key}`` which do an indexed primary lookup
+    // (one row, ~1 KB) -- 569x smaller for the edge case.
+    //
+    // 404 from these endpoints is the not-found signal we want to
+    // surface to the user, so we map that to the same "{type} not
+    // found" message the previous list-and-find path produced.
+    const endpointMap: Record<string, string> = {
+      class: `/api/v1/ontology/${ontologyId}/classes/${entityKey}`,
+      edge: `/api/v1/ontology/${ontologyId}/edges/${entityKey}`,
+      property: `/api/v1/ontology/${ontologyId}/properties/${entityKey}`,
+    };
+    const url = endpointMap[entityType];
+
     async function fetchEntity() {
       setLoading(true);
       setError(null);
 
-      try {
-        if (entityType === "class") {
-          const res = await api.get<ClassDetail>(
-            `/api/v1/ontology/${ontologyId}/classes/${entityKey}`,
-          );
-          if (!cancelled) setEntity(res);
-        } else {
-          const collectionMap: Record<string, string> = {
-            property: "properties",
-            edge: "edges",
-          };
-          const collection = collectionMap[entityType] ?? "classes";
-          const res = await api.get<{ data: ClassDetail[] }>(
-            `/api/v1/ontology/${ontologyId}/${collection}`,
-          );
-          const match = res.data.find((e) => e._key === entityKey);
-          if (!cancelled) {
-            setEntity(match ?? null);
-            if (!match) setError(`${entityType} "${entityKey}" not found`);
-          }
+      if (!url) {
+        // Defensive: an unknown entityType reaches us only if the
+        // workspace selection model adds a new kind without updating
+        // the panel. Surface it as a recognisable error rather than
+        // silently doing nothing.
+        if (!cancelled) {
+          setEntity(null);
+          setError(`Unknown entity type "${entityType}"`);
+          setLoading(false);
         }
+        return;
+      }
+
+      try {
+        const res = await api.get<ClassDetail>(url);
+        if (!cancelled) setEntity(res);
       } catch (err) {
         if (!cancelled) {
-          setError(
-            err instanceof ApiError
-              ? err.body.message
-              : `Failed to load ${entityType} details`,
-          );
+          if (err instanceof ApiError && err.status === 404) {
+            setEntity(null);
+            setError(`${entityType} "${entityKey}" not found`);
+          } else {
+            setError(
+              err instanceof ApiError
+                ? err.body.message
+                : `Failed to load ${entityType} details`,
+            );
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
