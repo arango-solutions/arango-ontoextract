@@ -506,7 +506,7 @@ function WorkspacePageInner() {
     document.addEventListener("mouseup", onMouseUp);
   }, [assetExplorerWidth]);
 
-  const handleSelectOntology = useCallback((ontologyId: string) => {
+  const handleSelectOntology = useCallback((ontologyId: string, displayName?: string) => {
     setSelectedNodeKey(null);
     setSelectedEdgeKey(null);
     setDetailPanelOpen(false);
@@ -516,6 +516,17 @@ function WorkspacePageInner() {
     if (ontologyId === selectedOntologyId) {
       fetchGraphData(ontologyId);
     } else {
+      // Set the display name synchronously from the explorer's known label
+      // so the loading spinner shows the right ontology immediately. The
+      // background library fetch (in the loadName effect) still runs to
+      // refresh tier and to handle cases where displayName is absent
+      // (URL-param selection, run-completion auto-select). Without this,
+      // the spinner displays the previously selected ontology's name for
+      // the duration of the library round-trip -- the bug where switching
+      // to "WTW Ontology" briefly read "Loading Best Practices in
+      // Healthcare Survey Results Slides...".
+      setOntologyName(displayName ?? null);
+      setOntologyTier(null);
       setSelectedOntologyId(ontologyId);
     }
   }, [selectedOntologyId, fetchGraphData]);
@@ -569,6 +580,14 @@ function WorkspacePageInner() {
     setVcrTimestamp(null);
     setInfoPanelItem(null);
     if (ontologyId && ontologyId !== selectedOntologyId) {
+      // Clear the previous ontology's name so the canvas's loading
+      // spinner falls back to the id rather than displaying the OLD
+      // ontology's name while the library fetch resolves the new one.
+      // Same race the explorer-click path used to hit; the run-card
+      // click path doesn't have the displayName in scope so we fall
+      // back to ``selectedOntologyId`` in the Loading text.
+      setOntologyName(null);
+      setOntologyTier(null);
       setSelectedOntologyId(ontologyId);
     }
   }, [selectedOntologyId]);

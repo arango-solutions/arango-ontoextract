@@ -37,7 +37,7 @@ interface DocumentEntry {
 }
 
 interface AssetExplorerProps {
-  onSelectOntology: (ontologyId: string) => void;
+  onSelectOntology: (ontologyId: string, displayName?: string) => void;
   onSelectDocument: (docId: string) => void;
   onSelectRun: (runId: string, ontologyId?: string) => void;
   selectedOntologyId: string | null;
@@ -369,7 +369,7 @@ export default function AssetExplorer({
               ont={ont}
               displayName={ontologyDisplayName(ont)}
               isSelected={selectedOntologyId === ont._key}
-              onSelect={() => onSelectOntology(ont._key)}
+              onSelect={() => onSelectOntology(ont._key, ontologyDisplayName(ont))}
               onContextMenu={onContextMenu}
               selectedClassKey={selectedOntologyId === ont._key ? selectedClassKey ?? null : null}
               onSelectClass={onSelectClass}
