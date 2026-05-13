@@ -512,6 +512,78 @@ def _detect_format(filename: str) -> str:
     return fmt
 
 
+def _sniff_format_from_content(text: str, hint: str) -> str:
+    """Override the extension-based ``hint`` when content disagrees.
+
+    The ``.owl`` extension is widely used as a generic "ontology file"
+    label regardless of the actual serialization -- LLMs, ontology
+    editors, and exporters routinely emit Turtle into a ``.owl`` file.
+    Without this sniffer we hand Turtle text to the rdflib XML parser,
+    which fails with an opaque ``Document is empty`` / ``not well-formed``
+    XML error and the user has no way to know that the fix is "rename
+    the file to .ttl".
+
+    Strategy: skip BOM / leading whitespace / leading comments, then
+    look for unambiguous opening tokens:
+
+        ``@prefix`` / ``@base``  -> turtle
+        ``<?xml`` / ``<rdf:RDF`` -> xml
+        ``{`` with ``@context``  -> json-ld
+
+    If no strong signal is found, return ``hint`` unchanged and let
+    rdflib produce its own error. We do NOT try to be clever about
+    ambiguous content (e.g. a bare XML element that *might* also be
+    valid N-Triples) -- the goal is to fix the common .owl-contains-
+    Turtle case without ever wrongly overriding a correct hint.
+    """
+    if not text:
+        return hint
+
+    stripped = text.lstrip("\ufeff").lstrip()
+    # Skip leading Turtle-style comments so a file that starts with
+    # "# Comment\n@prefix ..." still sniffs as turtle. Cap iterations
+    # so a pathological all-comments file can't loop forever.
+    for _ in range(64):
+        if not stripped.startswith("#"):
+            break
+        nl = stripped.find("\n")
+        if nl == -1:
+            break
+        stripped = stripped[nl + 1 :].lstrip()
+
+    head = stripped[:2048]
+    # XML signals (look at the very start -- comments before the XML
+    # decl are syntactically invalid, so we don't accept them).
+    if head.startswith("<?xml") or head.startswith("<rdf:RDF") or head.startswith("<RDF"):
+        if hint != "xml":
+            log.warning(
+                "format hint overridden by content sniff",
+                extra={"hint": hint, "sniffed": "xml"},
+            )
+        return "xml"
+
+    # Turtle signals.
+    if head.startswith("@prefix") or head.startswith("@base"):
+        if hint != "turtle":
+            log.warning(
+                "format hint overridden by content sniff",
+                extra={"hint": hint, "sniffed": "turtle"},
+            )
+        return "turtle"
+
+    # JSON-LD signals: a JSON document with an @context key reasonably
+    # near the front. The exact key may be quoted so allow either.
+    if head.startswith("{") and ('"@context"' in head[:1024] or "'@context'" in head[:1024]):
+        if hint != "json-ld":
+            log.warning(
+                "format hint overridden by content sniff",
+                extra={"hint": hint, "sniffed": "json-ld"},
+            )
+        return "json-ld"
+
+    return hint
+
+
 def _human_title_from_filename(filename: str) -> str:
     stem = PurePosixPath(filename).stem
     if not stem:
@@ -578,11 +650,43 @@ def import_from_file(
     if db is None:
         db = get_db()
 
-    fmt = _detect_format(filename)
+    hint = _detect_format(filename)
     text = file_content.decode("utf-8")
+    # Override the extension-based hint when the file's actual content
+    # disagrees -- the .owl extension is routinely used as a generic
+    # "ontology file" label even when the body is Turtle, and the
+    # bare rdflib XML parser fails with an opaque "Document is empty"
+    # error on Turtle input. The sniffer only fires on STRONG signals
+    # (``@prefix`` / ``<?xml`` / ``{"@context"``) so a correct hint is
+    # never overridden by ambiguous content.
+    fmt = _sniff_format_from_content(text, hint)
 
     rdf_graph = RDFGraph()
-    rdf_graph.parse(data=text, format=fmt)
+    try:
+        rdf_graph.parse(data=text, format=fmt)
+    except Exception as exc:
+        # Surface a diagnosis the user can act on. The common failure
+        # mode is "extension says X but content is Y and Y didn't sniff
+        # cleanly either" -- in that case suggest the likely format.
+        suggestion = ""
+        head_preview = text.lstrip("\ufeff").lstrip()[:120].replace("\n", " ")
+        if fmt == "xml" and ("@prefix" in text[:512] or "@base" in text[:512]):
+            suggestion = (
+                " The file has a .owl/.xml extension but its content "
+                "looks like Turtle (starts with '@prefix' or '@base'). "
+                "Rename the file with a .ttl extension and re-upload."
+            )
+        elif fmt == "turtle" and ("<?xml" in text[:512] or "<rdf:RDF" in text[:512]):
+            suggestion = (
+                " The file has a .ttl extension but its content looks "
+                "like RDF/XML. Rename the file with a .rdf or .owl "
+                "extension and re-upload."
+            )
+        raise ValueError(
+            f"Failed to parse {filename!r} as {fmt!r}: {exc}.{suggestion} "
+            f"First bytes: {head_preview!r}"
+        ) from exc
+
     triple_count = len(rdf_graph)
     if triple_count == 0:
         raise ValueError("Parsed file contains no RDF triples")
