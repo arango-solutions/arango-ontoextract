@@ -1244,6 +1244,7 @@ async def list_ontology_classes(
         return {"data": []}
     profile = normalize_include(include)
     return_clause = CLASS_SUMMARY_RETURN if profile == INCLUDE_SUMMARY else "RETURN c"
+    t0 = time.perf_counter()
     classes = list(
         run_aql(
             db,
@@ -1252,6 +1253,15 @@ async def list_ontology_classes(
             "SORT c.label ASC " + return_clause,
             bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
         )
+    )
+    log.info(
+        "list_ontology_classes timing",
+        extra={
+            "ontology_id": ontology_id,
+            "class_count": len(classes),
+            "include": profile,
+            "ms_aql": round((time.perf_counter() - t0) * 1000, 1),
+        },
     )
     return {"data": classes}
 
@@ -1467,20 +1477,49 @@ async def list_ontology_edges(
     ``summarize_edge`` is a 12-field dict comprehension per row.
     """
     db = get_db()
-    # Single round-trip for collection discovery + single AQL for edges
-    # and properties combined.  See ``_fetch_live_edges_and_properties``
-    # for why this matters (~8-9 s -> <1 s on WTW Ontology over a remote
-    # ArangoDB).
+    # Stage-level timing so the dev log surfaces where the WTW load
+    # cost actually goes after T2. Without this we were guessing
+    # between (a) network RTT to remote Arango, (b) AQL execution on
+    # a large dataset, (c) Python enrichment on 1000+ edges, (d) JSON
+    # serialization of the response. Each stage is logged separately
+    # plus a TOTAL line so a single click reveals the breakdown.
+    t0 = time.perf_counter()
     edges, properties_by_id = _fetch_live_edges_and_properties(db, ontology_id)
-    enrich_rdfs_range_class_edges(edges, properties_by_id)
+    t_fetch = time.perf_counter() - t0
 
+    t1 = time.perf_counter()
+    enrich_rdfs_range_class_edges(edges, properties_by_id)
+    t_enrich = time.perf_counter() - t1
+
+    t2 = time.perf_counter()
     for edge in edges:
         conf = compute_edge_confidence(edge)
         if conf is not None and edge.get("confidence") in (None, ""):
             edge["confidence"] = conf
+    t_conf = time.perf_counter() - t2
 
-    if normalize_include(include) == INCLUDE_SUMMARY:
+    t3 = time.perf_counter()
+    profile = normalize_include(include)
+    if profile == INCLUDE_SUMMARY:
         edges = [summarize_edge(e) for e in edges]
+    t_proj = time.perf_counter() - t3
+
+    log.info(
+        "list_ontology_edges timing",
+        extra={
+            "ontology_id": ontology_id,
+            "edge_count": len(edges),
+            "prop_count": len(properties_by_id),
+            "include": profile,
+            "ms_fetch_aql": round(t_fetch * 1000, 1),
+            "ms_enrich_rdfs": round(t_enrich * 1000, 1),
+            "ms_compute_conf": round(t_conf * 1000, 1),
+            "ms_project": round(t_proj * 1000, 1),
+            "ms_total_handler": round(
+                (t_fetch + t_enrich + t_conf + t_proj) * 1000, 1
+            ),
+        },
+    )
 
     return {"data": edges}
 
@@ -1771,20 +1810,38 @@ def _fetch_live_edges_and_properties(
     property doc, the exact shape ``enrich_rdfs_range_class_edges``
     consumes.
     """
+    t_collections = time.perf_counter()
     existing = {col["name"] for col in db.collections()}
     edge_cols = tuple(c for c in _LIVE_EDGE_COLLECTIONS if c in existing)
     prop_cols = tuple(c for c in _LIVE_PROP_COLLECTIONS if c in existing)
+    ms_collections = round((time.perf_counter() - t_collections) * 1000, 1)
 
     if not edge_cols and not prop_cols:
+        log.info(
+            "fetch_live_edges_and_properties: no collections exist",
+            extra={"ontology_id": ontology_id, "ms_collections": ms_collections},
+        )
         return [], {}
 
     query = _build_live_edges_and_props_query(edge_cols, prop_cols)
+    t_aql = time.perf_counter()
     rows = list(
         run_aql(
             db,
             query,
             bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
         )
+    )
+    ms_aql = round((time.perf_counter() - t_aql) * 1000, 1)
+    log.info(
+        "fetch_live_edges_and_properties stage timing",
+        extra={
+            "ontology_id": ontology_id,
+            "ms_collections": ms_collections,
+            "ms_aql": ms_aql,
+            "edge_cols": list(edge_cols),
+            "prop_cols": list(prop_cols),
+        },
     )
     if not rows:
         return [], {}
