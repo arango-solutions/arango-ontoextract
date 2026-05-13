@@ -36,6 +36,13 @@ from app.services.edge_confidence import (
     compute_edge_confidence,
     enrich_rdfs_range_class_edges,
 )
+from app.services.ontology_projections import (
+    CLASS_SUMMARY_RETURN,
+    EDGE_SUMMARY_RETURN,
+    INCLUDE_SUMMARY,
+    normalize_include,
+    summarize_edge,
+)
 from app.services.schema_extraction import (
     SchemaExtractionConfig,
     extract_schema,
@@ -1209,17 +1216,40 @@ async def promote_staging(
 
 
 @router.get("/{ontology_id}/classes")
-async def list_ontology_classes(ontology_id: str) -> dict[str, Any]:
-    """List all classes belonging to an ontology."""
+async def list_ontology_classes(
+    ontology_id: str,
+    include: str = Query(
+        "full",
+        description=(
+            "Field projection profile. ``full`` (default, legacy shape) returns "
+            "every field including ``evidence[]``. ``summary`` returns the "
+            "narrow allow-list the workspace canvas + asset explorer consume "
+            "(see ``app.services.ontology_projections.CLASS_SUMMARY_FIELDS``); "
+            "this is ~3x smaller on the WTW Ontology and is the recommended "
+            "profile for canvas/list views. Detail panels should use "
+            "``GET /{ontology_id}/classes/{class_key}`` for full-fidelity data."
+        ),
+    ),
+) -> dict[str, Any]:
+    """List all classes belonging to an ontology.
+
+    The ``?include=summary`` profile projects fields **inside AQL** rather
+    than in Python, so the dropped bytes never leave Arango. On the WTW
+    Ontology this turns the ``/classes`` payload from 943 KB into ~280 KB
+    (mostly by dropping ``evidence[]`` arrays, which the canvas does not
+    render). See ``ontology_projections.py`` for the allow-list.
+    """
     db = get_db()
     if not db.has_collection("ontology_classes"):
         return {"data": []}
+    profile = normalize_include(include)
+    return_clause = CLASS_SUMMARY_RETURN if profile == INCLUDE_SUMMARY else "RETURN c"
     classes = list(
         run_aql(
             db,
             "FOR c IN ontology_classes FILTER c.ontology_id == @oid "
             "AND c.expired == @never "
-            "SORT c.label ASC RETURN c",
+            "SORT c.label ASC " + return_clause,
             bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
         )
     )
@@ -1392,7 +1422,21 @@ _EDGE_HISTORY_COLLECTIONS = (
 
 
 @router.get("/{ontology_id}/edges")
-async def list_ontology_edges(ontology_id: str) -> dict[str, Any]:
+async def list_ontology_edges(
+    ontology_id: str,
+    include: str = Query(
+        "full",
+        description=(
+            "Field projection profile. ``full`` (default, legacy shape) returns "
+            "every field including ``evidence[]``. ``summary`` returns the "
+            "narrow allow-list the workspace canvas consumes (see "
+            "``app.services.ontology_projections.EDGE_SUMMARY_FIELDS``); this "
+            "is ~1.3x smaller on the WTW Ontology and is the recommended "
+            "profile for canvas views. Detail panels should fetch the full "
+            "edge via ``GET /{ontology_id}/edges/{edge_key}``."
+        ),
+    ),
+) -> dict[str, Any]:
     """List all edges for an ontology (PGT-aligned + legacy fallback).
 
     Each edge is annotated with a top-level ``confidence`` derived from
@@ -1408,6 +1452,19 @@ async def list_ontology_edges(ontology_id: str) -> dict[str, Any]:
     no confidence percentage, even though the real relationship name (e.g.
     "generates Risk Profile") and a 0.9 confidence with grounded evidence
     live one hop away on the property document.
+
+    Projection ordering note
+    ------------------------
+
+    The ``?include=summary`` projection happens **after** enrichment and
+    confidence computation, not as an AQL projection. The workspace
+    canvas needs the lifted ``label`` / merged ``confidence`` on
+    ``rdfs_range_class`` edges, and those fields are produced in Python.
+    Doing AQL-level projection first would either lose the merge or
+    require the projection to also include ``evidence`` so
+    ``compute_edge_confidence`` could still derive a value -- defeating
+    the size win. Projecting after the merge is correct and cheap:
+    ``summarize_edge`` is a 12-field dict comprehension per row.
     """
     db = get_db()
     edges: list[dict[str, Any]] = []
@@ -1445,6 +1502,9 @@ async def list_ontology_edges(ontology_id: str) -> dict[str, Any]:
         conf = compute_edge_confidence(edge)
         if conf is not None and edge.get("confidence") in (None, ""):
             edge["confidence"] = conf
+
+    if normalize_include(include) == INCLUDE_SUMMARY:
+        edges = [summarize_edge(e) for e in edges]
 
     return {"data": edges}
 
