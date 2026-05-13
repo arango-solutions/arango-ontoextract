@@ -25,7 +25,6 @@ jest.mock("@/lib/api-client", () => {
 
 // Re-import the mocked ApiError so test code can construct rejection values
 // of the same class the SUT does instanceof checks against.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { ApiError: MockApiError } = require("@/lib/api-client") as {
   ApiError: new (
     status: number,

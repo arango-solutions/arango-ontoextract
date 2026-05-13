@@ -58,6 +58,19 @@ export default function VCRTimeline({
     return sortByTimestamp([...fetchedEvents, ...injectedEvents]);
   }, [fetchedEvents, injectedEvents, sortByTimestamp]);
 
+  // Latch that the next time ``events`` becomes non-empty, the slider
+  // should jump to the rightmost position. Re-armed on initial mount,
+  // on every ontology switch, and after every ``fetchTimeline``
+  // completion. Consumed (cleared) by the snap effect below once it
+  // has actually applied the snap. A flag-based design beats comparing
+  // ``events.length`` to a per-mount/per-ontology snapshot, which is
+  // racy: on ontology switch the snap effect sees the STALE events
+  // closure (still the previous ontology's data) before
+  // ``setFetchedEvents([])`` flushes, so any condition keyed on
+  // ``events.length`` would fire prematurely against old data and
+  // never re-fire when the new fetch resolves.
+  const needsSnapToLastRef = useRef(true);
+
   const fetchTimeline = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -67,6 +80,11 @@ export default function VCRTimeline({
       );
       const raw: TimelineEvent[] = Array.isArray(res) ? res : (res.data ?? []);
       setFetchedEvents(sortByTimestamp(raw));
+      // Re-arm so the snap effect lands on the latest event for this
+      // ontology once the merged ``events`` list (fetched +
+      // injected) is recomputed on the next render.
+      needsSnapToLastRef.current = true;
+      setPlaying(false);
     } catch (err) {
       setError(
         err instanceof ApiError
@@ -82,15 +100,34 @@ export default function VCRTimeline({
     fetchTimeline();
   }, [fetchTimeline]);
 
-  const prevEventsLenRef = useRef(0);
+  // When the parent switches to a different ontology, drop the previous
+  // ontology's events so the loading state appears immediately instead
+  // of flashing the stale dataset, reset playback, and re-arm the
+  // snap-to-last latch. Without the snap re-arm, switching to a new
+  // ontology with MORE events than the previous one would leave the
+  // slider mid-history, which combined with
+  // ``onVisibleEntitiesChange`` filters the canvas to a partial
+  // ontology -- the user's exact complaint.
   useEffect(() => {
-    if (events.length > 0 && prevEventsLenRef.current === 0) {
+    setFetchedEvents([]);
+    setCurrentIndex(0);
+    setPlaying(false);
+    needsSnapToLastRef.current = true;
+  }, [ontologyId]);
+
+  // Snap to the latest event when the latch is armed and events are
+  // available. Bounds-clamp for the shrink case (an entity was deleted
+  // mid-session, or ``injectedEvents`` were removed) -- without this
+  // ``currentIndex`` could point past ``events.length - 1`` and
+  // crash the safeIndex math below.
+  useEffect(() => {
+    if (events.length === 0) return;
+    if (needsSnapToLastRef.current) {
+      setCurrentIndex(events.length - 1);
+      needsSnapToLastRef.current = false;
+    } else if (currentIndex >= events.length) {
       setCurrentIndex(events.length - 1);
     }
-    if (currentIndex >= events.length && events.length > 0) {
-      setCurrentIndex(events.length - 1);
-    }
-    prevEventsLenRef.current = events.length;
   }, [events.length, currentIndex]);
 
   useEffect(() => {
