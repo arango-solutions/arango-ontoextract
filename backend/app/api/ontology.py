@@ -1467,35 +1467,11 @@ async def list_ontology_edges(
     ``summarize_edge`` is a 12-field dict comprehension per row.
     """
     db = get_db()
-    edges: list[dict[str, Any]] = []
-    for edge_col in (
-        "subclass_of",
-        "rdfs_domain",
-        "rdfs_range_class",
-        "equivalent_class",
-        "has_property",
-        "related_to",
-    ):
-        if db.has_collection(edge_col):
-            query = (
-                f"FOR e IN {edge_col} FILTER e.ontology_id == @oid "
-                "AND e.expired == @never "
-                "RETURN MERGE(e, {edge_type: @et})"
-            )
-            result = list(
-                run_aql(
-                    db,
-                    query,
-                    bind_vars={
-                        "oid": ontology_id,
-                        "et": edge_col,
-                        "never": NEVER_EXPIRES,
-                    },
-                )
-            )
-            edges.extend(result)
-
-    properties_by_id = _live_properties_by_id(db, ontology_id)
+    # Single round-trip for collection discovery + single AQL for edges
+    # and properties combined.  See ``_fetch_live_edges_and_properties``
+    # for why this matters (~8-9 s -> <1 s on WTW Ontology over a remote
+    # ArangoDB).
+    edges, properties_by_id = _fetch_live_edges_and_properties(db, ontology_id)
     enrich_rdfs_range_class_edges(edges, properties_by_id)
 
     for edge in edges:
@@ -1658,6 +1634,13 @@ def _live_properties_by_id(db: Any, ontology_id: str) -> dict[str, dict[str, Any
     without a per-edge round-trip. Both property collections are keyed by
     ``_id`` (full ``collection/key`` form) since that is what the
     ``rdfs_range_class._from`` field stores.
+
+    Note: ``list_ontology_edges`` no longer calls this directly -- it uses
+    :func:`_fetch_live_edges_and_properties` which folds the edge-collection
+    fan-out and the property-collection fan-out into a single AQL.  This
+    function is retained for callers that only need the property map (e.g.
+    future single-edge enrichment fast paths) and for backwards compatibility
+    with downstream code/tests.
     """
     out: dict[str, dict[str, Any]] = {}
     for col_name in ("ontology_object_properties", "ontology_datatype_properties"):
@@ -1675,6 +1658,151 @@ def _live_properties_by_id(db: Any, ontology_id: str) -> dict[str, dict[str, Any
             if isinstance(pid, str):
                 out[pid] = row
     return out
+
+
+# Allowlist of every edge collection ``list_ontology_edges`` is willing to
+# read. The values are interpolated into the generated AQL string (one
+# ``FOR`` subquery per name), so they MUST stay a fixed set of trusted
+# identifiers -- never accept user input here.
+_LIVE_EDGE_COLLECTIONS: tuple[str, ...] = (
+    "subclass_of",
+    "rdfs_domain",
+    "rdfs_range_class",
+    "equivalent_class",
+    "has_property",
+    "related_to",
+)
+
+# Same allowlist contract as ``_LIVE_EDGE_COLLECTIONS`` -- these names are
+# inlined into AQL.
+_LIVE_PROP_COLLECTIONS: tuple[str, ...] = (
+    "ontology_object_properties",
+    "ontology_datatype_properties",
+)
+
+# Cache the generated AQL keyed by ``(edge_cols, prop_cols)``.  The set
+# of existing collections is effectively static during a process's
+# lifetime (created at ontology bootstrap, never dropped at runtime), so
+# we will hit one or two distinct cache keys for the lifetime of the
+# server.  Avoids re-stringifying the query on every request.
+_LIVE_EDGES_AND_PROPS_QUERY_CACHE: dict[
+    tuple[tuple[str, ...], tuple[str, ...]], str
+] = {}
+
+
+def _build_live_edges_and_props_query(
+    edge_collections: tuple[str, ...],
+    prop_collections: tuple[str, ...],
+) -> str:
+    """Build the single-shot AQL that returns ``{edges, props}``.
+
+    AQL parses (and validates) every collection reference at submission
+    time, so we can only emit subqueries for collections that actually
+    exist.  The two ``FLATTEN`` calls handle the 0/1/N-collection cases
+    uniformly: each subquery yields an array, and ``FLATTEN(..., 1)``
+    concatenates them.
+    """
+    cache_key = (edge_collections, prop_collections)
+    cached = _LIVE_EDGES_AND_PROPS_QUERY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    edge_subqueries = ",\n        ".join(
+        f"(FOR e IN {col} "
+        "FILTER e.ontology_id == @oid AND e.expired == @never "
+        f'RETURN MERGE(e, {{edge_type: "{col}"}}))'
+        for col in edge_collections
+    )
+    prop_subqueries = ",\n        ".join(
+        f"(FOR p IN {col} "
+        "FILTER p.ontology_id == @oid AND p.expired == @never "
+        "RETURN p)"
+        for col in prop_collections
+    )
+
+    edges_expr = (
+        f"FLATTEN([\n        {edge_subqueries}\n    ], 1)"
+        if edge_collections
+        else "[]"
+    )
+    props_expr = (
+        f"FLATTEN([\n        {prop_subqueries}\n    ], 1)"
+        if prop_collections
+        else "[]"
+    )
+
+    query = (
+        f"LET edges = {edges_expr}\n"
+        f"LET props = {props_expr}\n"
+        "RETURN { edges: edges, props: props }"
+    )
+    _LIVE_EDGES_AND_PROPS_QUERY_CACHE[cache_key] = query
+    return query
+
+
+def _fetch_live_edges_and_properties(
+    db: Any, ontology_id: str
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Fetch live edges + property map for an ontology in 2 round-trips.
+
+    Replaces the previous fan-out which issued one ``has_collection`` HTTP
+    call plus one AQL per edge collection (6) plus the same pair per
+    property collection (2), totalling ~8-14 sequential round-trips against
+    the database.  On a remote ArangoDB with ~50-100 ms RTT that
+    translated to ~8-9 s of pure latency on the WTW Ontology, before any
+    JSON or rendering work, which the user perceived as "the canvas is
+    just stuck after I click an ontology".
+
+    The new shape:
+
+    1. Single ``db.collections()`` HTTP call to discover which of the
+       allowlisted edge / property collections actually exist (older
+       ontologies and mid-migration databases may be missing some).
+    2. Single AQL query with two ``FLATTEN`` subqueries returning
+       ``{edges, props}`` in one cursor.
+
+    Returns
+    -------
+    ``(edges, properties_by_id)`` -- ``edges`` is a list of edge docs
+    each annotated with an ``edge_type`` field naming the source
+    collection, mirroring the legacy per-collection ``MERGE`` step so
+    downstream enrichment / projection code is unchanged. ``properties_by_id``
+    is a mapping from property ``_id`` (full ``collection/key``) to
+    property doc, the exact shape ``enrich_rdfs_range_class_edges``
+    consumes.
+    """
+    existing = {col["name"] for col in db.collections()}
+    edge_cols = tuple(c for c in _LIVE_EDGE_COLLECTIONS if c in existing)
+    prop_cols = tuple(c for c in _LIVE_PROP_COLLECTIONS if c in existing)
+
+    if not edge_cols and not prop_cols:
+        return [], {}
+
+    query = _build_live_edges_and_props_query(edge_cols, prop_cols)
+    rows = list(
+        run_aql(
+            db,
+            query,
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        )
+    )
+    if not rows:
+        return [], {}
+
+    payload = rows[0] or {}
+    edges_raw = payload.get("edges") or []
+    props_raw = payload.get("props") or []
+
+    edges: list[dict[str, Any]] = [e for e in edges_raw if isinstance(e, dict)]
+    properties_by_id: dict[str, dict[str, Any]] = {}
+    for p in props_raw:
+        if not isinstance(p, dict):
+            continue
+        pid = p.get("_id")
+        if isinstance(pid, str):
+            properties_by_id[pid] = p
+
+    return edges, properties_by_id
 
 
 def _find_edge_collection_for_key(db: Any, edge_key: str) -> tuple[str, dict[str, Any]] | None:
