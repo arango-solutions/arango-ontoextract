@@ -10,6 +10,7 @@ Exact set overlap is the default matcher. Labels are normalized (lower-cased,
 whitespace-collapsed) before comparison; downstream code can override
 :func:`normalize` to plug in lemmatization or alias-aware matching.
 """
+
 from __future__ import annotations
 
 import re
@@ -125,7 +126,9 @@ class PRF:
 def _prf(tp: int, fp: int, fn: int) -> PRF:
     precision = tp / (tp + fp) if (tp + fp) else 0.0
     recall = tp / (tp + fn) if (tp + fn) else 0.0
-    f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) else 0.0
+    f1 = (
+        (2 * precision * recall) / (precision + recall) if (precision + recall) else 0.0
+    )
     return PRF(precision=precision, recall=recall, f1=f1, tp=tp, fp=fp, fn=fn)
 
 
@@ -263,7 +266,9 @@ def aggregate(document_scores: list[DocumentScore]) -> AggregateReport:
     micro_fn_r = sum(d.relations.fn for d in document_scores)
     total_duration_ms = sum(d.duration_ms for d in document_scores)
     avg_duration_ms = total_duration_ms / len(document_scores)
-    total_estimated_cost_usd = sum(_float_meta(d, "estimated_cost_usd") for d in document_scores)
+    total_estimated_cost_usd = sum(
+        _float_meta(d, "estimated_cost_usd") for d in document_scores
+    )
     total_tokens = sum(_int_meta(d, "total_tokens") for d in document_scores)
 
     def _macro(getter) -> PRF:
@@ -276,7 +281,11 @@ def aggregate(document_scores: list[DocumentScore]) -> AggregateReport:
             return _prf(0, 0, 0)
         precision = sum(p.precision for p in non_empty) / len(non_empty)
         recall = sum(p.recall for p in non_empty) / len(non_empty)
-        f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) else 0.0
+        f1 = (
+            (2 * precision * recall) / (precision + recall)
+            if (precision + recall)
+            else 0.0
+        )
         # macro averages don't carry TP/FP/FN as meaningful integers; report sums for transparency
         tp = sum(p.tp for p in non_empty)
         fp = sum(p.fp for p in non_empty)
@@ -298,9 +307,13 @@ def aggregate(document_scores: list[DocumentScore]) -> AggregateReport:
         total_estimated_cost_usd=total_estimated_cost_usd,
         total_tokens=total_tokens,
         quality_per_dollar=(
-            quality_score / total_estimated_cost_usd if total_estimated_cost_usd else None
+            quality_score / total_estimated_cost_usd
+            if total_estimated_cost_usd
+            else None
         ),
-        quality_per_minute=quality_score / duration_minutes if duration_minutes else None,
+        quality_per_minute=quality_score / duration_minutes
+        if duration_minutes
+        else None,
     )
 
 

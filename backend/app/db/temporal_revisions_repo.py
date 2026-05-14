@@ -373,8 +373,7 @@ def supersede(
                 expired_version_key=prior.get("existing_version"),
                 skipped=True,
                 skipped_reason=(
-                    "prior revision with same "
-                    "(triggering_doc_id, entity_id, action) exists"
+                    "prior revision with same (triggering_doc_id, entity_id, action) exists"
                 ),
             )
     else:
@@ -436,9 +435,7 @@ def supersede(
     elif action == ACTION_GAP_FILL:
         if not new_edge or not new_edge_collection:
             raise ValueError("GAP_FILL requires new_edge and new_edge_collection")
-        edge_doc = _apply_gap_fill(
-            db, edge_collection=new_edge_collection, new_edge=new_edge
-        )
+        edge_doc = _apply_gap_fill(db, edge_collection=new_edge_collection, new_edge=new_edge)
         new_edge_key = edge_doc.get("_key")
         extra = {
             "new_edge_id": edge_doc.get("_id"),
@@ -447,9 +444,7 @@ def supersede(
         }
 
     elif action == ACTION_RETRACT:
-        retracted = _apply_retract(
-            db, collection=existing_collection, key=existing_key
-        )
+        retracted = _apply_retract(db, collection=existing_collection, key=existing_key)
         if retracted is None:
             log.warning(
                 "supersede RETRACT no-op",

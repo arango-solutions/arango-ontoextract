@@ -1,4 +1,5 @@
 """End-to-end smoke test for the benchmark runner using a tiny synthetic corpus."""
+
 from __future__ import annotations
 
 import json
@@ -133,10 +134,12 @@ class TestRunBenchmark:
         corpus = _write_fixture(tmp_path)
         aliases = tmp_path / "aliases.json"
         aliases.write_text(
-            json.dumps({
-                "labels": {"alice": ["alice person"]},
-                "relations": {"knows": ["is acquainted with"]},
-            }),
+            json.dumps(
+                {
+                    "labels": {"alice": ["alice person"]},
+                    "relations": {"knows": ["is acquainted with"]},
+                }
+            ),
             encoding="utf-8",
         )
 

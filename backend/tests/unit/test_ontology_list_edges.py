@@ -33,13 +33,12 @@ from fastapi.testclient import TestClient
 
 from app.api.ontology import (
     _LIVE_EDGE_COLLECTIONS,
-    _LIVE_PROP_COLLECTIONS,
     _LIVE_EDGES_AND_PROPS_QUERY_CACHE,
+    _LIVE_PROP_COLLECTIONS,
     _build_live_edges_and_props_query,
     _fetch_live_edges_and_properties,
 )
 from app.db.temporal_constants import NEVER_EXPIRES
-
 
 # ---------------------------------------------------------------------------
 # Fixtures: stubs for db.collections() and run_aql so tests run in <1s.
@@ -91,9 +90,7 @@ class TestBuildLiveEdgesAndPropsQuery:
         assert "rdfs_range_class" not in q
 
     def test_tags_each_edge_with_its_collection_via_edge_type(self):
-        q = _build_live_edges_and_props_query(
-            ("subclass_of", "has_property"), ()
-        )
+        q = _build_live_edges_and_props_query(("subclass_of", "has_property"), ())
         assert 'edge_type: "subclass_of"' in q
         assert 'edge_type: "has_property"' in q
 
@@ -109,9 +106,7 @@ class TestBuildLiveEdgesAndPropsQuery:
         assert "FOR e IN subclass_of" in q1
 
     def test_returns_combined_payload_shape(self):
-        q = _build_live_edges_and_props_query(
-            ("subclass_of",), ("ontology_object_properties",)
-        )
+        q = _build_live_edges_and_props_query(("subclass_of",), ("ontology_object_properties",))
         # The envelope the endpoint reads back: a single document with
         # both lists. Pinning this exact substring catches accidental
         # renames like ``edges_list`` that would silently break the
@@ -129,9 +124,7 @@ class TestBuildLiveEdgesAndPropsQuery:
         assert a is b
 
     def test_different_collection_sets_produce_different_queries(self):
-        a = _build_live_edges_and_props_query(
-            ("subclass_of",), ("ontology_object_properties",)
-        )
+        a = _build_live_edges_and_props_query(("subclass_of",), ("ontology_object_properties",))
         b = _build_live_edges_and_props_query(
             ("subclass_of", "rdfs_domain"), ("ontology_object_properties",)
         )
@@ -184,9 +177,7 @@ class TestFetchLiveEdgesAndProperties:
         # that pre-dates the rdfs_range_class / equivalent_class
         # collections. The query must NOT reference missing collections,
         # otherwise AQL parse-time validation would 500 the request.
-        db = _make_db_with_existing(
-            ["subclass_of", "has_property", "ontology_object_properties"]
-        )
+        db = _make_db_with_existing(["subclass_of", "has_property", "ontology_object_properties"])
         with patch("app.api.ontology.run_aql") as run_aql_mock:
             run_aql_mock.return_value = [{"edges": [], "props": []}]
             _fetch_live_edges_and_properties(db, "ont1")
@@ -215,9 +206,7 @@ class TestFetchLiveEdgesAndProperties:
             assert bind == {"oid": "ont42", "never": NEVER_EXPIRES}
 
     def test_returns_edges_and_property_map_from_envelope(self):
-        db = _make_db_with_existing(
-            ["subclass_of", "ontology_object_properties"]
-        )
+        db = _make_db_with_existing(["subclass_of", "ontology_object_properties"])
         edge_doc = {
             "_key": "e1",
             "_id": "subclass_of/e1",
@@ -231,9 +220,7 @@ class TestFetchLiveEdgesAndProperties:
             "ontology_id": "ont1",
         }
         with patch("app.api.ontology.run_aql") as run_aql_mock:
-            run_aql_mock.return_value = [
-                {"edges": [edge_doc], "props": [prop_doc]}
-            ]
+            run_aql_mock.return_value = [{"edges": [edge_doc], "props": [prop_doc]}]
             edges, props_by_id = _fetch_live_edges_and_properties(db, "ont1")
 
         assert edges == [edge_doc]
@@ -264,9 +251,7 @@ class TestFetchLiveEdgesAndProperties:
         # Defensive: if a future AQL bug returns a stray scalar inside
         # ``edges`` or ``props``, we must filter it out rather than
         # crash the endpoint.
-        db = _make_db_with_existing(
-            ["subclass_of", "ontology_object_properties"]
-        )
+        db = _make_db_with_existing(["subclass_of", "ontology_object_properties"])
         edge_doc = {"_key": "e1", "_id": "subclass_of/e1"}
         prop_doc = {
             "_key": "p1",
@@ -305,9 +290,7 @@ class TestListOntologyEdgesEndpoint:
         # the canvas requires that the owning property's label /
         # confidence / evidence be lifted onto the edge at read time.
         # This is the historical wire contract; T2 must preserve it.
-        db = _make_db_with_existing(
-            ["rdfs_range_class", "ontology_object_properties"]
-        )
+        db = _make_db_with_existing(["rdfs_range_class", "ontology_object_properties"])
         prop_doc = {
             "_key": "p1",
             "_id": "ontology_object_properties/p1",
@@ -328,9 +311,7 @@ class TestListOntologyEdgesEndpoint:
             "edge_type": "rdfs_range_class",
         }
         with patch("app.api.ontology.run_aql") as run_aql_mock:
-            run_aql_mock.return_value = [
-                {"edges": [edge_doc], "props": [prop_doc]}
-            ]
+            run_aql_mock.return_value = [{"edges": [edge_doc], "props": [prop_doc]}]
             client = self._client(db)
             try:
                 r = client.get("/api/v1/ontology/ont1/edges")
@@ -360,16 +341,12 @@ class TestListOntologyEdgesEndpoint:
             "edge_type": "subclass_of",
             "label": "rdfs:subClassOf",
             "confidence": 0.95,
-            "evidence": [
-                {"text": "long evidence passage" * 100, "evidence_confidence": 0.95}
-            ],
+            "evidence": [{"text": "long evidence passage" * 100, "evidence_confidence": 0.95}],
             "ontology_id": "ont1",
             "expired": NEVER_EXPIRES,
         }
         with patch("app.api.ontology.run_aql") as run_aql_mock:
-            run_aql_mock.return_value = [
-                {"edges": [edge_doc], "props": []}
-            ]
+            run_aql_mock.return_value = [{"edges": [edge_doc], "props": []}]
             client = self._client(db)
             try:
                 r = client.get("/api/v1/ontology/ont1/edges?include=summary")

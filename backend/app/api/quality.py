@@ -99,8 +99,7 @@ class RecallRequest(BaseModel):
     rdf_format: str = Field(
         "turtle",
         description=(
-            "rdflib format hint: ``turtle`` (default), ``xml`` (RDF/XML), "
-            "``nt``, ``json-ld``."
+            "rdflib format hint: ``turtle`` (default), ``xml`` (RDF/XML), ``nt``, ``json-ld``."
         ),
     )
     match_threshold: float = Field(

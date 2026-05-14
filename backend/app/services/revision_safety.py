@@ -165,9 +165,7 @@ class RevisionRateLimiter:
         self._window = (
             window_seconds
             if window_seconds is not None
-            else float(
-                getattr(settings, "belief_revision_circuit_window_seconds", 60.0)
-            )
+            else float(getattr(settings, "belief_revision_circuit_window_seconds", 60.0))
         )
         self._lock = threading.Lock()
         self._window_start: float = time.time()
@@ -222,9 +220,7 @@ class RevisionRateLimiter:
                 "max_per_window": self._max,
                 "window_seconds": self._window,
                 "current_count": self._count,
-                "window_remaining_seconds": max(
-                    0.0, self._window - (now - self._window_start)
-                ),
+                "window_remaining_seconds": max(0.0, self._window - (now - self._window_start)),
                 "tripped": self._tripped_at is not None,
                 "tripped_at": self._tripped_at,
             }
@@ -351,7 +347,7 @@ class ConsolidationCursor:
         }
 
     @classmethod
-    def from_doc(cls, doc: dict[str, Any]) -> "ConsolidationCursor":
+    def from_doc(cls, doc: dict[str, Any]) -> ConsolidationCursor:
         return cls(
             job_key=str(doc.get("_key") or ""),
             ontology_id=str(doc.get("ontology_id") or ""),
@@ -439,9 +435,6 @@ def list_recent_jobs(
         )
         bind = {"oid": ontology_id, "limit": limit}
     else:
-        aql = (
-            f"FOR j IN {_CURSOR_COLLECTION} "
-            "SORT j.started_at DESC LIMIT @limit RETURN j"
-        )
+        aql = f"FOR j IN {_CURSOR_COLLECTION} SORT j.started_at DESC LIMIT @limit RETURN j"
         bind = {"limit": limit}
     return list(run_aql(db, aql, bind_vars=bind))

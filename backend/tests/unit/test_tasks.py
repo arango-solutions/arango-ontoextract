@@ -146,9 +146,7 @@ class TestEnsureVectorIndex:
         ]
         col.count.return_value = 16
         db.collection.return_value = col
-        db._conn.send_request.side_effect = RequestsReadTimeout(
-            "Read timed out. (read timeout=60)"
-        )
+        db._conn.send_request.side_effect = RequestsReadTimeout("Read timed out. (read timeout=60)")
         mock_get_db.return_value = db
 
         # Should NOT raise -- the recovery branch must convert the timeout
@@ -160,9 +158,7 @@ class TestEnsureVectorIndex:
         assert col.indexes.call_count == 2
 
     @patch("app.tasks.get_db")
-    def test_timeout_then_index_still_missing_raises_runtime_error(
-        self, mock_get_db
-    ):
+    def test_timeout_then_index_still_missing_raises_runtime_error(self, mock_get_db):
         # If the timeout is real (cluster never wrote the index), we must
         # still raise so the document is correctly marked FAILED -- the
         # recovery path is for the "client gave up but cluster finished"
@@ -178,18 +174,14 @@ class TestEnsureVectorIndex:
         ]
         col.count.return_value = 16
         db.collection.return_value = col
-        db._conn.send_request.side_effect = RequestsReadTimeout(
-            "Read timed out. (read timeout=60)"
-        )
+        db._conn.send_request.side_effect = RequestsReadTimeout("Read timed out. (read timeout=60)")
         mock_get_db.return_value = db
 
         with pytest.raises(RuntimeError, match="timed out and the index is not present"):
             _ensure_vector_index()
 
     @patch("app.tasks.get_db")
-    def test_connection_error_also_recoverable_when_index_present(
-        self, mock_get_db
-    ):
+    def test_connection_error_also_recoverable_when_index_present(self, mock_get_db):
         # Same recovery shape for transient connection drops: the cluster
         # may have completed before the connection died.
         from requests.exceptions import ConnectionError as RequestsConnectionError

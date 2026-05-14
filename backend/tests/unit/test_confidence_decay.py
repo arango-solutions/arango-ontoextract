@@ -35,9 +35,7 @@ class TestComputeDecayedConfidencePure:
 
     def test_negative_age_returns_input(self):
         # Defensive: clock skew can produce negative ages; treat as fresh.
-        assert (
-            compute_decayed_confidence(0.8, -10, half_life_days=90, floor=0.05) == 0.8
-        )
+        assert compute_decayed_confidence(0.8, -10, half_life_days=90, floor=0.05) == 0.8
 
     def test_one_half_life_halves_confidence(self):
         seconds_90d = 90 * 86400
@@ -80,15 +78,11 @@ def _stub_db_with_classes(classes: list[dict[str, Any]]):
 
 
 def _patch_settings(monkeypatch, *, enabled: bool, half_life=90.0, floor=0.05):
-    monkeypatch.setattr(
-        confidence_decay.settings, "belief_revision_decay_enabled", enabled
-    )
+    monkeypatch.setattr(confidence_decay.settings, "belief_revision_decay_enabled", enabled)
     monkeypatch.setattr(
         confidence_decay.settings, "belief_revision_decay_half_life_days", half_life
     )
-    monkeypatch.setattr(
-        confidence_decay.settings, "belief_revision_decay_floor", floor
-    )
+    monkeypatch.setattr(confidence_decay.settings, "belief_revision_decay_floor", floor)
 
 
 def _patch_run_aql(monkeypatch, classes: list[dict[str, Any]]):
@@ -241,8 +235,8 @@ class TestApplyDecayEnabledPath:
         now = 1_700_000_000.0
         cls = {
             "_key": "X",
-            "confidence": 0.8,            # immutable extraction confidence
-            "current_confidence": 0.4,    # previously decayed to 0.4
+            "confidence": 0.8,  # immutable extraction confidence
+            "current_confidence": 0.4,  # previously decayed to 0.4
             "created": now - 90 * 86400,
         }
         db, cls_col = _stub_db_with_classes([cls])

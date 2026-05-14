@@ -12,7 +12,6 @@ import pytest
 
 from app.services import quality_recall as svc
 
-
 # ---------------------------------------------------------------------------
 # Label normalisation + similarity
 # ---------------------------------------------------------------------------
@@ -92,9 +91,12 @@ class TestParseReferenceOntology:
         assert any(c.label == "Vehicle" for c in concepts)
 
     def test_skips_owl_built_ins(self):
-        ttl = _TURTLE_TAXONOMY + """
+        ttl = (
+            _TURTLE_TAXONOMY
+            + """
         owl:Thing a owl:Class .
         """
+        )
         concepts = svc.parse_reference_ontology(ttl)
         assert all("owl#Thing" not in c.uri for c in concepts)
 
@@ -253,8 +255,7 @@ class TestComputeRecall:
                 db,
                 ontology_id="onto_1",
                 reference_content=(
-                    "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
-                    "# no classes declared\n"
+                    "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n# no classes declared\n"
                 ),
                 include_object_properties=False,
             )

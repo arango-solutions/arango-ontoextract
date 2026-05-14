@@ -822,8 +822,8 @@ def _materialize_to_graph(
     extracted_col = db.collection("extracted_from")
     subclass_col = db.collection("subclass_of")
 
-    class_keys: dict[str, str] = {}     # label -> key (legacy name; really label_to_key)
-    uri_to_key: dict[str, str] = {}     # full URI -> key
+    class_keys: dict[str, str] = {}  # label -> key (legacy name; really label_to_key)
+    uri_to_key: dict[str, str] = {}  # full URI -> key
     fragment_to_key: dict[str, str] = {}  # URI fragment -> key (for resolver tier 2)
     class_parent_uris: list[tuple[str, str, list[dict[str, Any]]]] = []
     deferred_rels: list[dict[str, Any]] = []

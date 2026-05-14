@@ -207,9 +207,7 @@ class TestGetClassDetail:
             resp = client.get("/api/v1/ontology/test_onto/classes/Person")
         assert resp.status_code == 404
 
-    def test_relationships_query_uses_distinct_to_dedup_property_ids(
-        self, client, _mock_db
-    ):
+    def test_relationships_query_uses_distinct_to_dedup_property_ids(self, client, _mock_db):
         """Regression: the previous Cartesian-style ``FOR e IN rdfs_domain
         FOR p IN ontology_object_properties`` join emitted one row per
         matching domain edge, so a property with two live ``rdfs_domain``
@@ -240,12 +238,8 @@ class TestGetClassDetail:
         assert resp.status_code == 200
 
         # Both PGT queries must use the distinct-prop-ids pattern.
-        attr_query = next(
-            q for q in captured_queries if "ontology_datatype_properties" in q
-        )
-        rel_query = next(
-            q for q in captured_queries if "ontology_object_properties" in q
-        )
+        attr_query = next(q for q in captured_queries if "ontology_datatype_properties" in q)
+        rel_query = next(q for q in captured_queries if "ontology_object_properties" in q)
         for q in (attr_query, rel_query):
             assert "RETURN DISTINCT e._from" in q, (
                 "PGT query must pre-collect distinct property ids -- the "

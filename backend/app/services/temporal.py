@@ -574,9 +574,7 @@ FOR doc IN @@col
   LIMIT 1
   RETURN { _from: doc._from, _to: doc._to, ontology_id: doc.ontology_id }"""
 
-    pivot_results = list(
-        run_aql(db, pivot_query, bind_vars={"@col": collection, "key": key})
-    )
+    pivot_results = list(run_aql(db, pivot_query, bind_vars={"@col": collection, "key": key}))
     if not pivot_results:
         return []
 

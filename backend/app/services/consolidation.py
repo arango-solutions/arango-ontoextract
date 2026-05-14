@@ -372,9 +372,7 @@ def run_consolidation(
                 db=db,
             )
         cursor.stage = "decay"
-        cursor.processed_count = (
-            len(report.rules.violations) if report.rules else 0
-        )
+        cursor.processed_count = len(report.rules.violations) if report.rules else 0
         revision_safety.checkpoint_cursor(cursor, db=db)
     except Exception as exc:
         log.exception("consolidation: rules stage failed")
@@ -399,9 +397,7 @@ def run_consolidation(
         )
         report.ms_decay = round((time.perf_counter() - t0) * 1000, 1)
         cursor.stage = "stale"
-        cursor.processed_count += (
-            report.decay.classes_decayed if report.decay else 0
-        )
+        cursor.processed_count += report.decay.classes_decayed if report.decay else 0
         revision_safety.checkpoint_cursor(cursor, db=db)
     except Exception as exc:
         log.exception("consolidation: decay stage failed")

@@ -74,12 +74,14 @@ def _create_mdi_index(db: StandardDatabase, collection_name: str) -> None:
             return
         log.warning(
             "mdi-prefixed index creation returned %s on %s — trying fallback",
-            resp.status_code, collection_name,
+            resp.status_code,
+            collection_name,
         )
     except Exception as exc:
         log.warning(
             "mdi-prefixed index creation failed on %s: %s — trying fallback",
-            collection_name, exc,
+            collection_name,
+            exc,
         )
 
     try:

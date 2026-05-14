@@ -229,9 +229,7 @@ async def _map_phase(
     )
     batch_texts = _batch_chunks(chunks, batch_size)
 
-    sem: asyncio.Semaphore | None = (
-        asyncio.Semaphore(cap) if cap and cap > 0 else None
-    )
+    sem: asyncio.Semaphore | None = asyncio.Semaphore(cap) if cap and cap > 0 else None
 
     async def _bounded(
         batch_text: str,

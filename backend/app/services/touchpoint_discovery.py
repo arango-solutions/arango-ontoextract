@@ -233,9 +233,7 @@ def score_touchpoint(new: NewConcept, existing: dict[str, Any]) -> Touchpoint | 
     existing_chunks = existing.get("source_chunk_ids") or existing.get("chunk_ids") or []
     existing_emb = existing.get("embedding")
 
-    uri_exact = (
-        1.0 if (new.uri and existing_uri and new.uri == existing_uri) else 0.0
-    )
+    uri_exact = 1.0 if (new.uri and existing_uri and new.uri == existing_uri) else 0.0
     label_exact = (
         1.0
         if (new.label and existing_label and _normalise(new.label) == _normalise(existing_label))
@@ -314,9 +312,7 @@ def discover_touchpoints(
     if not new_concepts:
         return report
     if not db.has_collection("ontology_classes"):
-        log.info(
-            "touchpoint_discovery: ontology_classes missing -- nothing to compare against"
-        )
+        log.info("touchpoint_discovery: ontology_classes missing -- nothing to compare against")
         return report
 
     bind = {"oid": ontology_id, "never": NEVER_EXPIRES}

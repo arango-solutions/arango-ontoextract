@@ -220,9 +220,7 @@ def enable_ibr_pipeline():
     the node to actually run the four phases instead of skipping with
     ``reason="feature_flag_off"``.
     """
-    with patch(
-        "app.extraction.agents.belief_revision.settings"
-    ) as mock_settings:
+    with patch("app.extraction.agents.belief_revision.settings") as mock_settings:
         mock_settings.belief_revision_pipeline_enabled = True
         # The LLM-apply path reads ``settings.llm_extraction_model``
         # for ``agent_version``; provide a stable value so the test
@@ -322,9 +320,7 @@ def _run_node(
     structural_lookup = structural_lookup or {}
 
     def _structural_for(touchpoint: Touchpoint) -> StructuralFeatures:
-        return structural_lookup.get(
-            touchpoint.existing_class_id, StructuralFeatures()
-        )
+        return structural_lookup.get(touchpoint.existing_class_id, StructuralFeatures())
 
     # Default LLM proposal: a stub whose action+confidence matches the
     # mechanical verdict's already-chosen action so the LLM code path
@@ -400,6 +396,7 @@ def _run_node(
             "app.extraction.agents.belief_revision.supersede_from_llm_proposal",
         ) as mock_super_llm,
     ):
+
         async def _fake_revise(contexts: Any) -> list[Any]:
             return [proposal] * len(contexts)
 
@@ -461,11 +458,15 @@ class TestQ1EscrowAccountSubClassOfAccount:
     ):
         ontology_id = "ont_q1_financial_services"
         account_id = _seed_class(
-            test_db, ontology_id=ontology_id, label="Account",
+            test_db,
+            ontology_id=ontology_id,
+            label="Account",
             description="Generic financial account",
         )
         _seed_class(
-            test_db, ontology_id=ontology_id, label="CheckingAccount",
+            test_db,
+            ontology_id=ontology_id,
+            label="CheckingAccount",
             description="Existing Account subtype",
         )
 
@@ -516,8 +517,7 @@ class TestQ1EscrowAccountSubClassOfAccount:
             f"(rule: {action.get('rule_id')!r})"
         )
         assert action["action"] == ACTION_GAP_FILL, (
-            f"Q.1: expected GAP_FILL action (combined score >= 0.30), got "
-            f"{action['action']!r}"
+            f"Q.1: expected GAP_FILL action (combined score >= 0.30), got {action['action']!r}"
         )
         assert action["agent_type"] == AGENT_MECHANICAL, (
             "Q.1: sibling-pattern is a mechanical rule; LLM should not "
@@ -546,9 +546,7 @@ class TestQ1EscrowAccountSubClassOfAccount:
         summary = out["belief_revision_summary"]
         assert summary["status"] == "completed"
         assert summary["touchpoints_discovered"] >= 1
-        assert summary["auto_applied"] >= 1, (
-            "Q.1 mechanical GAP_FILL should auto-apply, not flag"
-        )
+        assert summary["auto_applied"] >= 1, "Q.1 mechanical GAP_FILL should auto-apply, not flag"
         # IBR.12 metric shape: verdict_counts is dict[str, int]; the
         # GAP-FILLING bucket must be populated.
         assert summary["verdict_counts"].get(VERDICT_GAP_FILLING, 0) >= 1
@@ -579,7 +577,9 @@ class TestQ2aExtendedTransactionPolymorphicRange:
     ):
         ontology_id = "ont_q2a_financial"
         transaction_id = _seed_class(
-            test_db, ontology_id=ontology_id, label="Transaction",
+            test_db,
+            ontology_id=ontology_id,
+            label="Transaction",
             description="A financial transaction",
         )
 
@@ -644,9 +644,7 @@ class TestQ2bTransactionDetailEscalates:
         enable_ibr_pipeline,
     ):
         ontology_id = "ont_q2b_financial"
-        transaction_id = _seed_class(
-            test_db, ontology_id=ontology_id, label="Transaction"
-        )
+        transaction_id = _seed_class(test_db, ontology_id=ontology_id, label="Transaction")
 
         # Even with strong structural signals (shared properties), the
         # Detail suffix MUST short-circuit to UNCERTAIN -- this is the
@@ -707,9 +705,7 @@ class TestQ2cTransactionChannelEscalates:
         enable_ibr_pipeline,
     ):
         ontology_id = "ont_q2c_financial"
-        transaction_id = _seed_class(
-            test_db, ontology_id=ontology_id, label="Transaction"
-        )
+        transaction_id = _seed_class(test_db, ontology_id=ontology_id, label="Transaction")
 
         out = _run_node(
             new_classes=[_make_extracted_class("TransactionChannel")],
@@ -795,9 +791,7 @@ class TestQ3aBatchAccountSubtypes:
         # Filter to the actions targeting Account specifically (each
         # candidate may also touch CheckingAccount with a weaker score,
         # which will land in REFINED -- that's not what we're asserting).
-        account_actions = [
-            a for a in actions if a.get("existing_entity_id") == account_id
-        ]
+        account_actions = [a for a in actions if a.get("existing_entity_id") == account_id]
         labels_proposed = {a["new_concept_label"] for a in account_actions}
 
         # Every candidate must produce an Account touchpoint that
@@ -893,8 +887,7 @@ class TestQ3cNegativeCoClassifierSuffix:
             existing_class_id=account_id,
         )
         assert action is not None, (
-            f"Q.3c: {label} touchpoint missing -- did the discovery "
-            f"threshold change?"
+            f"Q.3c: {label} touchpoint missing -- did the discovery threshold change?"
         )
         assert action["verdict"] != VERDICT_GAP_FILLING, (
             f"Q.3c REGRESSION: {label} emitted GAP-FILLING despite the "

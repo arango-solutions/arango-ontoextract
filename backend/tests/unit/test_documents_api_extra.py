@@ -48,8 +48,7 @@ class TestDocumentHelpers:
         file = _upload_file(
             filename="deck.pptx",
             content_type=(
-                "application/vnd.openxmlformats-officedocument."
-                "presentationml.presentation"
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             ),
         )
         assert _validate_mime(file).endswith("presentationml.presentation")

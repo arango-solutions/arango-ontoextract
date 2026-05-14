@@ -83,9 +83,7 @@ class TestMissingCollection:
         # Patch run_aql so a stray call would surface as an
         # AssertionError rather than silently noop.
         def boom(*_a, **_kw):
-            raise AssertionError(
-                "run_aql must not be invoked when the collection is missing"
-            )
+            raise AssertionError("run_aql must not be invoked when the collection is missing")
 
         monkeypatch.setattr(edge_dedup, "run_aql", boom)
 
@@ -121,15 +119,11 @@ class TestDryRunPreview:
         ]
         captured = _patch_run_aql(monkeypatch, [groups])
 
-        report = dedupe_live_edges(
-            db, "ont-1", "rdfs_domain", dry_run=True
-        )
+        report = dedupe_live_edges(db, "ont-1", "rdfs_domain", dry_run=True)
 
         # No UPDATE statement should have been issued.
         assert captured["n"] == 1
-        update_calls = [
-            c for c in captured["calls"] if "UPDATE" in c["query"]
-        ]
+        update_calls = [c for c in captured["calls"] if "UPDATE" in c["query"]]
         assert update_calls == []
 
         assert report.dry_run is True
@@ -179,9 +173,7 @@ class TestApplyExpiresDuplicates:
         monkeypatch.setattr(edge_dedup.time, "time", lambda: 9999.0)
         captured = _patch_run_aql(monkeypatch, [groups, MagicMock()])
 
-        report = dedupe_live_edges(
-            db, "ont-1", "rdfs_domain", dry_run=False
-        )
+        report = dedupe_live_edges(db, "ont-1", "rdfs_domain", dry_run=False)
 
         # Two AQL calls: one SELECT (groups), one UPDATE.
         assert captured["n"] == 2
@@ -207,9 +199,7 @@ class TestApplyExpiresDuplicates:
         db = _db_with_collections("rdfs_domain")
         captured = _patch_run_aql(monkeypatch, [[]])
 
-        report = dedupe_live_edges(
-            db, "ont-1", "rdfs_domain", dry_run=False
-        )
+        report = dedupe_live_edges(db, "ont-1", "rdfs_domain", dry_run=False)
 
         assert captured["n"] == 1  # only the SELECT, no UPDATE
         assert report.pairs_with_duplicates == 0
@@ -234,16 +224,10 @@ class TestIdempotency:
         ]
         # Sequence: first call's SELECT -> first call's UPDATE ->
         # second call's SELECT (returns []) -- no second UPDATE.
-        captured = _patch_run_aql(
-            monkeypatch, [groups_first, MagicMock(), []]
-        )
+        captured = _patch_run_aql(monkeypatch, [groups_first, MagicMock(), []])
 
-        first = dedupe_live_edges(
-            db, "ont-1", "rdfs_domain", dry_run=False
-        )
-        second = dedupe_live_edges(
-            db, "ont-1", "rdfs_domain", dry_run=False
-        )
+        first = dedupe_live_edges(db, "ont-1", "rdfs_domain", dry_run=False)
+        second = dedupe_live_edges(db, "ont-1", "rdfs_domain", dry_run=False)
 
         assert first.extra_edges == 1
         assert second.extra_edges == 0

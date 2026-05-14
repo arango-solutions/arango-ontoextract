@@ -20,7 +20,6 @@ import pytest
 from app.db import revision_meta_repo as rev_repo
 from app.services import revision_safety
 
-
 # ---------------------------------------------------------------------------
 # Guard #1 -- Published-item protection
 # ---------------------------------------------------------------------------
@@ -37,13 +36,9 @@ class TestPublishedProtection:
     )
     def test_structural_revisions_on_approved_are_flagged(self, action):
         approved = {"_key": "Account", "status": "approved"}
-        assert revision_safety.should_flag_for_curation(
-            entity=approved, proposed_action=action
-        )
+        assert revision_safety.should_flag_for_curation(entity=approved, proposed_action=action)
         assert (
-            revision_safety.downgrade_action_for_published(
-                entity=approved, proposed_action=action
-            )
+            revision_safety.downgrade_action_for_published(entity=approved, proposed_action=action)
             == rev_repo.ACTION_FLAG_FOR_CURATION
         )
 
@@ -91,17 +86,13 @@ class TestPublishedProtection:
 
 class TestRevisionRateLimiter:
     def test_under_cap_increments_returns_true(self):
-        limiter = revision_safety.RevisionRateLimiter(
-            max_per_window=3, window_seconds=10.0
-        )
+        limiter = revision_safety.RevisionRateLimiter(max_per_window=3, window_seconds=10.0)
         assert limiter.check_and_increment() is True
         assert limiter.check_and_increment() is True
         assert limiter.check_and_increment() is True
 
     def test_over_cap_returns_false_and_stays_tripped(self):
-        limiter = revision_safety.RevisionRateLimiter(
-            max_per_window=2, window_seconds=10.0
-        )
+        limiter = revision_safety.RevisionRateLimiter(max_per_window=2, window_seconds=10.0)
         assert limiter.check_and_increment() is True
         assert limiter.check_and_increment() is True
         # Third call within the window must trip the breaker
@@ -113,18 +104,14 @@ class TestRevisionRateLimiter:
         assert snapshot["tripped_at"] is not None
 
     def test_zero_cap_disables_breaker(self):
-        limiter = revision_safety.RevisionRateLimiter(
-            max_per_window=0, window_seconds=10.0
-        )
+        limiter = revision_safety.RevisionRateLimiter(max_per_window=0, window_seconds=10.0)
         # Even 1000 calls must succeed when the breaker is disabled
         for _ in range(1000):
             assert limiter.check_and_increment() is True
 
     def test_window_rotation_resets_count(self):
         # Use a very small window so the rotation fires quickly
-        limiter = revision_safety.RevisionRateLimiter(
-            max_per_window=1, window_seconds=0.05
-        )
+        limiter = revision_safety.RevisionRateLimiter(max_per_window=1, window_seconds=0.05)
         assert limiter.check_and_increment() is True
         assert limiter.check_and_increment() is False  # tripped
         time.sleep(0.06)  # rotate past the window
@@ -134,9 +121,7 @@ class TestRevisionRateLimiter:
         assert snapshot["tripped"] is False
 
     def test_reset_clears_state(self):
-        limiter = revision_safety.RevisionRateLimiter(
-            max_per_window=1, window_seconds=10.0
-        )
+        limiter = revision_safety.RevisionRateLimiter(max_per_window=1, window_seconds=10.0)
         limiter.check_and_increment()
         limiter.check_and_increment()  # trip
         assert limiter.current_rate()["tripped"] is True
@@ -239,9 +224,7 @@ class TestConsolidationCursor:
 
     def test_checkpoint_inserts_then_updates(self):
         db, col, doc_get_fn = _stub_db_with_cursor_collection()
-        cursor = revision_safety.ConsolidationCursor(
-            job_key="job_1", ontology_id="onto_1"
-        )
+        cursor = revision_safety.ConsolidationCursor(job_key="job_1", ontology_id="onto_1")
         with patch("app.services.revision_safety.doc_get", side_effect=doc_get_fn):
             revision_safety.checkpoint_cursor(cursor, db=db)
             assert col.docs["job_1"]["ontology_id"] == "onto_1"
@@ -264,6 +247,11 @@ class TestConsolidationCursor:
         )
         with patch("app.services.revision_safety.doc_get", side_effect=doc_get_fn):
             revision_safety.checkpoint_cursor(cursor, db=db)
+            # Sanity: prove the write half landed in the stub before we test
+            # the read half — otherwise a bug in load_cursor + a no-op
+            # checkpoint_cursor could both look "passing" together.
+            assert col.docs["job_1"]["processed_count"] == 7
+            assert col.docs["job_1"]["stage"] == "rules"
             loaded = revision_safety.load_cursor("job_1", db=db)
         assert loaded is not None
         assert loaded.job_key == "job_1"
@@ -275,9 +263,7 @@ class TestConsolidationCursor:
         db.has_collection.return_value = True
         col = _StubCollection()
         db.collection.return_value = col
-        with patch(
-            "app.services.revision_safety.doc_get", side_effect=lambda c, k: c.get(k)
-        ):
+        with patch("app.services.revision_safety.doc_get", side_effect=lambda c, k: c.get(k)):
             assert revision_safety.load_cursor("missing", db=db) is None
 
     def test_load_cursor_returns_none_when_collection_missing(self):
@@ -292,9 +278,7 @@ class TestConsolidationCursor:
             "app.services.revision_safety.run_aql",
             return_value=iter([{"_key": "job_1"}]),
         ) as mock_run:
-            result = revision_safety.list_recent_jobs(
-                ontology_id="onto_1", limit=5, db=db
-            )
+            result = revision_safety.list_recent_jobs(ontology_id="onto_1", limit=5, db=db)
         assert result == [{"_key": "job_1"}]
         bind = mock_run.call_args.kwargs["bind_vars"]
         assert bind["oid"] == "onto_1"

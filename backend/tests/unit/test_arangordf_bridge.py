@@ -591,8 +591,7 @@ class TestImportFromFile:
         )
 
         assert result["format"] == "turtle", (
-            "registry should record the parsed format, not the misleading "
-            ".owl extension hint"
+            "registry should record the parsed format, not the misleading .owl extension hint"
         )
         assert result["registry_key"] == "wtw"
         # And rdflib actually parsed it -- proven by the import being

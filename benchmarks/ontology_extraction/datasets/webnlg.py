@@ -14,6 +14,7 @@ For our purposes, a single WebNLG *entry* is one ``GoldDocument``:
   ``"entity"`` (WebNLG does not carry fine-grained NER types at triple level).
 * ``gold_relations`` — the ``(subject, predicate, object)`` triples.
 """
+
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
@@ -24,7 +25,9 @@ from benchmarks.ontology_extraction.datasets.base import GoldDocument
 from benchmarks.ontology_extraction.metrics import ClassMention, Triple
 
 
-def load(root: Path, limit: int | None = None, merge_lex: bool = False) -> Iterator[GoldDocument]:
+def load(
+    root: Path, limit: int | None = None, merge_lex: bool = False
+) -> Iterator[GoldDocument]:
     """Yield :class:`GoldDocument` instances from WebNLG fetched files.
 
     ``root`` should be ``samples/corpora/external/webnlg/``. The loader picks
@@ -49,7 +52,9 @@ def load(root: Path, limit: int | None = None, merge_lex: bool = False) -> Itera
     for i, entry in enumerate(entries):
         if limit is not None and i >= limit:
             return
-        doc = _entry_to_gold_document(entry, fallback_id=f"webnlg-{i:06d}", merge_lex=merge_lex)
+        doc = _entry_to_gold_document(
+            entry, fallback_id=f"webnlg-{i:06d}", merge_lex=merge_lex
+        )
         if doc is not None:
             yield doc
 
@@ -76,7 +81,9 @@ def _entry_to_gold_document(
         gold_classes.add(ClassMention.of(obj, "entity"))
         gold_relations.add(Triple.of(subj, pred, obj))
 
-    lex_texts = [el.text.strip() for el in entry.findall("lex") if el.text and el.text.strip()]
+    lex_texts = [
+        el.text.strip() for el in entry.findall("lex") if el.text and el.text.strip()
+    ]
     if not lex_texts:
         return None
     text = "\n\n".join(lex_texts) if merge_lex else lex_texts[0]

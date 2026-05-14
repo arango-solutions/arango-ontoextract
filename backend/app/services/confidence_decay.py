@@ -199,9 +199,7 @@ def apply_confidence_decay(
         if half_life_days is not None
         else float(settings.belief_revision_decay_half_life_days)
     )
-    decay_floor = (
-        floor if floor is not None else float(settings.belief_revision_decay_floor)
-    )
+    decay_floor = floor if floor is not None else float(settings.belief_revision_decay_floor)
     report = DecayReport(
         ontology_id=ontology_id,
         enabled=enabled,
@@ -221,9 +219,7 @@ def apply_confidence_decay(
         return report
 
     if not db.has_collection("ontology_classes"):
-        log.info(
-            "confidence_decay: ontology_classes collection missing -- nothing to do"
-        )
+        log.info("confidence_decay: ontology_classes collection missing -- nothing to do")
         return report
 
     if now is None:

@@ -152,8 +152,7 @@ def record_revision(
         raise ValueError(f"unknown action {action!r}; expected one of {sorted(ACTIONS)}")
     if agent_type not in (AGENT_MECHANICAL, AGENT_LLM):
         raise ValueError(
-            f"unknown agent_type {agent_type!r}; expected one of "
-            f"{[AGENT_MECHANICAL, AGENT_LLM]}"
+            f"unknown agent_type {agent_type!r}; expected one of {[AGENT_MECHANICAL, AGENT_LLM]}"
         )
     if status is None:
         status = STATUS_PENDING if action == ACTION_FLAG_FOR_CURATION else STATUS_APPLIED

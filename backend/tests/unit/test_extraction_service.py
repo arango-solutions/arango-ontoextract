@@ -1038,9 +1038,7 @@ class TestPersistsBeliefRevisionSummary:
         the run finalisation."""
         from app.services.extraction import execute_run
 
-        mock_db, mock_col, run_record, pipeline_state = self._setup(
-            None, include_field=False
-        )
+        mock_db, mock_col, run_record, pipeline_state = self._setup(None, include_field=False)
         assert "belief_revision_summary" not in pipeline_state
         mock_get_db.return_value = mock_db
         mock_get_col.return_value = mock_col
@@ -1140,9 +1138,7 @@ class TestPersistsBeliefRevisionSummary:
         failed_writes = [
             c.args[0]
             for c in mock_col.update.call_args_list
-            if c.args
-            and isinstance(c.args[0], dict)
-            and c.args[0].get("status") == "failed"
+            if c.args and isinstance(c.args[0], dict) and c.args[0].get("status") == "failed"
         ]
         assert failed_writes, "expected a status=failed update"
         failed_stats = failed_writes[-1]["stats"]

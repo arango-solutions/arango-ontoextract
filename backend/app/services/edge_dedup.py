@@ -68,10 +68,12 @@ DEDUP_SOURCE_MARKER = "edge_dedup_v1"
 #: expire. Keep this allowlist tight -- adding a collection here
 #: implicitly asserts "this edge has no per-edge state, so collapsing
 #: duplicates loses no information".
-DEDUPABLE_COLLECTIONS = frozenset({
-    "rdfs_domain",
-    "rdfs_range_class",
-})
+DEDUPABLE_COLLECTIONS = frozenset(
+    {
+        "rdfs_domain",
+        "rdfs_range_class",
+    }
+)
 
 
 @dataclass
@@ -143,15 +145,12 @@ def dedupe_live_edges(
             f"{sorted(DEDUPABLE_COLLECTIONS)}. Refusing to operate."
         )
 
-    report = DedupReport(
-        ontology_id=ontology_id, collection=collection, dry_run=dry_run
-    )
+    report = DedupReport(ontology_id=ontology_id, collection=collection, dry_run=dry_run)
 
     if not db.has_collection(collection):
         report.skipped_collection_missing = True
         log.info(
-            "edge_dedup: collection %r missing for ontology %s -- "
-            "nothing to do",
+            "edge_dedup: collection %r missing for ontology %s -- nothing to do",
             collection,
             ontology_id,
         )
@@ -166,7 +165,7 @@ def dedupe_live_edges(
             db,
             f"FOR e IN {collection} "
             "FILTER e.ontology_id == @oid AND e.expired == @never "
-            "COLLECT pair = CONCAT(e._from, \"|\", e._to) INTO group "
+            'COLLECT pair = CONCAT(e._from, "|", e._to) INTO group '
             "FILTER LENGTH(group) > 1 "
             "LET edges = ("
             "  FOR g IN group "
@@ -192,9 +191,7 @@ def dedupe_live_edges(
             continue
         kept = edges[0]["_key"]
         extras = [e["_key"] for e in edges[1:]]
-        report.deduped.append(
-            DedupedPair(pair=grp["pair"], kept_key=kept, expired_keys=extras)
-        )
+        report.deduped.append(DedupedPair(pair=grp["pair"], kept_key=kept, expired_keys=extras))
         report.pairs_with_duplicates += 1
         report.extra_edges += len(extras)
         keys_to_expire.extend(extras)
@@ -212,7 +209,7 @@ def dedupe_live_edges(
         "FILTER e._key IN @keys "
         "UPDATE e WITH { "
         "  expired: @now, "
-        "  dedup_meta: { source: @marker, reason: \"duplicate_pair\" } "
+        '  dedup_meta: { source: @marker, reason: "duplicate_pair" } '
         f"}} IN {collection}",
         bind_vars={
             "keys": keys_to_expire,
@@ -221,8 +218,7 @@ def dedupe_live_edges(
         },
     )
     log.info(
-        "edge_dedup: expired %d duplicate %s edges across %d pairs "
-        "in ontology %s",
+        "edge_dedup: expired %d duplicate %s edges across %d pairs in ontology %s",
         len(keys_to_expire),
         collection,
         report.pairs_with_duplicates,

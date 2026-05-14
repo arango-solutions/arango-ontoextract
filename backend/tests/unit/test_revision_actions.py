@@ -15,7 +15,6 @@ from app.db import revision_meta_repo as rev_repo
 from app.db.temporal_revisions_repo import SupersedeResult
 from app.services import revision_actions
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -114,14 +113,10 @@ class TestAcceptRevision:
         accepted = _pending_row(status=rev_repo.STATUS_ACCEPTED)
         with (
             patch.object(rev_repo, "get_revision", return_value=accepted),
-            patch(
-                "app.services.revision_actions.supersede_repo.supersede"
-            ) as mock_super,
+            patch("app.services.revision_actions.supersede_repo.supersede") as mock_super,
             patch.object(rev_repo, "update_status") as mock_update,
         ):
-            result = revision_actions.accept_revision(
-                "rev_1", decided_by="alice", db=MagicMock()
-            )
+            result = revision_actions.accept_revision("rev_1", decided_by="alice", db=MagicMock())
         assert result.already_decided is True
         assert result.decision == rev_repo.STATUS_ACCEPTED
         # Critical: no supersede or status update must fire on idempotent path
@@ -129,11 +124,11 @@ class TestAcceptRevision:
         mock_update.assert_not_called()
 
     def test_missing_row_raises_not_found(self):
-        with patch.object(rev_repo, "get_revision", return_value=None):
-            with pytest.raises(revision_actions.RevisionNotFoundError):
-                revision_actions.accept_revision(
-                    "missing", decided_by="alice", db=MagicMock()
-                )
+        with (
+            patch.object(rev_repo, "get_revision", return_value=None),
+            pytest.raises(revision_actions.RevisionNotFoundError),
+        ):
+            revision_actions.accept_revision("missing", decided_by="alice", db=MagicMock())
 
     def test_supersede_value_error_is_translated(self):
         row = _pending_row(action=rev_repo.ACTION_REVISE)
@@ -143,29 +138,23 @@ class TestAcceptRevision:
                 "app.services.revision_actions.supersede_repo.supersede",
                 side_effect=ValueError("REVISE requires new_vertex_data"),
             ),
+            pytest.raises(revision_actions.RevisionActionError) as exc,
         ):
-            with pytest.raises(revision_actions.RevisionActionError) as exc:
-                revision_actions.accept_revision(
-                    "rev_1", decided_by="alice", db=MagicMock()
-                )
+            revision_actions.accept_revision("rev_1", decided_by="alice", db=MagicMock())
         assert "new_vertex_data" in str(exc.value)
 
     def test_flag_for_curation_accepted_is_no_op_supersede(self):
         row = _pending_row(action=rev_repo.ACTION_FLAG_FOR_CURATION)
         with (
             patch.object(rev_repo, "get_revision", return_value=row),
-            patch(
-                "app.services.revision_actions.supersede_repo.supersede"
-            ) as mock_super,
+            patch("app.services.revision_actions.supersede_repo.supersede") as mock_super,
             patch.object(
                 rev_repo,
                 "update_status",
                 return_value={**row, "status": rev_repo.STATUS_ACCEPTED},
             ),
         ):
-            result = revision_actions.accept_revision(
-                "rev_1", decided_by="alice", db=MagicMock()
-            )
+            result = revision_actions.accept_revision("rev_1", decided_by="alice", db=MagicMock())
         # FLAG_FOR_CURATION accept must NOT invoke supersede (no graph change)
         mock_super.assert_not_called()
         assert result.supersede_result is not None
@@ -182,9 +171,7 @@ class TestRejectRevision:
         row = _pending_row()
         with (
             patch.object(rev_repo, "get_revision", return_value=row),
-            patch(
-                "app.services.revision_actions.supersede_repo.supersede"
-            ) as mock_super,
+            patch("app.services.revision_actions.supersede_repo.supersede") as mock_super,
             patch.object(
                 rev_repo,
                 "update_status",
@@ -209,18 +196,16 @@ class TestRejectRevision:
             patch.object(rev_repo, "get_revision", return_value=rejected),
             patch.object(rev_repo, "update_status") as mock_update,
         ):
-            result = revision_actions.reject_revision(
-                "rev_1", decided_by="bob", db=MagicMock()
-            )
+            result = revision_actions.reject_revision("rev_1", decided_by="bob", db=MagicMock())
         assert result.already_decided is True
         mock_update.assert_not_called()
 
     def test_missing_row_raises_not_found(self):
-        with patch.object(rev_repo, "get_revision", return_value=None):
-            with pytest.raises(revision_actions.RevisionNotFoundError):
-                revision_actions.reject_revision(
-                    "missing", decided_by="bob", db=MagicMock()
-                )
+        with (
+            patch.object(rev_repo, "get_revision", return_value=None),
+            pytest.raises(revision_actions.RevisionNotFoundError),
+        ):
+            revision_actions.reject_revision("missing", decided_by="bob", db=MagicMock())
 
 
 # ---------------------------------------------------------------------------
@@ -283,9 +268,7 @@ class TestModifyRevision:
         modified = _pending_row(status=rev_repo.STATUS_MODIFIED)
         with (
             patch.object(rev_repo, "get_revision", return_value=modified),
-            patch(
-                "app.services.revision_actions.supersede_repo.supersede"
-            ) as mock_super,
+            patch("app.services.revision_actions.supersede_repo.supersede") as mock_super,
             patch.object(rev_repo, "update_status") as mock_update,
         ):
             result = revision_actions.modify_revision(

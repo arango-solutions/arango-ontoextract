@@ -165,8 +165,8 @@ def test_synonym_cycle_violation_becomes_redundant_revision(monkeypatch):
 
     persisted = repo.record_revision(
         ontology_id="OID",
-        verdict=violation.suggested_action,           # passed straight from rule
-        action=repo.ACTION_FLAG_FOR_CURATION,         # REDUNDANT defers to ER
+        verdict=violation.suggested_action,  # passed straight from rule
+        action=repo.ACTION_FLAG_FOR_CURATION,  # REDUNDANT defers to ER
         agent_type=repo.AGENT_MECHANICAL,
         agent_version="rule_engine@v1",
         triggering_doc_id="doc_42",
@@ -174,7 +174,7 @@ def test_synonym_cycle_violation_becomes_redundant_revision(monkeypatch):
         evidence_quotes=[touchpoint.reasoning],
         reasoning=violation.description,
         confidence_before=None,
-        confidence_after=touchpoint.combined_score,    # touchpoint score feeds confidence
+        confidence_after=touchpoint.combined_score,  # touchpoint score feeds confidence
         db=db_repo,
     )
     assert persisted["verdict"] == repo.VERDICT_REDUNDANT
@@ -200,9 +200,7 @@ def test_decayed_class_then_touchpoint_chain(monkeypatch):
         "created": now - 60 * 86400,
     }
     cls_col = MagicMock()
-    db_decay = _stub_db_with(
-        "ontology_classes", collections={"ontology_classes": cls_col}
-    )
+    db_decay = _stub_db_with("ontology_classes", collections={"ontology_classes": cls_col})
 
     def fake_decay_run_aql(_db, _aql, *, bind_vars=None):
         return iter([cls])

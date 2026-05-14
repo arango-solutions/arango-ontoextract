@@ -44,7 +44,6 @@ from __future__ import annotations
 
 from typing import Any, Final
 
-
 # ---------------------------------------------------------------------------
 # Allow-list of fields kept in the summary projection.
 # ---------------------------------------------------------------------------
@@ -115,6 +114,7 @@ EDGE_SUMMARY_FIELDS: Final[tuple[str, ...]] = (
 # variable of the caller -- both endpoints use ``c`` for class loops and
 # ``e`` for edge loops.
 
+
 def _aql_return_clause(var: str, fields: tuple[str, ...]) -> str:
     """Build a ``RETURN { _key: c._key, ... }`` clause for the given fields.
 
@@ -139,6 +139,7 @@ EDGE_SUMMARY_RETURN: Final[str] = _aql_return_clause("e", EDGE_SUMMARY_FIELDS)
 # project it down (e.g. in tests, or in code paths that compute fields in
 # Python like ``compute_edge_confidence`` and need the merged-then-projected
 # shape). Returns a NEW dict so the caller can mutate the original safely.
+
 
 def summarize_class(doc: dict[str, Any]) -> dict[str, Any]:
     """Return a ``CLASS_SUMMARY_FIELDS``-only copy of ``doc``.

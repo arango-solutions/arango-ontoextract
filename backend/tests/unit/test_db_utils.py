@@ -153,8 +153,8 @@ class TestInsertTemporalEdgeIfAbsent:
             now=42.0,
             extra_fields={
                 "expired": 1234.0,  # malicious / mistaken
-                "created": 0.0,     # malicious / mistaken
-                "_from": "wrong/0", # malicious / mistaken
+                "created": 0.0,  # malicious / mistaken
+                "_from": "wrong/0",  # malicious / mistaken
                 "extra": "kept",
             },
         )

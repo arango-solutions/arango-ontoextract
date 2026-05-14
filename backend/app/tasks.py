@@ -178,14 +178,12 @@ def _ensure_vector_index() -> None:
         for idx in cast("list[dict[str, Any]]", col.indexes()):
             if idx.get("name") == _VECTOR_INDEX_NAME:
                 log.info(
-                    "[ingest] vector index %s present after client timeout "
-                    "-- treating as success",
+                    "[ingest] vector index %s present after client timeout -- treating as success",
                     _VECTOR_INDEX_NAME,
                 )
                 return
         raise RuntimeError(
-            f"Vector index creation timed out and the index is not present "
-            f"on the cluster: {exc}"
+            f"Vector index creation timed out and the index is not present on the cluster: {exc}"
         ) from exc
 
     if resp.status_code in (200, 201):

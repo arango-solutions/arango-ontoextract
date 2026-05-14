@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
@@ -33,9 +33,7 @@ def _report(**overrides):
 class TestConsolidateOntologyEndpoint:
     @pytest.mark.asyncio
     async def test_passes_through_query_params_to_service(self):
-        with patch(
-            "app.api.admin.run_consolidation", return_value=_report()
-        ) as mock_run:
+        with patch("app.api.admin.run_consolidation", return_value=_report()) as mock_run:
             result = await consolidate_ontology(
                 ontology_id="onto_1",
                 dry_run=True,
@@ -54,12 +52,14 @@ class TestConsolidateOntologyEndpoint:
 
     @pytest.mark.asyncio
     async def test_500_when_service_raises(self):
-        with patch(
-            "app.api.admin.run_consolidation",
-            side_effect=RuntimeError("DB down"),
+        with (
+            patch(
+                "app.api.admin.run_consolidation",
+                side_effect=RuntimeError("DB down"),
+            ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await consolidate_ontology(ontology_id="onto_1")
+            await consolidate_ontology(ontology_id="onto_1")
         assert exc_info.value.status_code == 500
 
     @pytest.mark.asyncio
@@ -67,9 +67,7 @@ class TestConsolidateOntologyEndpoint:
         # When called via the test client we'd see Query(...) defaults
         # unwrap; here we pass dry_run=False explicitly to verify the
         # service receives a literal False.
-        with patch(
-            "app.api.admin.run_consolidation", return_value=_report()
-        ) as mock_run:
+        with patch("app.api.admin.run_consolidation", return_value=_report()) as mock_run:
             await consolidate_ontology(ontology_id="onto_1", dry_run=False)
         assert mock_run.call_args.kwargs["dry_run"] is False
 
@@ -81,9 +79,7 @@ class TestListConsolidationJobsEndpoint:
             "app.api.admin.list_recent_jobs",
             return_value=[{"_key": "job_1"}],
         ) as mock_list:
-            result = await list_consolidation_jobs(
-                ontology_id="onto_1", limit=5
-            )
+            result = await list_consolidation_jobs(ontology_id="onto_1", limit=5)
         kwargs = mock_list.call_args.kwargs
         assert kwargs["ontology_id"] == "onto_1"
         assert kwargs["limit"] == 5
@@ -105,9 +101,11 @@ class TestListConsolidationJobsEndpoint:
 class TestGetConsolidationJobEndpoint:
     @pytest.mark.asyncio
     async def test_404_when_missing(self):
-        with patch("app.api.admin.load_cursor", return_value=None):
-            with pytest.raises(HTTPException) as exc_info:
-                await get_consolidation_job("missing")
+        with (
+            patch("app.api.admin.load_cursor", return_value=None),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await get_consolidation_job("missing")
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio

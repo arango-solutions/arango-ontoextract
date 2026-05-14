@@ -93,20 +93,20 @@ INTERVAL=1
 while true; do
     BACKEND_READY=false
     FRONTEND_READY=false
-    
+
     if curl -sf "http://127.0.0.1:${BACKEND_PORT}/health" > /dev/null 2>&1; then
         BACKEND_READY=true
     fi
-    
+
     if curl -sf "http://127.0.0.1:3000/" > /dev/null 2>&1; then
         FRONTEND_READY=true
     fi
-    
+
     if [ "$BACKEND_READY" = true ] && [ "$FRONTEND_READY" = true ]; then
         echo "==> Backend and frontend are ready."
         break
     fi
-    
+
     RETRIES=$((RETRIES - 1))
     if [ "$RETRIES" -le 0 ]; then
         echo "ERROR: Services did not become healthy in time" >&2

@@ -11,7 +11,7 @@
 ### Subagent 1A: Database Schema & Migration Framework
 
 ```
-You are implementing the database schema and migration framework for the 
+You are implementing the database schema and migration framework for the
 Arango-OntoExtract (AOE) platform.
 
 CONTEXT:
@@ -19,7 +19,7 @@ CONTEXT:
 - Read PRD.md Section 5.3 (Temporal Ontology Versioning) for interval semantics
 - Read backend/app/db/AGENTS.md for package boundaries
 - Read backend/app/config.py for deployment mode awareness (local_docker vs cluster)
-- The existing backend/app/db/schema.py has a basic schema — you are replacing it 
+- The existing backend/app/db/schema.py has a basic schema — you are replacing it
   with a proper migration framework
 
 YOUR TASKS (from IMPLEMENTATION_PLAN.md Week 1, tasks 1.1–1.10):
@@ -27,25 +27,25 @@ YOUR TASKS (from IMPLEMENTATION_PLAN.md Week 1, tasks 1.1–1.10):
 1. Create migration runner framework:
    - backend/migrations/__init__.py
    - backend/migrations/runner.py
-   Runner must: track applied migrations in `_system_meta` collection, apply pending 
-   migrations in numeric order, be idempotent (safe to re-run), log each migration 
+   Runner must: track applied migrations in `_system_meta` collection, apply pending
+   migrations in numeric order, be idempotent (safe to re-run), log each migration
    applied.
 
 2. Create 8 migration scripts (each must be idempotent — check before create):
-   - 001_initial_collections.py: Non-temporal document collections (documents, chunks, 
-     extraction_runs, curation_decisions, notifications, organizations, users, 
+   - 001_initial_collections.py: Non-temporal document collections (documents, chunks,
+     extraction_runs, curation_decisions, notifications, organizations, users,
      _system_meta, ontology_registry)
-   - 002_versioned_vertices.py: ontology_classes, ontology_properties, 
+   - 002_versioned_vertices.py: ontology_classes, ontology_properties,
      ontology_constraints (temporal vertex collections)
-   - 003_edge_collections.py: All 8 edge collections (subclass_of, equivalent_class, 
+   - 003_edge_collections.py: All 8 edge collections (subclass_of, equivalent_class,
      has_property, extends_domain, extracted_from, related_to, merge_candidate, imports)
-   - 004_named_graphs.py: domain_ontology graph with vertex/edge definitions per 
+   - 004_named_graphs.py: domain_ontology graph with vertex/edge definitions per
      PRD Section 5.1
-   - 005_mdi_indexes.py: MDI-prefixed indexes on [created, expired] for ALL versioned 
+   - 005_mdi_indexes.py: MDI-prefixed indexes on [created, expired] for ALL versioned
      vertex and edge collections. Use type "mdi-prefixed", fieldValueTypes "double"
-   - 006_ttl_indexes.py: Sparse TTL indexes on ttlExpireAt field for all versioned 
+   - 006_ttl_indexes.py: Sparse TTL indexes on ttlExpireAt field for all versioned
      collections
-   - 007_arangosearch_views.py: ArangoSearch view on ontology_classes covering label 
+   - 007_arangosearch_views.py: ArangoSearch view on ontology_classes covering label
      and description fields
    - 008_vector_indexes.py: HNSW vector index on chunks.embedding
 
@@ -76,7 +76,7 @@ TESTING:
 - Test: apply all migrations on fresh DB → verify collections exist
 - Test: run migrations twice → no errors (idempotent)
 - Test: verify MDI index exists on ontology_classes
-- Test: verify TTL index exists on ontology_classes  
+- Test: verify TTL index exists on ontology_classes
 - Test: verify named graph domain_ontology has correct edge definitions
 - Use the test_db fixture from conftest.py (will be created by Subagent 1C)
 ```
@@ -84,7 +84,7 @@ TESTING:
 ### Subagent 1B: Document Ingestion Pipeline
 
 ```
-You are implementing the document ingestion pipeline for the Arango-OntoExtract 
+You are implementing the document ingestion pipeline for the Arango-OntoExtract
 (AOE) platform.
 
 CONTEXT:
@@ -99,7 +99,7 @@ YOUR TASKS (from IMPLEMENTATION_PLAN.md Week 2, tasks 2.1–2.12):
 
 1. Document repository (DB layer):
    - backend/app/db/documents_repo.py
-   CRUD for `documents` and `chunks` collections. Typed functions returning Pydantic 
+   CRUD for `documents` and `chunks` collections. Typed functions returning Pydantic
    models. Never expose raw python-arango objects.
 
 2. Cursor-based pagination helper:
@@ -115,12 +115,12 @@ YOUR TASKS (from IMPLEMENTATION_PLAN.md Week 2, tasks 2.1–2.12):
 
 4. Document parsing service:
    - backend/app/services/ingestion.py
-   Parse PDF (pymupdf/pdfplumber), DOCX (python-docx), Markdown. Extract text 
-   preserving structure (headings, sections, tables). Return structured text with 
+   Parse PDF (pymupdf/pdfplumber), DOCX (python-docx), Markdown. Extract text
+   preserving structure (headings, sections, tables). Return structured text with
    page/section metadata.
 
 5. Semantic chunking (in ingestion.py):
-   Chunk at section/paragraph boundaries. Configurable max_tokens. Each chunk carries 
+   Chunk at section/paragraph boundaries. Configurable max_tokens. Each chunk carries
    doc_id, chunk_index, source page, section heading.
 
 6. Vector embedding service:
@@ -130,7 +130,7 @@ YOUR TASKS (from IMPLEMENTATION_PLAN.md Week 2, tasks 2.1–2.12):
 
 7. Async pipeline orchestration:
    - backend/app/tasks.py (Celery or ARQ task)
-   Upload triggers async: parse → chunk → embed → store. Updates documents.status 
+   Upload triggers async: parse → chunk → embed → store. Updates documents.status
    through each stage (uploading → parsing → chunking → embedding → ready/failed).
 
 8. SHA-256 duplicate detection (in ingestion.py):
@@ -138,7 +138,7 @@ YOUR TASKS (from IMPLEMENTATION_PLAN.md Week 2, tasks 2.1–2.12):
 
 9. Implement document API endpoints (replace stubs):
    - backend/app/api/documents.py
-   POST /upload, GET /{doc_id}, GET /{doc_id}/chunks (paginated), GET / (paginated), 
+   POST /upload, GET /{doc_id}, GET /{doc_id}/chunks (paginated), GET / (paginated),
    DELETE /{doc_id} (soft delete).
 
 10. Add dependencies to backend/pyproject.toml:
@@ -163,20 +163,20 @@ FILES YOU MUST NOT TOUCH:
 
 ACCEPTANCE CRITERIA:
 - POST /api/v1/documents/upload with a PDF → returns doc_id, status "uploading"
-- Async pipeline processes: status transitions uploading → parsing → chunking → 
+- Async pipeline processes: status transitions uploading → parsing → chunking →
   embedding → ready
 - GET /api/v1/documents/{doc_id} → returns document with current status
-- GET /api/v1/documents/{doc_id}/chunks → returns paginated chunks with text, 
+- GET /api/v1/documents/{doc_id}/chunks → returns paginated chunks with text,
   chunk_index, token_count
 - Uploading same file twice → 409 Conflict
 - All list endpoints use cursor-based pagination
 - All errors use standard error format
 
 TESTING:
-- backend/tests/unit/test_ingestion.py: Parse sample PDF, DOCX, Markdown (mock file 
+- backend/tests/unit/test_ingestion.py: Parse sample PDF, DOCX, Markdown (mock file
   I/O); test chunking boundaries; test SHA-256 dedup
 - backend/tests/unit/test_embedding.py: Mock OpenAI call; verify batch embedding
-- backend/tests/integration/test_documents_api.py: Upload sample PDF → verify chunks 
+- backend/tests/integration/test_documents_api.py: Upload sample PDF → verify chunks
   created; test pagination; test duplicate rejection
 - Use fixtures from backend/tests/fixtures/sample_documents/
 ```
@@ -184,7 +184,7 @@ TESTING:
 ### Subagent 1C: Test Infrastructure & CI Pipeline
 
 ```
-You are setting up the test infrastructure and CI pipeline for the 
+You are setting up the test infrastructure and CI pipeline for the
 Arango-OntoExtract (AOE) platform.
 
 CONTEXT:
@@ -194,13 +194,13 @@ CONTEXT:
 - The project uses pytest, pytest-asyncio, pytest-cov, ruff, mypy (backend)
 - The frontend uses Next.js 15, React 18
 
-YOUR TASKS (from IMPLEMENTATION_PLAN.md Week 1 tasks 1.11–1.14, Week 3 tasks 
+YOUR TASKS (from IMPLEMENTATION_PLAN.md Week 1 tasks 1.11–1.14, Week 3 tasks
 3.6, 3.9):
 
 1. Test conftest with auto-create/drop test DB:
    - backend/tests/conftest.py
-   Session-scoped fixture: creates unique DB (aoe_test_{uuid}), runs migrations, 
-   yields StandardDatabase handle, drops DB after session. Also: mock_settings 
+   Session-scoped fixture: creates unique DB (aoe_test_{uuid}), runs migrations,
+   yields StandardDatabase handle, drops DB after session. Also: mock_settings
    fixture overriding config for test environment.
 
 2. Docker Compose test profile:
@@ -213,29 +213,29 @@ YOUR TASKS (from IMPLEMENTATION_PLAN.md Week 1 tasks 1.11–1.14, Week 3 tasks
    Stages:
    a. Lint & Type Check: ruff check + mypy --strict (backend), eslint + tsc (frontend)
    b. Backend Unit Tests: pytest tests/unit/ --cov --cov-fail-under=80
-   c. Backend Integration Tests: spin up docker-compose.test.yml, run pytest 
+   c. Backend Integration Tests: spin up docker-compose.test.yml, run pytest
       tests/integration/
    d. Frontend Lint: eslint + tsc --noEmit
    All stages must pass for PR merge.
 
 4. Test fixtures:
    - backend/tests/fixtures/sample_documents/: 1 sample PDF, 1 DOCX, 1 Markdown
-   - backend/tests/fixtures/ontologies/aws.ttl: Copy from aws_ontology if available, 
-     otherwise create a minimal OWL ontology in Turtle format (5-10 classes with 
+   - backend/tests/fixtures/ontologies/aws.ttl: Copy from aws_ontology if available,
+     otherwise create a minimal OWL ontology in Turtle format (5-10 classes with
      subClassOf hierarchy)
-   - backend/tests/fixtures/llm_responses/: Create 2-3 mock LLM extraction response 
+   - backend/tests/fixtures/llm_responses/: Create 2-3 mock LLM extraction response
      JSON files matching the ExtractionResult Pydantic model
-   - backend/tests/fixtures/embeddings/: Create 1 pre-computed embedding fixture 
+   - backend/tests/fixtures/embeddings/: Create 1 pre-computed embedding fixture
      (small numpy array or list)
 
 5. Frontend test setup:
    - frontend/jest.config.ts (Jest configuration for Next.js)
    - frontend/playwright.config.ts (Playwright E2E config)
-   - Update frontend/package.json with test dependencies: jest, 
+   - Update frontend/package.json with test dependencies: jest,
      @testing-library/react, @testing-library/jest-dom, msw, playwright
 
 6. Makefile test targets:
-   Add: make test-unit, make test-integration, make test-all, make lint, make 
+   Add: make test-unit, make test-integration, make test-all, make lint, make
    type-check
 
 FILES YOU OWN:
@@ -255,7 +255,7 @@ FILES YOU MUST NOT TOUCH:
 
 ACCEPTANCE CRITERIA:
 - `make test-unit` runs all backend unit tests (currently just test_health.py)
-- `make test-integration` starts Docker test services, runs integration tests, 
+- `make test-integration` starts Docker test services, runs integration tests,
   stops services
 - `make lint` runs ruff + mypy (backend) and eslint + tsc (frontend)
 - CI pipeline runs on every push and PR
@@ -266,7 +266,7 @@ ACCEPTANCE CRITERIA:
 ### Subagent 1D: Dev MCP Server & Frontend Foundation
 
 ```
-You are implementing the development-time MCP server and frontend foundation for 
+You are implementing the development-time MCP server and frontend foundation for
 the Arango-OntoExtract (AOE) platform.
 
 CONTEXT:
@@ -282,18 +282,18 @@ YOUR TASKS (from IMPLEMENTATION_PLAN.md Week 3, tasks 3.1–3.5, 3.7–3.8, 3.10
    - backend/app/mcp/server.py
    - backend/app/mcp/tools/__init__.py
    - backend/app/mcp/tools/introspection.py
-   Uses `mcp` Python SDK. Starts via stdio transport. Connects to same ArangoDB 
+   Uses `mcp` Python SDK. Starts via stdio transport. Connects to same ArangoDB
    configured in settings.
 
 2. MCP introspection tools:
    - query_collections: List all collections with document counts
    - run_aql: Execute a read-only AQL query and return results (limit 100 rows)
    - sample_collection: Return N sample documents from a collection
-   
+
 3. Ontology registry repository:
    - backend/app/db/registry_repo.py
-   CRUD for ontology_registry collection. Functions: create_registry_entry, 
-   get_registry_entry, list_registry_entries, update_registry_entry, 
+   CRUD for ontology_registry collection. Functions: create_registry_entry,
+   get_registry_entry, list_registry_entries, update_registry_entry,
    deprecate_registry_entry. All return typed dicts or Pydantic models.
 
 4. Ontology library API endpoints (replace stubs in ontology.py):
@@ -303,12 +303,12 @@ YOUR TASKS (from IMPLEMENTATION_PLAN.md Week 3, tasks 3.1–3.5, 3.7–3.8, 3.10
 
 5. Frontend API client:
    - frontend/src/lib/api-client.ts
-   Typed fetch wrapper. Handles: base URL from env, pagination envelope parsing, 
+   Typed fetch wrapper. Handles: base URL from env, pagination envelope parsing,
    error response parsing, auth token header (stub for now).
 
 6. Frontend landing page (replace placeholder):
    - frontend/src/app/page.tsx
-   Shows: backend connection status (calls /health and /ready), system stats 
+   Shows: backend connection status (calls /health and /ready), system stats
    (document count, ontology count via /api/v1/stats), quick-action links.
 
 7. Add MCP dependency to backend/pyproject.toml: `mcp`
@@ -343,7 +343,7 @@ ACCEPTANCE CRITERIA:
 ### Subagent 2A: LangGraph Extraction Pipeline (Backend)
 
 ```
-You are implementing the LangGraph agentic extraction pipeline for the 
+You are implementing the LangGraph agentic extraction pipeline for the
 Arango-OntoExtract (AOE) platform.
 
 CONTEXT:
@@ -370,9 +370,9 @@ YOUR TASKS (IMPLEMENTATION_PLAN.md Weeks 4-6, tasks 4.1–4.7, 5.1–5.7, 6.1–
 
 4. Extraction Agent (N-pass with self-correction):
    - backend/app/extraction/agents/extractor.py
-   Runs N LLM passes (configurable, default 3). Each pass validates against 
-   ExtractedClass/ExtractionResult Pydantic models. On validation failure: feeds 
-   error back to LLM, retries up to 3x. RAG: retrieves relevant chunks via vector 
+   Runs N LLM passes (configurable, default 3). Each pass validates against
+   ExtractedClass/ExtractionResult Pydantic models. On validation failure: feeds
+   error back to LLM, retries up to 3x. RAG: retrieves relevant chunks via vector
    similarity, injects into prompt.
 
 5. Consistency Checker:
@@ -391,12 +391,12 @@ YOUR TASKS (IMPLEMENTATION_PLAN.md Weeks 4-6, tasks 4.1–4.7, 5.1–5.7, 6.1–
 
 8. Extraction run service:
    - backend/app/services/extraction.py
-   Creates extraction_runs record. Dispatches LangGraph pipeline. Updates status 
+   Creates extraction_runs record. Dispatches LangGraph pipeline. Updates status
    per agent step. Tracks token usage and cost.
 
 9. ArangoRDF bridge service:
    - backend/app/services/arangordf_bridge.py
-   Wraps arango_rdf.rdf_to_arangodb_by_pgt(). Post-import ontology_id tagging. 
+   Wraps arango_rdf.rdf_to_arangodb_by_pgt(). Post-import ontology_id tagging.
    Per-ontology named graph creation.
 
 10. Extraction → OWL serialization:
@@ -414,20 +414,20 @@ YOUR TASKS (IMPLEMENTATION_PLAN.md Weeks 4-6, tasks 4.1–4.7, 5.1–5.7, 6.1–
 
 13. Ontology repository:
     - backend/app/db/ontology_repo.py
-    CRUD for ontology_classes, ontology_properties, edges. All writes go through 
+    CRUD for ontology_classes, ontology_properties, edges. All writes go through
     temporal versioning.
 
 14. Extraction API endpoints (replace stubs):
     - backend/app/api/extraction.py
-    POST /run, GET /runs (list), GET /runs/{id}, GET /runs/{id}/steps, 
+    POST /run, GET /runs (list), GET /runs/{id}, GET /runs/{id}/steps,
     GET /runs/{id}/results, POST /runs/{id}/retry, GET /runs/{id}/cost
 
 15. WebSocket for pipeline progress:
     - backend/app/api/ws_extraction.py
-    ws://host/ws/extraction/{run_id} emits step_started, step_completed, 
+    ws://host/ws/extraction/{run_id} emits step_started, step_completed,
     step_failed, completed events via Redis Pub/Sub.
 
-16. Add dependencies: langgraph, langchain, langchain-anthropic, langchain-openai, 
+16. Add dependencies: langgraph, langchain, langchain-anthropic, langchain-openai,
     arango-rdf, rdflib
 
 FILES YOU OWN:
@@ -449,7 +449,7 @@ FILES YOU MUST NOT TOUCH:
 TESTING:
 Write all of these:
 - backend/tests/unit/test_strategy_selector.py
-- backend/tests/unit/test_extraction_parser.py  
+- backend/tests/unit/test_extraction_parser.py
 - backend/tests/unit/test_consistency.py
 - backend/tests/unit/test_temporal_versioning.py
 - backend/tests/integration/test_arangordf_import.py
@@ -461,7 +461,7 @@ Use recorded LLM fixtures from tests/fixtures/llm_responses/ (mock all LLM calls
 ### Subagent 2B: Pipeline Monitor Dashboard (Frontend)
 
 ```
-You are implementing the Pipeline Monitor Dashboard for the Arango-OntoExtract 
+You are implementing the Pipeline Monitor Dashboard for the Arango-OntoExtract
 (AOE) platform.
 
 CONTEXT:
@@ -469,7 +469,7 @@ CONTEXT:
 - Read PRD.md Section 7.8 (WebSocket Events) for event format
 - Read IMPLEMENTATION_PLAN.md Week 7 tasks 7.3–7.10
 - Phase 1 frontend foundation is complete: API client, Jest, Playwright configured
-- The backend WebSocket endpoint (ws://host/ws/extraction/{run_id}) is being built 
+- The backend WebSocket endpoint (ws://host/ws/extraction/{run_id}) is being built
   by Subagent 2A concurrently
 
 YOUR TASKS:
@@ -483,15 +483,15 @@ YOUR TASKS:
 
 3. Run List component:
    - frontend/src/components/pipeline/RunList.tsx
-   Fetches GET /api/v1/extraction/runs (paginated). Shows: run ID, document name, 
+   Fetches GET /api/v1/extraction/runs (paginated). Shows: run ID, document name,
    status badge (queued/running/completed/failed), timestamp, duration.
    Filterable by status. Sortable by date. Auto-refreshes every 5s for active runs.
 
 4. Agent DAG component:
    - frontend/src/components/pipeline/AgentDAG.tsx
-   React Flow graph with 5 nodes: Strategy Selector → Extraction Agent → 
+   React Flow graph with 5 nodes: Strategy Selector → Extraction Agent →
    Consistency Checker → Entity Resolution Agent → Pre-Curation Filter → Staging.
-   Fixed layout (not dynamic). Custom node component with: agent name, status icon 
+   Fixed layout (not dynamic). Custom node component with: agent name, status icon
    (○ pending, ▶ running, ✓ completed, ✗ failed, ⏸ paused), elapsed time.
    Edges: solid for sequential, dashed for conditional.
 
@@ -503,12 +503,12 @@ YOUR TASKS:
 
 6. Run Metrics panel:
    - frontend/src/components/pipeline/RunMetrics.tsx
-   Shows: total duration, token usage (prompt + completion), estimated cost by 
+   Shows: total duration, token usage (prompt + completion), estimated cost by
    model, entity counts (classes extracted, properties extracted), pass agreement rate.
 
 7. Error Log panel:
    - frontend/src/components/pipeline/ErrorLog.tsx
-   Timestamped error/warning list. Expandable details. Retry button calls 
+   Timestamped error/warning list. Expandable details. Retry button calls
    POST /api/v1/extraction/runs/{run_id}/retry.
 
 8. Run Timeline (Gantt):
@@ -553,7 +553,7 @@ YOUR TASKS (IMPLEMENTATION_PLAN.md Weeks 8-10 backend tasks):
 1. Curation service:
    - backend/app/services/curation.py
    record_decision(): creates curation_decisions entry + new temporal version.
-   promote_staging(): moves approved entities to production graph with temporal 
+   promote_staging(): moves approved entities to production graph with temporal
    versioning. batch_decide(): bulk approve/reject.
 
 2. Curation API endpoints (replace stubs):
@@ -624,7 +624,7 @@ You are implementing ArangoDB Graph Visualizer customization for AOE.
 
 CONTEXT:
 - Read PRD.md Section 6.6 for themes, canvas actions, saved queries, viewpoints
-- Read the ArangoDB Visualizer Customizer skill at 
+- Read the ArangoDB Visualizer Customizer skill at
   /Users/arthurkeen/.cursor/skills/arangodb-visualizer-customizer/SKILL.md
 - Read PRD.md Section 9.7 for reference implementations to follow
 
@@ -711,7 +711,7 @@ FILES YOU OWN:
 ### Subagent 5A: Runtime MCP Server
 
 ```
-You are implementing the runtime MCP server for AOE, extending the dev-time MCP 
+You are implementing the runtime MCP server for AOE, extending the dev-time MCP
 created in Phase 1.
 
 CONTEXT:
@@ -746,7 +746,7 @@ FILES YOU OWN:
 ### Subagent 6A: Import/Export & Schema Extraction
 
 ```
-Tasks 20.1–20.6 from IMPLEMENTATION_PLAN.md. OWL/TTL import via ArangoRDF, 
+Tasks 20.1–20.6 from IMPLEMENTATION_PLAN.md. OWL/TTL import via ArangoRDF,
 export via rdflib, schema extraction via arango-schema-mapper.
 Own: backend/app/services/export.py, schema_extraction.py, ontology API extensions.
 ```
@@ -754,25 +754,25 @@ Own: backend/app/services/export.py, schema_extraction.py, ontology API extensio
 ### Subagent 6B: Auth, Multi-Tenancy & Notifications
 
 ```
-Tasks 21.1–21.5, 22.1–22.6 from IMPLEMENTATION_PLAN.md. OAuth 2.0, RBAC, org 
+Tasks 21.1–21.5, 22.1–22.6 from IMPLEMENTATION_PLAN.md. OAuth 2.0, RBAC, org
 isolation, notifications, observability.
-Own: backend/app/api/auth.py, dependencies.py, orgs.py, notifications.py, 
+Own: backend/app/api/auth.py, dependencies.py, orgs.py, notifications.py,
 ws_curation.py, metrics.py. Frontend auth integration.
 ```
 
 ### Subagent 6C: DevOps & Deployment
 
 ```
-Tasks 23.1–23.6 from IMPLEMENTATION_PLAN.md. Rate limiting, caching, Dockerfiles, 
+Tasks 23.1–23.6 from IMPLEMENTATION_PLAN.md. Rate limiting, caching, Dockerfiles,
 docker-compose.prod.yml, optional K8s manifests, index tuning.
-Own: backend/Dockerfile, frontend/Dockerfile, docker-compose.prod.yml, k8s/, 
+Own: backend/Dockerfile, frontend/Dockerfile, docker-compose.prod.yml, k8s/,
 rate_limit.py.
 ```
 
 ### Subagent 6D: Documentation & Final Testing
 
 ```
-Tasks 24.1–24.7 from IMPLEMENTATION_PLAN.md. OpenAPI review, user guide, ADRs, 
+Tasks 24.1–24.7 from IMPLEMENTATION_PLAN.md. OpenAPI review, user guide, ADRs,
 full E2E suite, performance benchmarks, proxy pattern decision, release.
 Own: docs/ (all), final E2E tests.
 ```
@@ -781,26 +781,26 @@ Own: docs/ (all), final E2E tests.
 
 ## Orchestration Rules
 
-1. **Phase gates are strict:** ALL subagents in a phase must complete before ANY 
-   subagent in the next phase starts. Each phase builds on the prior phase's 
+1. **Phase gates are strict:** ALL subagents in a phase must complete before ANY
+   subagent in the next phase starts. Each phase builds on the prior phase's
    completed work.
 
-2. **File ownership is exclusive:** Each subagent owns specific files. No two 
+2. **File ownership is exclusive:** Each subagent owns specific files. No two
    subagents touch the same file within a phase. This prevents merge conflicts.
 
-3. **Shared infrastructure is Phase 1:** Pagination, error format, test fixtures, 
-   CI pipeline, and API client are established in Phase 1 and used by all 
+3. **Shared infrastructure is Phase 1:** Pagination, error format, test fixtures,
+   CI pipeline, and API client are established in Phase 1 and used by all
    subsequent subagents.
 
-4. **Backend before frontend within a phase:** When a subagent depends on an API 
-   that another subagent is building concurrently, the frontend subagent should 
+4. **Backend before frontend within a phase:** When a subagent depends on an API
+   that another subagent is building concurrently, the frontend subagent should
    mock the API initially and integrate once the backend subagent completes.
 
-5. **Every subagent writes tests:** No subagent is "done" until its acceptance 
+5. **Every subagent writes tests:** No subagent is "done" until its acceptance
    criteria are met and tests pass.
 
-6. **Commit convention:** Each subagent commits to a feature branch named 
-   `phase-{N}/{subagent-name}` (e.g., `phase-1/schema-migrations`). Branches 
+6. **Commit convention:** Each subagent commits to a feature branch named
+   `phase-{N}/{subagent-name}` (e.g., `phase-1/schema-migrations`). Branches
    are merged to `main` at the phase gate.
 
 ## Parallelization Summary

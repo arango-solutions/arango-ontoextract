@@ -461,7 +461,7 @@ class TestComputeCurationThroughput:
             ),
         ):
             result = compute_curation_throughput(db)
-        # Extrapolated active time = 300 s × (10 / 5) = 600 s ⇒ 60/h
+        # Extrapolated active time = 300 s * (10 / 5) = 600 s -> 60/h
         assert result["active_time_seconds"] == pytest.approx(600.0)
         assert result["decisions_per_hour"] == pytest.approx(60.0)
         assert result["source"] == "active_time"
@@ -540,7 +540,11 @@ class TestComputeCurationThroughput:
             return_value=iter([{"count": 0}]),
         ) as mock_aql:
             compute_curation_throughput(db, ontology_id="onto_99")
-        query = mock_aql.call_args.args[1] if len(mock_aql.call_args.args) >= 2 else mock_aql.call_args.kwargs.get("query")
+        query = (
+            mock_aql.call_args.args[1]
+            if len(mock_aql.call_args.args) >= 2
+            else mock_aql.call_args.kwargs.get("query")
+        )
         # The AQL must join through extraction_runs to translate
         # ontology_id → run_id since curation_decisions stores run_id.
         assert "extraction_runs" in (query or "")

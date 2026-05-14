@@ -47,7 +47,6 @@ from app.db import revision_meta_repo as rev_repo
 from app.db import temporal_revisions_repo as supersede_repo
 from app.db.client import get_db
 from app.db.utils import doc_get
-from app.services import revision_safety
 
 log = logging.getLogger(__name__)
 
@@ -200,9 +199,7 @@ def _supersede_for_row(
             action=action,
             status=rev_repo.STATUS_ACCEPTED,
             skipped=True,
-            skipped_reason=(
-                "FLAG_FOR_CURATION accepted as-is; no graph change"
-            ),
+            skipped_reason=("FLAG_FOR_CURATION accepted as-is; no graph change"),
         )
     try:
         return supersede_repo.supersede(
@@ -395,14 +392,9 @@ def modify_revision(
     Idempotent on already-decided rows.
     """
     db = db or get_db()
-    if (
-        override_action is None
-        and new_vertex_data is None
-        and new_edge is None
-    ):
+    if override_action is None and new_vertex_data is None and new_edge is None:
         raise RevisionActionError(
-            "modify_revision requires at least one of "
-            "override_action, new_vertex_data, or new_edge"
+            "modify_revision requires at least one of override_action, new_vertex_data, or new_edge"
         )
     if override_action is not None and override_action not in rev_repo.ACTIONS:
         raise RevisionActionError(

@@ -44,21 +44,21 @@ def up(db: StandardDatabase) -> None:
 
     class_keys: set[str] = set()
     if db.has_collection("ontology_classes"):
-        class_keys = set(run_aql(
-            db,
-            "FOR c IN ontology_classes "
-            "FILTER c.expired == @never "
-            "RETURN c._key",
-            bind_vars={"never": NEVER_EXPIRES},
-        ))
+        class_keys = set(
+            run_aql(
+                db,
+                "FOR c IN ontology_classes FILTER c.expired == @never RETURN c._key",
+                bind_vars={"never": NEVER_EXPIRES},
+            )
+        )
 
-    properties = list(run_aql(
-        db,
-        "FOR p IN ontology_properties "
-        "FILTER p.expired == @never "
-        "RETURN p",
-        bind_vars={"never": NEVER_EXPIRES},
-    ))
+    properties = list(
+        run_aql(
+            db,
+            "FOR p IN ontology_properties FILTER p.expired == @never RETURN p",
+            bind_vars={"never": NEVER_EXPIRES},
+        )
+    )
 
     obj_count = 0
     dt_count = 0
@@ -93,14 +93,17 @@ def up(db: StandardDatabase) -> None:
             if domain_class:
                 domain_key = domain_class.split("#")[-1].split("/")[-1]
                 try:
-                    rdfs_domain_col.insert({
-                        "_key": f"{key}__domain",
-                        "_from": f"ontology_object_properties/{key}",
-                        "_to": f"ontology_classes/{domain_key}",
-                        "ontology_id": ontology_id,
-                        "created": prop.get("created"),
-                        "expired": NEVER_EXPIRES,
-                    }, overwrite=True)
+                    rdfs_domain_col.insert(
+                        {
+                            "_key": f"{key}__domain",
+                            "_from": f"ontology_object_properties/{key}",
+                            "_to": f"ontology_classes/{domain_key}",
+                            "ontology_id": ontology_id,
+                            "created": prop.get("created"),
+                            "expired": NEVER_EXPIRES,
+                        },
+                        overwrite=True,
+                    )
                     domain_edge_count += 1
                 except Exception as exc:
                     log.warning("rdfs_domain edge failed for %s: %s", key, exc)
@@ -109,14 +112,17 @@ def up(db: StandardDatabase) -> None:
                 range_key = range_val.split("#")[-1].split("/")[-1]
                 if range_key in class_keys:
                     try:
-                        rdfs_range_col.insert({
-                            "_key": f"{key}__range",
-                            "_from": f"ontology_object_properties/{key}",
-                            "_to": f"ontology_classes/{range_key}",
-                            "ontology_id": ontology_id,
-                            "created": prop.get("created"),
-                            "expired": NEVER_EXPIRES,
-                        }, overwrite=True)
+                        rdfs_range_col.insert(
+                            {
+                                "_key": f"{key}__range",
+                                "_from": f"ontology_object_properties/{key}",
+                                "_to": f"ontology_classes/{range_key}",
+                                "ontology_id": ontology_id,
+                                "created": prop.get("created"),
+                                "expired": NEVER_EXPIRES,
+                            },
+                            overwrite=True,
+                        )
                         range_edge_count += 1
                     except Exception as exc:
                         log.warning("rdfs_range_class edge failed for %s: %s", key, exc)
@@ -142,14 +148,17 @@ def up(db: StandardDatabase) -> None:
             if domain_class:
                 domain_key = domain_class.split("#")[-1].split("/")[-1]
                 try:
-                    rdfs_domain_col.insert({
-                        "_key": f"{key}__domain",
-                        "_from": f"ontology_datatype_properties/{key}",
-                        "_to": f"ontology_classes/{domain_key}",
-                        "ontology_id": ontology_id,
-                        "created": prop.get("created"),
-                        "expired": NEVER_EXPIRES,
-                    }, overwrite=True)
+                    rdfs_domain_col.insert(
+                        {
+                            "_key": f"{key}__domain",
+                            "_from": f"ontology_datatype_properties/{key}",
+                            "_to": f"ontology_classes/{domain_key}",
+                            "ontology_id": ontology_id,
+                            "created": prop.get("created"),
+                            "expired": NEVER_EXPIRES,
+                        },
+                        overwrite=True,
+                    )
                     domain_edge_count += 1
                 except Exception as exc:
                     log.warning("rdfs_domain edge failed for %s: %s", key, exc)
@@ -157,5 +166,8 @@ def up(db: StandardDatabase) -> None:
     log.info(
         "Migrated %d object properties, %d datatype properties, "
         "%d rdfs_domain edges, %d rdfs_range_class edges",
-        obj_count, dt_count, domain_edge_count, range_edge_count,
+        obj_count,
+        dt_count,
+        domain_edge_count,
+        range_edge_count,
     )

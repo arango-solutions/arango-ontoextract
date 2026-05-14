@@ -4,6 +4,7 @@ Heavy dependency — requires the backend virtual environment, ArangoDB, and
 (for non-mock LLMs) provider API keys. Import is lazy so that unit tests for
 the harness don't require backend installation.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +12,10 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from benchmarks.ontology_extraction.adapters.base import ExtractionAdapter, ExtractionResult
+from benchmarks.ontology_extraction.adapters.base import (
+    ExtractionAdapter,
+    ExtractionResult,
+)
 from benchmarks.ontology_extraction.metrics import ClassMention, Triple
 
 
@@ -118,12 +122,15 @@ def _pipeline_state_to_result(state: dict[str, Any]) -> ExtractionResult:
         relations=relations,
         metadata={
             "model": stats.get("model") or state.get("model"),
-            "prompt_version": stats.get("prompt_version") or state.get("prompt_version"),
-            "input_tokens": token_usage.get("input_tokens") or token_usage.get("prompt_tokens"),
+            "prompt_version": stats.get("prompt_version")
+            or state.get("prompt_version"),
+            "input_tokens": token_usage.get("input_tokens")
+            or token_usage.get("prompt_tokens"),
             "output_tokens": (
                 token_usage.get("output_tokens") or token_usage.get("completion_tokens")
             ),
             "total_tokens": token_usage.get("total_tokens"),
-            "estimated_cost_usd": stats.get("estimated_cost_usd") or stats.get("cost_usd"),
+            "estimated_cost_usd": stats.get("estimated_cost_usd")
+            or stats.get("cost_usd"),
         },
     )

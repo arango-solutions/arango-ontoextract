@@ -4,6 +4,7 @@ The fixture is generated from curated feedback-learning artifacts. Positive
 assertions are scored by the existing benchmark harness; negative assertions are
 retained in ``source_meta`` for review and future negative-example scoring.
 """
+
 from __future__ import annotations
 
 import json

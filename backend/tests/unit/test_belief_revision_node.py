@@ -223,15 +223,16 @@ class TestSkipPaths:
         assert out["revision_actions"] == []
 
     def test_no_touchpoints(self) -> None:
-        report = TouchpointReport(
-            ontology_id="ont-1", new_concept_count=1, candidates_examined=0
-        )
-        with patch(
-            "app.extraction.agents.belief_revision.get_db",
-            return_value=MagicMock(),
-        ), patch(
-            "app.extraction.agents.belief_revision.discover_touchpoints",
-            return_value=report,
+        report = TouchpointReport(ontology_id="ont-1", new_concept_count=1, candidates_examined=0)
+        with (
+            patch(
+                "app.extraction.agents.belief_revision.get_db",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.discover_touchpoints",
+                return_value=report,
+            ),
         ):
             out = belief_revision_node(_state())
         assert out["revision_actions"] == []
@@ -253,25 +254,27 @@ class TestAutoApplyPath:
             candidates_examined=1,
             touchpoints=[tp],
         )
-        with patch(
-            "app.extraction.agents.belief_revision.get_db", return_value=MagicMock()
-        ), patch(
-            "app.extraction.agents.belief_revision.discover_touchpoints",
-            return_value=report,
-        ), patch(
-            "app.extraction.agents.belief_revision.classify",
-            return_value=mech,
-        ), patch(
-            "app.extraction.agents.belief_revision.supersede_from_mechanical_revision",
-            return_value=SupersedeResult(
-                revision_meta_key="rev-1",
-                action=ACTION_REINFORCE,
-                status=STATUS_APPLIED,
-                new_version_key="oc/Transaction",
+        with (
+            patch("app.extraction.agents.belief_revision.get_db", return_value=MagicMock()),
+            patch(
+                "app.extraction.agents.belief_revision.discover_touchpoints",
+                return_value=report,
             ),
-        ) as supmech, patch(
-            "app.extraction.agents.belief_revision.asyncio.run"
-        ) as asyrun:
+            patch(
+                "app.extraction.agents.belief_revision.classify",
+                return_value=mech,
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.supersede_from_mechanical_revision",
+                return_value=SupersedeResult(
+                    revision_meta_key="rev-1",
+                    action=ACTION_REINFORCE,
+                    status=STATUS_APPLIED,
+                    new_version_key="oc/Transaction",
+                ),
+            ) as supmech,
+            patch("app.extraction.agents.belief_revision.asyncio.run") as asyrun,
+        ):
             out = belief_revision_node(_state())
         assert len(out["revision_actions"]) == 1
         action = out["revision_actions"][0]
@@ -297,21 +300,24 @@ class TestAutoApplyPath:
         report = TouchpointReport(
             ontology_id="ont-1", new_concept_count=1, candidates_examined=1, touchpoints=[tp]
         )
-        with patch(
-            "app.extraction.agents.belief_revision.get_db", return_value=MagicMock()
-        ), patch(
-            "app.extraction.agents.belief_revision.discover_touchpoints",
-            return_value=report,
-        ), patch(
-            "app.extraction.agents.belief_revision.classify",
-            return_value=mech,
-        ), patch(
-            "app.extraction.agents.belief_revision.supersede_from_mechanical_revision",
-            return_value=SupersedeResult(
-                revision_meta_key="rev-2",
-                action=ACTION_GAP_FILL,
-                status=STATUS_APPLIED,
-                new_edge_key="edge-1",
+        with (
+            patch("app.extraction.agents.belief_revision.get_db", return_value=MagicMock()),
+            patch(
+                "app.extraction.agents.belief_revision.discover_touchpoints",
+                return_value=report,
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.classify",
+                return_value=mech,
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.supersede_from_mechanical_revision",
+                return_value=SupersedeResult(
+                    revision_meta_key="rev-2",
+                    action=ACTION_GAP_FILL,
+                    status=STATUS_APPLIED,
+                    new_edge_key="edge-1",
+                ),
             ),
         ):
             out = belief_revision_node(_state())
@@ -361,28 +367,33 @@ class TestLlmEscalationPath:
             "label": "Account",
             "evidence": [{"evidence_text": "existing"}],
         }
-        with patch(
-            "app.extraction.agents.belief_revision.get_db", return_value=db
-        ), patch(
-            "app.extraction.agents.belief_revision.discover_touchpoints",
-            return_value=report,
-        ), patch(
-            "app.extraction.agents.belief_revision.classify",
-            return_value=mech,
-        ), patch(
-            "app.extraction.agents.belief_revision.revise_batch",
-            new=MagicMock(return_value="not-a-coroutine"),
-        ), patch(
-            "app.extraction.agents.belief_revision.asyncio.run",
-            return_value=[proposal],
-        ) as asyrun, patch(
-            "app.extraction.agents.belief_revision.supersede_from_llm_proposal",
-            return_value=SupersedeResult(
-                revision_meta_key="rev-3",
-                action=ACTION_FLAG_FOR_CURATION,
-                status=STATUS_PENDING,
+        with (
+            patch("app.extraction.agents.belief_revision.get_db", return_value=db),
+            patch(
+                "app.extraction.agents.belief_revision.discover_touchpoints",
+                return_value=report,
             ),
-        ) as suplm:
+            patch(
+                "app.extraction.agents.belief_revision.classify",
+                return_value=mech,
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.revise_batch",
+                new=MagicMock(return_value="not-a-coroutine"),
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.asyncio.run",
+                return_value=[proposal],
+            ) as asyrun,
+            patch(
+                "app.extraction.agents.belief_revision.supersede_from_llm_proposal",
+                return_value=SupersedeResult(
+                    revision_meta_key="rev-3",
+                    action=ACTION_FLAG_FOR_CURATION,
+                    status=STATUS_PENDING,
+                ),
+            ) as suplm,
+        ):
             out = belief_revision_node(_state())
         asyrun.assert_called_once()
         suplm.assert_called_once()
@@ -406,27 +417,32 @@ class TestLlmEscalationPath:
             ontology_id="ont-1", new_concept_count=1, candidates_examined=1, touchpoints=[tp]
         )
         proposal = _llm_proposal(action=ACTION_REVISE)
-        with patch(
-            "app.extraction.agents.belief_revision.get_db", return_value=MagicMock()
-        ), patch(
-            "app.extraction.agents.belief_revision.discover_touchpoints",
-            return_value=report,
-        ), patch(
-            "app.extraction.agents.belief_revision.classify",
-            return_value=mech,
-        ), patch(
-            "app.extraction.agents.belief_revision.revise_batch",
-            new=MagicMock(return_value="not-a-coroutine"),
-        ), patch(
-            "app.extraction.agents.belief_revision.asyncio.run",
-            return_value=[proposal],
-        ), patch(
-            "app.extraction.agents.belief_revision.supersede_from_llm_proposal",
-            return_value=SupersedeResult(
-                revision_meta_key="rev-4",
-                action=ACTION_REVISE,
-                status=STATUS_APPLIED,
-                new_version_key="oc/Y_v2",
+        with (
+            patch("app.extraction.agents.belief_revision.get_db", return_value=MagicMock()),
+            patch(
+                "app.extraction.agents.belief_revision.discover_touchpoints",
+                return_value=report,
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.classify",
+                return_value=mech,
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.revise_batch",
+                new=MagicMock(return_value="not-a-coroutine"),
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.asyncio.run",
+                return_value=[proposal],
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.supersede_from_llm_proposal",
+                return_value=SupersedeResult(
+                    revision_meta_key="rev-4",
+                    action=ACTION_REVISE,
+                    status=STATUS_APPLIED,
+                    new_version_key="oc/Y_v2",
+                ),
             ),
         ):
             out = belief_revision_node(_state())
@@ -452,30 +468,30 @@ class TestLlmSkippedFr1115:
             touchpoints=[tp1, tp2],
         )
         # classify is called once per touchpoint, so use side_effect.
-        with patch(
-            "app.extraction.agents.belief_revision.get_db", return_value=MagicMock()
-        ), patch(
-            "app.extraction.agents.belief_revision.discover_touchpoints",
-            return_value=report,
-        ), patch(
-            "app.extraction.agents.belief_revision.classify",
-            side_effect=[m1, m2],
-        ), patch(
-            "app.extraction.agents.belief_revision.supersede_from_mechanical_revision",
-            side_effect=[
-                SupersedeResult(
-                    revision_meta_key="r1", action=ACTION_REINFORCE, status=STATUS_APPLIED
-                ),
-                SupersedeResult(
-                    revision_meta_key="r2", action=ACTION_GAP_FILL, status=STATUS_APPLIED
-                ),
-            ],
-        ), patch(
-            "app.extraction.agents.belief_revision.asyncio.run"
-        ) as asyrun:
-            out = belief_revision_node(
-                _state(consistency_result=_result([_cls("A"), _cls("B")]))
-            )
+        with (
+            patch("app.extraction.agents.belief_revision.get_db", return_value=MagicMock()),
+            patch(
+                "app.extraction.agents.belief_revision.discover_touchpoints",
+                return_value=report,
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.classify",
+                side_effect=[m1, m2],
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.supersede_from_mechanical_revision",
+                side_effect=[
+                    SupersedeResult(
+                        revision_meta_key="r1", action=ACTION_REINFORCE, status=STATUS_APPLIED
+                    ),
+                    SupersedeResult(
+                        revision_meta_key="r2", action=ACTION_GAP_FILL, status=STATUS_APPLIED
+                    ),
+                ],
+            ),
+            patch("app.extraction.agents.belief_revision.asyncio.run") as asyrun,
+        ):
+            out = belief_revision_node(_state(consistency_result=_result([_cls("A"), _cls("B")])))
         asyrun.assert_not_called()
         assert out["step_logs"][0]["metadata"]["llm_invocations"] == 0
         assert len(out["revision_actions"]) == 2
@@ -502,35 +518,41 @@ class TestMixedRouting:
         db = MagicMock()
         db.has_collection.return_value = True
         db.collection.return_value.get.return_value = {"label": "Account", "evidence": []}
-        with patch(
-            "app.extraction.agents.belief_revision.get_db", return_value=db
-        ), patch(
-            "app.extraction.agents.belief_revision.discover_touchpoints",
-            return_value=report,
-        ), patch(
-            "app.extraction.agents.belief_revision.classify",
-            side_effect=[m_auto, m_contested],
-        ), patch(
-            "app.extraction.agents.belief_revision.supersede_from_mechanical_revision",
-            return_value=SupersedeResult(
-                revision_meta_key="r-auto",
-                action=ACTION_REINFORCE,
-                status=STATUS_APPLIED,
+        with (
+            patch("app.extraction.agents.belief_revision.get_db", return_value=db),
+            patch(
+                "app.extraction.agents.belief_revision.discover_touchpoints",
+                return_value=report,
             ),
-        ) as supmech, patch(
-            "app.extraction.agents.belief_revision.revise_batch",
-            new=MagicMock(return_value="not-a-coroutine"),
-        ), patch(
-            "app.extraction.agents.belief_revision.asyncio.run",
-            return_value=[proposal],
-        ) as asyrun, patch(
-            "app.extraction.agents.belief_revision.supersede_from_llm_proposal",
-            return_value=SupersedeResult(
-                revision_meta_key="r-llm",
-                action=ACTION_FLAG_FOR_CURATION,
-                status=STATUS_PENDING,
+            patch(
+                "app.extraction.agents.belief_revision.classify",
+                side_effect=[m_auto, m_contested],
             ),
-        ) as suplm:
+            patch(
+                "app.extraction.agents.belief_revision.supersede_from_mechanical_revision",
+                return_value=SupersedeResult(
+                    revision_meta_key="r-auto",
+                    action=ACTION_REINFORCE,
+                    status=STATUS_APPLIED,
+                ),
+            ) as supmech,
+            patch(
+                "app.extraction.agents.belief_revision.revise_batch",
+                new=MagicMock(return_value="not-a-coroutine"),
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.asyncio.run",
+                return_value=[proposal],
+            ) as asyrun,
+            patch(
+                "app.extraction.agents.belief_revision.supersede_from_llm_proposal",
+                return_value=SupersedeResult(
+                    revision_meta_key="r-llm",
+                    action=ACTION_FLAG_FOR_CURATION,
+                    status=STATUS_PENDING,
+                ),
+            ) as suplm,
+        ):
             out = belief_revision_node(
                 _state(
                     consistency_result=_result([_cls("A"), _cls("AccountStatus")]),
@@ -558,17 +580,20 @@ class TestFailureIsolation:
         report = TouchpointReport(
             ontology_id="ont-1", new_concept_count=1, candidates_examined=1, touchpoints=[tp]
         )
-        with patch(
-            "app.extraction.agents.belief_revision.get_db", return_value=MagicMock()
-        ), patch(
-            "app.extraction.agents.belief_revision.discover_touchpoints",
-            return_value=report,
-        ), patch(
-            "app.extraction.agents.belief_revision.classify",
-            return_value=mech,
-        ), patch(
-            "app.extraction.agents.belief_revision.supersede_from_mechanical_revision",
-            side_effect=RuntimeError("db boom"),
+        with (
+            patch("app.extraction.agents.belief_revision.get_db", return_value=MagicMock()),
+            patch(
+                "app.extraction.agents.belief_revision.discover_touchpoints",
+                return_value=report,
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.classify",
+                return_value=mech,
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.supersede_from_mechanical_revision",
+                side_effect=RuntimeError("db boom"),
+            ),
         ):
             out = belief_revision_node(_state())
         action = out["revision_actions"][0]
@@ -585,20 +610,24 @@ class TestFailureIsolation:
         )
         # Patch revise_batch to a sync MagicMock so the coroutine isn't created;
         # asyncio.run then raises before any LLM activity can happen.
-        with patch(
-            "app.extraction.agents.belief_revision.get_db", return_value=MagicMock()
-        ), patch(
-            "app.extraction.agents.belief_revision.discover_touchpoints",
-            return_value=report,
-        ), patch(
-            "app.extraction.agents.belief_revision.classify",
-            return_value=mech,
-        ), patch(
-            "app.extraction.agents.belief_revision.revise_batch",
-            new=MagicMock(return_value="not-a-coroutine"),
-        ), patch(
-            "app.extraction.agents.belief_revision.asyncio.run",
-            side_effect=RuntimeError("openai 500"),
+        with (
+            patch("app.extraction.agents.belief_revision.get_db", return_value=MagicMock()),
+            patch(
+                "app.extraction.agents.belief_revision.discover_touchpoints",
+                return_value=report,
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.classify",
+                return_value=mech,
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.revise_batch",
+                new=MagicMock(return_value="not-a-coroutine"),
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.asyncio.run",
+                side_effect=RuntimeError("openai 500"),
+            ),
         ):
             out = belief_revision_node(_state())
         action = out["revision_actions"][0]
@@ -684,22 +713,25 @@ class TestIdempotencyCounted:
         report = TouchpointReport(
             ontology_id="ont-1", new_concept_count=1, candidates_examined=1, touchpoints=[tp]
         )
-        with patch(
-            "app.extraction.agents.belief_revision.get_db", return_value=MagicMock()
-        ), patch(
-            "app.extraction.agents.belief_revision.discover_touchpoints",
-            return_value=report,
-        ), patch(
-            "app.extraction.agents.belief_revision.classify",
-            return_value=mech,
-        ), patch(
-            "app.extraction.agents.belief_revision.supersede_from_mechanical_revision",
-            return_value=SupersedeResult(
-                revision_meta_key="rev-old",
-                action=ACTION_REINFORCE,
-                status=STATUS_APPLIED,
-                skipped=True,
-                skipped_reason="prior",
+        with (
+            patch("app.extraction.agents.belief_revision.get_db", return_value=MagicMock()),
+            patch(
+                "app.extraction.agents.belief_revision.discover_touchpoints",
+                return_value=report,
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.classify",
+                return_value=mech,
+            ),
+            patch(
+                "app.extraction.agents.belief_revision.supersede_from_mechanical_revision",
+                return_value=SupersedeResult(
+                    revision_meta_key="rev-old",
+                    action=ACTION_REINFORCE,
+                    status=STATUS_APPLIED,
+                    skipped=True,
+                    skipped_reason="prior",
+                ),
             ),
         ):
             out = belief_revision_node(_state())
@@ -717,11 +749,10 @@ class TestIdempotencyCounted:
 class TestEmptyAfterFiltering:
     @pytest.mark.parametrize("classes", [[], [_cls("")]])
     def test_no_concepts_after_filter_skips(self, classes: list[Any]) -> None:
-        with patch(
-            "app.extraction.agents.belief_revision.get_db", return_value=MagicMock()
-        ), patch(
-            "app.extraction.agents.belief_revision.discover_touchpoints"
-        ) as disco:
+        with (
+            patch("app.extraction.agents.belief_revision.get_db", return_value=MagicMock()),
+            patch("app.extraction.agents.belief_revision.discover_touchpoints") as disco,
+        ):
             out = belief_revision_node(_state(consistency_result=_result(classes)))
         disco.assert_not_called()
         assert out["revision_actions"] == []
@@ -743,17 +774,15 @@ class TestFeatureFlagGating:
         step-log reason.
         """
         monkeypatch.setattr(settings, "belief_revision_pipeline_enabled", False)
-        with patch(
-            "app.extraction.agents.belief_revision.get_db"
-        ) as get_db, patch(
-            "app.extraction.agents.belief_revision.discover_touchpoints"
-        ) as disco, patch(
-            "app.extraction.agents.belief_revision.classify"
-        ) as clas, patch(
-            "app.extraction.agents.belief_revision.asyncio.run"
-        ) as asyrun, patch(
-            "app.extraction.agents.belief_revision.supersede_from_mechanical_revision"
-        ) as supmech:
+        with (
+            patch("app.extraction.agents.belief_revision.get_db") as get_db,
+            patch("app.extraction.agents.belief_revision.discover_touchpoints") as disco,
+            patch("app.extraction.agents.belief_revision.classify") as clas,
+            patch("app.extraction.agents.belief_revision.asyncio.run") as asyrun,
+            patch(
+                "app.extraction.agents.belief_revision.supersede_from_mechanical_revision"
+            ) as supmech,
+        ):
             out = belief_revision_node(_state())
         get_db.assert_not_called()
         disco.assert_not_called()
@@ -763,9 +792,7 @@ class TestFeatureFlagGating:
         assert out["revision_actions"] == []
         assert out["step_logs"][0]["status"] == "completed"
 
-    def test_flag_off_state_delta_is_minimal(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_flag_off_state_delta_is_minimal(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, "belief_revision_pipeline_enabled", False)
         out = belief_revision_node(_state())
         # Same return-key contract regardless of whether IBR ran or

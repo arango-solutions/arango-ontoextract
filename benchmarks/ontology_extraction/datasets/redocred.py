@@ -20,6 +20,7 @@ The loader flattens each document into:
 * ``gold_relations`` — one :class:`Triple` per ``labels`` entry, using the
   canonical labels of the head/tail clusters and the raw Wikidata property id.
 """
+
 from __future__ import annotations
 
 import json
@@ -65,7 +66,9 @@ def _iter_docs(
     for i, doc in enumerate(docs):
         if limit is not None and i >= limit:
             return
-        yield _to_gold_document(doc, fallback_id=f"redocred-{i:06d}", source_path=source_path)
+        yield _to_gold_document(
+            doc, fallback_id=f"redocred-{i:06d}", source_path=source_path
+        )
 
 
 def _to_gold_document(doc: dict, fallback_id: str, source_path: str) -> GoldDocument:

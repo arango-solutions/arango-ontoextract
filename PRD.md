@@ -697,7 +697,7 @@ documents ──has_chunk──→ chunks
     └──extracted_from── ontology_classes ──has_property──→ ontology_properties
                             │
                             └──subclass_of──→ ontology_classes
-                            
+
 ontology_registry ──produced_by──→ extraction_runs
 ```
 

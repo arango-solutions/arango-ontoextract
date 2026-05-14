@@ -216,9 +216,7 @@ def parse_pptx(file_bytes: bytes) -> ParsedDocument:
                 notes_text = notes.strip()
         except Exception:
             # Don't let a malformed notes pane kill the whole parse.
-            log.warning(
-                "pptx parse: failed to read notes for slide %d", slide_index, exc_info=True
-            )
+            log.warning("pptx parse: failed to read notes for slide %d", slide_index, exc_info=True)
 
         if notes_text:
             body_parts.append(f"[Notes] {notes_text}")
@@ -227,9 +225,7 @@ def parse_pptx(file_bytes: bytes) -> ParsedDocument:
         if not body and not heading:
             continue
 
-        parsed.sections.append(
-            Section(heading=heading, text=body, page_number=slide_index)
-        )
+        parsed.sections.append(Section(heading=heading, text=body, page_number=slide_index))
 
     return parsed
 
@@ -272,9 +268,7 @@ def _pptx_collect_text(
         # Tables: row by row, cell by cell.
         if getattr(shape, "has_table", False):
             for row in shape.table.rows:  # type: ignore[attr-defined]
-                row_text = " | ".join(
-                    (cell.text or "").strip() for cell in row.cells
-                ).strip(" |")
+                row_text = " | ".join((cell.text or "").strip() for cell in row.cells).strip(" |")
                 if row_text:
                     out.append(row_text)
             continue

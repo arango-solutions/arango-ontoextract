@@ -153,25 +153,34 @@ class TestFindRangeClassForOrphanNoMatch:
         assert match is None
 
     def test_empty_signal_text_returns_none(self):
-        assert find_range_class_for_orphan(
-            _orphan(),
-            [_cls("Account")],
-            domain_class_key="Customer",
-        ) is None
+        assert (
+            find_range_class_for_orphan(
+                _orphan(),
+                [_cls("Account")],
+                domain_class_key="Customer",
+            )
+            is None
+        )
 
     def test_no_classes_returns_none(self):
-        assert find_range_class_for_orphan(
-            _orphan(description="Customer holds Account."),
-            [],
-            domain_class_key="Customer",
-        ) is None
+        assert (
+            find_range_class_for_orphan(
+                _orphan(description="Customer holds Account."),
+                [],
+                domain_class_key="Customer",
+            )
+            is None
+        )
 
     def test_only_domain_class_present_returns_none(self):
-        assert find_range_class_for_orphan(
-            _orphan(description="Customer is mentioned again."),
-            [_cls("Customer")],
-            domain_class_key="Customer",
-        ) is None
+        assert (
+            find_range_class_for_orphan(
+                _orphan(description="Customer is mentioned again."),
+                [_cls("Customer")],
+                domain_class_key="Customer",
+            )
+            is None
+        )
 
 
 class TestFindRangeClassForOrphanNormalisation:
@@ -304,12 +313,7 @@ def _patched_run_aql(monkeypatch, *, classes, properties, domain_edges, range_ed
         if "FOR p IN ontology_object_properties" in q:
             return iter(properties)
         if "FOR e IN rdfs_domain" in q:
-            return iter(
-                [
-                    {"prop_id": e["_from"], "class_id": e["_to"]}
-                    for e in domain_edges
-                ]
-            )
+            return iter([{"prop_id": e["_from"], "class_id": e["_to"]} for e in domain_edges])
         if "FOR e IN rdfs_range_class" in q:
             return iter([e["_from"] for e in range_edges])
         raise AssertionError(f"unexpected query: {q!r}")
@@ -459,12 +463,8 @@ class TestRepairOrchestrator:
             "ontology_id": "OID",
             "expired": NEVER_EXPIRES,
         }
-        domain_edges = [
-            {"_from": "ontology_object_properties/p1", "_to": "ontology_classes/A"}
-        ]
-        range_edges = [
-            {"_from": "ontology_object_properties/p1", "_to": "ontology_classes/B"}
-        ]
+        domain_edges = [{"_from": "ontology_object_properties/p1", "_to": "ontology_classes/A"}]
+        range_edges = [{"_from": "ontology_object_properties/p1", "_to": "ontology_classes/B"}]
         db, range_col = _mock_db(
             classes=classes,
             properties=[prop],
@@ -569,13 +569,9 @@ class TestRepairOrchestrator:
             "ontology_id": "OID",
             "expired": NEVER_EXPIRES,
         }
-        domain_edges = [
-            {"_from": "ontology_object_properties/p1", "_to": "ontology_classes/A"}
-        ]
+        domain_edges = [{"_from": "ontology_object_properties/p1", "_to": "ontology_classes/A"}]
         # Simulate the world AFTER the first repair: range edge now exists.
-        range_edges = [
-            {"_from": "ontology_object_properties/p1", "_to": "ontology_classes/B"}
-        ]
+        range_edges = [{"_from": "ontology_object_properties/p1", "_to": "ontology_classes/B"}]
         db, range_col = _mock_db(
             classes=classes,
             properties=[prop],
@@ -616,9 +612,7 @@ class TestRepairOrchestrator:
             "ontology_id": "OID",
             "expired": NEVER_EXPIRES,
         }
-        domain_edges = [
-            {"_from": "ontology_object_properties/p1", "_to": "ontology_classes/KYC"}
-        ]
+        domain_edges = [{"_from": "ontology_object_properties/p1", "_to": "ontology_classes/KYC"}]
         db, _ = _mock_db(
             classes=classes,
             properties=[prop],
@@ -840,5 +834,3 @@ class TestResolveRangeClassMiss:
         assert res.class_key == "CA"
         assert res.tier == "label"
         assert res.target_label == "Customer Account"
-
-
