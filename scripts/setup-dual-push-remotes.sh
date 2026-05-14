@@ -99,8 +99,20 @@ fi
 # Strip any extra push URLs on origin (this is the dual-push misconfig).
 # `git remote set-url --delete --push origin <url>` removes one URL at a
 # time; loop until only the canonical one remains.
+#
+# We avoid `mapfile` here: it's bash 4+ only, and macOS ships bash 3.2
+# (rebuilds via Homebrew but the system bash is still 3.2). Use a portable
+# while-read idiom instead. The integration test in
+# tests/unit/test_setup_dual_push_remotes.py exercises this loop end-to-end
+# against a real git clone with the dual-push misconfig, so any regression
+# to bash-4-only constructs will fail CI on macOS runners.
 while true; do
-	mapfile -t push_urls < <(git remote get-url --push --all origin 2>/dev/null || true)
+	push_urls=()
+	while IFS= read -r line; do
+		[[ -z "${line}" ]] && continue
+		push_urls+=("${line}")
+	done < <(git remote get-url --push --all origin 2>/dev/null || true)
+
 	# If there's exactly one push URL and it equals ORIGIN_URL_FINAL, done.
 	if [[ "${#push_urls[@]}" -le 1 ]] && [[ "${push_urls[0]:-${ORIGIN_URL_FINAL}}" == "${ORIGIN_URL_FINAL}" ]]; then
 		break
