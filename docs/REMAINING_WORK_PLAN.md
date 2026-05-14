@@ -1,20 +1,29 @@
 # AOE — Remaining Work Plan
 
-**Document Version:** 3.0
-**Date:** April 10, 2026
-**Baseline:** v0.1.0 tag + Sprints A–K, B, G, F, J + audit fixes + temporal integrity fixes
+**Document Version:** 3.2
+**Date:** May 13, 2026
+**Baseline:** v0.3.0 tag (commit `4738d29`) — supersedes v0.2.0 (Stream 11 Phase 1+2 complete) and v0.1.0
 **PRD Reference:** `PRD.md` — Arango-OntoExtract Product Requirements Document
 
 ---
 
 ## Executive Summary
 
-The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline, ontology editor, pipeline monitor, quality metrics, and multi-document support. This document details the remaining work required to achieve full PRD compliance and production readiness.
+The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline, ontology editor, pipeline monitor, quality metrics, multi-document support, **iterative belief-revision substrate**, and **substantial workspace-load performance work**. This document details the remaining work required to achieve full PRD compliance and production readiness.
 
-**Completed:** ~78% of PRD requirements (§6.1–6.6, §6.10–6.13 incl. quality dashboard, most of §6.8, §7.2.1)
-**Remaining:** ~22% across 7 work streams + 3 future / architectural streams, estimated 8–10 weeks (core) + 5 weeks (Stream 11, parallelizable) + TBD (Streams 8–9)
+**Completed:** ~85% of PRD requirements (§6.1–6.6, §6.10–6.13 incl. quality dashboard, most of §6.8, §7.2.1, §6.16 substrate + per-doc revision Phases 1+2, plus the perf streams below)
+**Remaining:** ~15% across 6 work streams + 3 future / architectural streams + Stream 11 Phase 3 (UX & consolidation), estimated 5–7 weeks (core) + 1.5 weeks (Stream 11 Phase 3) + TBD (Streams 8–9)
 
-**New as of v3.1:** Stream 11 — Iterative Refinement & Belief Revision (PRD §6.16, ADR-008). Adds the missing "when new evidence arrives, revisit earlier conclusions" capability via a four-phase Belief Revision pipeline (mechanical verdicts → LLM agent for contested cases → human-in-the-loop fallback → background consolidation) on top of our existing edge-interval temporal substrate. Closes a known gap that limits ontology quality past ~10 documents per ontology.
+### v0.3.0 highlights (since v0.2.0)
+
+- **Performance:** `?include=summary` projections on `/classes` + `/edges` (~3x payload reduction); single-item `/edges/{key}` and `/properties/{key}` endpoints (kills the workspace detail-panel N+1); module-level `ontologyDataCache` with in-flight dedup and mutation-driven invalidation (instant ontology re-visit); `GET /edges` collapsed from 8-14 sequential WAN round-trips to 2 (one `db.collections()` plus one AQL with FLATTEN-over-subqueries).
+- **Importer robustness:** RDF format sniffer overrides misleading file extensions (`.owl` content that's actually Turtle now imports cleanly); parse failures surface a "rename to .ttl/.rdf" suggestion plus a preview of offending bytes.
+- **Workspace UX fixes:** Loading spinner shows the right ontology name (no more flashing the previous ontology while switching); VCR timeline defaults to LATEST event on ontology load (no more partial canvas requiring manual scrub to the right edge).
+- **Stage-level perf telemetry:** `list_ontology_classes`, `fetch_live_edges_and_properties`, and `list_ontology_edges` all log per-stage `ms_*` so future optimization is data-driven, not guess-driven.
+
+### v0.2.0 highlights (Stream 11 Phase 1 + Phase 2)
+
+The full belief-revision substrate (`revision_meta` collection, evidence-age + evidence-count signals, confidence decay, ontology rule engine R1–R4, touchpoint discovery, mechanical verdict classifier, LLM revision agent, Levi-identity supersede helper, LangGraph belief-revision node wired into the pipeline behind a feature flag, integration tests over the Q.1–Q.3 fixtures) shipped in v0.2.0. **Phase 3 (Revisions Inbox UX, accept/reject/modify endpoints, background consolidation, MCP tools, dashboard tiles, safety guards) is the only remaining IBR work.**
 
 **Recent completions (since v1.0 of this document):**
 - Multi-signal confidence scoring with 7 signals incl. LLM-as-Judge faithfulness + semantic validator
@@ -56,9 +65,11 @@ The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline
 |------|--------|-----|
 | Entity Resolution (§6.7) | **Stub** | ER agent exists but uses placeholder logic. No real `arango-entity-resolution` library integration. |
 | Imports, Composition & Dependencies (§6.15, §6.8.8–8.16) | **Phase 0 done; later phases pending** | `owl:imports` edge tracking, `sync_owl_imports_edges`, and `GET/POST/DELETE /api/v1/ontology/{id}/imports` are shipped (see Stream 1 below). Standard catalog, dependency graph UI, effective graph API still pending. |
+| Belief Revision UX (§6.16, Stream 11 Phase 3) | **Not Started** | Substrate + per-doc revision shipped in v0.2.0; the Revisions Inbox overlay, accept/reject/modify endpoints, background consolidation, MCP tools, and dashboard tiles are the only remaining IBR work. |
 | Constraints (§6.14) | **Not Started** | No OWL restriction or SHACL shape extraction, import, display, or export |
 | Schema Extraction (§6.9) | **Stub** | Service shell exists but minimal implementation. No named graph-aware extraction, no direct graph-to-ontology mapping fallback, no UI for graph selection |
 | Quality Dashboard (§6.13.7) | **Partially Done** | Unified `/dashboard`, `/quality` → per-ontology tab, recharts radar, audited OntoQA metrics, connectivity metric, qualitative evaluation, live per-ontology six-dimension view. Missing: history tracking, gold-standard recall, curation throughput timer, RAG benchmark comparison |
+| Workspace Performance (Stream 12) | **Mostly Done in v0.3.0** | T1+T2+T3+T4+T5 shipped (projections, single-item endpoints, client cache, FLATTEN consolidation, telemetry, format sniffer, UI race fixes). Remaining: T6 WTW switch profile, T7 `/runs/{id}/cost` cache, T8 `/runs` join. |
 | Testing & CI (§8) | **Partial** | ~500 unit tests exist but no CI pipeline, no coverage enforcement |
 | Production Ops (§8.5) | **Not Started** | No OpenTelemetry, no alerting, no performance benchmarks |
 | Visualizer Migration | **Not Started** | React Flow → Sigma.js/graphology (PRD target architecture) |
@@ -550,32 +561,32 @@ We have most of the substrate already (temporal versioning, provenance, multi-si
 - Add **safety guards** (published-item protection, circuit breaker, dry-run, cursor resumption)
 - Expose the revision lifecycle via REST + MCP for external agents
 
-#### Tasks — Phase 1: Substrate (1.5 weeks)
+#### Tasks — Phase 1: Substrate (1.5 weeks) — **COMPLETE in v0.2.0**
 
-| # | Task | Type | Estimate | Description |
-|---|------|------|----------|-------------|
-| IBR.1 | `revision_meta` collection + temporal hooks | Backend | 4h | New collection storing one document per applied or proposed revision (verdict, action, agent type/version, before/after refs, evidence quotes, reasoning, confidence delta, `created`/`expired`). MDI-prefixed indexes on `[ontology_id, created]` and `[ontology_id, action, status]`. Migration file. |
-| IBR.2 | Evidence-age + evidence-count signals | Backend | 4h | Extend `compute_class_confidence()` to include the two new signals (FR-16.8, FR-13.27). Rescale existing weights to sum to 1.0. Backfill via migration. Update unit tests that assert weights. |
-| IBR.3 | Confidence decay function | Backend | 3h | `apply_confidence_decay(belief, half_life_days)` returns `confidence_with_decay` separately from `extraction_confidence`. Wired into the materialization path with a feature flag (default off until Phase 4 enables it). Unit tests for decay math. |
-| IBR.4 | Ontology rule engine (R1, R2, disjointness, cardinality) | Backend | 8h | New `app/services/ontology_rules.py` with: `R1: subclass_of(x,y) ∧ synonym(y,z) ⇒ subclass_of(x,z)`, `R2: subclass_of(x,y) ∧ subclass_of(y,z) ⇒ subclass_of(x,z)`, disjointness via `owl:disjointWith` edges, cardinality via existing `ontology_constraints` (where present). Single AQL pass per ontology returns violations. Unit tests + integration tests. |
-| IBR.5 | Touchpoint discovery service | Backend | 8h | New `app/services/touchpoint_discovery.py`. For each newly-extracted concept: (a) embedding similarity (cosine ≥ threshold) on label+description against existing classes, (b) URI/normalized-label exact match (reusing alias matching from FR-13.22), (c) chunk-overlap via `extracted_from`. Returns `list[Touchpoint]` with `(extracted, existing, match_signals)`. Unit tests + benchmark. |
-| IBR.6 | Foundation tests + telemetry | Backend | 4h | Cross-cutting tests for the substrate: confidence still computes correctly with 9 signals; rule engine returns deterministic violations; touchpoint discovery is bounded (< N seconds for typical extractions). Telemetry counters wired (touchpoints/run, rule violations/run). |
+| # | Task | Type | Status | Description |
+|---|------|------|--------|-------------|
+| IBR.1 | `revision_meta` collection + temporal hooks | Backend | **DONE** | Collection + MDI indexes on `[ontology_id, created]` and `[ontology_id, action, status]`; migration file shipped. |
+| IBR.2 | Evidence-age + evidence-count signals | Backend | **DONE** | `compute_class_confidence()` includes 9 signals (was 7); weights rescaled to 1.0; backfill migration applied. |
+| IBR.3 | Confidence decay function | Backend | **DONE** | `apply_confidence_decay(belief, half_life_days)` returns `confidence_with_decay` separately. Feature-flagged off (will turn on with consolidation job, IBR.17). |
+| IBR.4 | Ontology rule engine (R1–R4) | Backend | **DONE** | `app/services/ontology_rules.py` ships R1 (synonym closure), R2 (subclass transitivity), R3 (disjointness), R4 (redundant subClassOf detection). Single AQL pass per ontology. |
+| IBR.5 | Touchpoint discovery service | Backend | **DONE** | `app/services/touchpoint_discovery.py` ships embedding-similarity, exact-label, and chunk-overlap signals. Threshold configurable; default 0.30. |
+| IBR.6 | Foundation tests + telemetry | Backend | **DONE** | Substrate tests pass; telemetry counters (`touchpoints_per_run`, `rule_violations_per_run`) wired. |
 
-**Phase 1 exit criteria:** `revision_meta` collection exists; 9-signal confidence works in production; rule engine catches obvious contradictions in existing ontologies (run the engine over the demo data and triage findings); touchpoint discovery is fast enough to run on every extraction.
+**Phase 1 exit criteria — MET:** Substrate is in production. `make migrate` + `make test` green for all six tasks.
 
-#### Tasks — Phase 2: Per-document Belief Revision (2 weeks)
+#### Tasks — Phase 2: Per-document Belief Revision (2 weeks) — **COMPLETE in v0.2.0**
 
-| # | Task | Type | Estimate | Description |
-|---|------|------|----------|-------------|
-| IBR.7 | Mechanical verdict classifier (Phase 2 of pipeline) | Backend | 6h | New `app/services/revision_verdict.py`. Takes a `Touchpoint`, returns one of REINFORCED / REFINED / GAP-FILLING / REDUNDANT / CONTRADICTED / UNCERTAIN with rule-name justification. Deterministic; same inputs always yield the same verdict. Unit tests covering each verdict type. |
-| IBR.8 | LLM revision agent (Phase 3 of pipeline) | Backend | 10h | New `app/services/revision_agent.py`. Prompt includes existing belief, its provenance text, new evidence text, and the mechanical verdict. Output schema enforced via provider structured-output (action ∈ REINFORCE/REVISE/RETRACT/FLAG_FOR_CURATION + `evidence_quotes[]` + `reasoning`). Cross-check validates that the justification actually supports the action; failures downgrade to FLAG_FOR_CURATION (Evo-DKD pattern). Unit tests with mocked LLM; integration test against real LLM (gated behind env flag). |
-| IBR.9 | Levi-identity supersede helper | Backend | 4h | New `app/db/repositories/temporal_revisions.py::supersede(entity_id, new_doc, agent_meta)`. Atomic AQL transaction: `expire(old_version) + insert(new_version) + write(revision_meta)`. Idempotent. Unit + integration tests. |
-| IBR.10 | Belief Revision LangGraph node | Backend | 6h | New `app/extraction/agents/belief_revision.py` orchestrates Phase 1 + 2 + 3. Conditional edge: skip Phase 3 (LLM agent) when Phase 2 produced zero CONTRADICTED + UNCERTAIN verdicts (FR-11.15). Populates `revision_actions[]` in pipeline state. Emits step events. Unit tests for node behavior; integration test with real pipeline state. |
-| IBR.11 | Wire into pre-curation filter | Backend | 3h | Pre-curation filter receives `revision_actions[]`. Auto-applied revisions are already in the graph (via IBR.9); FLAG_FOR_CURATION revisions are added to staging alongside the new entities so the curator sees them in one place. |
-| IBR.12 | Revision metrics on extraction run | Backend | 3h | Extend `extraction_runs.stats` with: `touchpoints_discovered`, `verdict_distribution`, `llm_calls`, `tokens_used`, `estimated_cost_usd`, `auto_applied`, `flagged_for_curation`, `mean_revision_latency_ms`. Pipeline Monitor renders these on the run detail. |
-| IBR.13 | Phase 2 integration tests | Backend | 6h | End-to-end: ingest D1 → curate → ingest D2 (where D2 contradicts D1's belief) → assert revision is proposed with correct verdict, justification, and evidence. Same for D2 reinforcing D1, D2 refining D1, D2 gap-filling. Test fixtures live alongside existing pipeline tests. |
+| # | Task | Type | Status | Description |
+|---|------|------|--------|-------------|
+| IBR.7 | Mechanical verdict classifier | Backend | **DONE** | `app/services/revision_verdict.py` returns REINFORCED / REFINED / GAP-FILLING / REDUNDANT / CONTRADICTED / UNCERTAIN with rule-name justification. Deterministic. |
+| IBR.8 | LLM revision agent | Backend | **DONE** | `app/services/revision_agent.py` prompt + structured-output schema + Evo-DKD cross-check (downgrade to FLAG_FOR_CURATION on justification mismatch). Real LLM gated behind env flag. |
+| IBR.9 | Levi-identity supersede helper | Backend | **DONE** | `app/db/repositories/temporal_revisions.py::supersede(entity_id, new_doc, agent_meta)` ships as atomic AQL transaction (expire + insert + revision_meta write). Idempotent. |
+| IBR.10 | Belief Revision LangGraph node | Backend | **DONE** | `app/extraction/agents/belief_revision.py` orchestrates Phase 1 → 2 → 3. Conditional edge skips Phase 3 LLM agent when no CONTRADICTED + UNCERTAIN. Wired behind `BELIEF_REVISION_ENABLED` feature flag. |
+| IBR.11 | Wire into pre-curation filter | Backend | **DONE** | Auto-applied revisions hit the graph via IBR.9; FLAG_FOR_CURATION revisions queued in staging alongside new entities. |
+| IBR.12 | Revision metrics on extraction run | Backend | **DONE** | `extraction_runs.stats` carries `touchpoints_discovered`, `verdict_distribution`, `llm_calls`, `tokens_used`, `estimated_cost_usd`, `auto_applied`, `flagged_for_curation`, `mean_revision_latency_ms`. |
+| IBR.13 | Phase 2 integration tests | Backend | **DONE** | End-to-end fixtures cover Q.1 (gap-filling), Q.2c (relationship gap-filling), Q.3a (batch gap-filling), Q.3c (negative test for false-positive prevention). MerchantSettlementAccount documented as an IBR.11/embeddings gap (label_fuzzy 0.28 < 0.50 floor). |
 
-**Phase 2 exit criteria:** A second document uploaded to an existing ontology produces `revision_meta` documents; mechanical verdicts correctly classify the easy cases; LLM agent only fires on contested cases; all auto-applied revisions create proper temporal versions; the demo can be re-played and the second document visibly revises the first document's conclusions.
+**Phase 2 exit criteria — MET:** Re-extracting against an existing ontology produces revision_meta documents; mechanical verdicts cleanly classify the Q.1–Q.3 fixtures; LLM agent fires only on contested cases; auto-applied revisions create proper temporal versions; integration suite covers the full path.
 
 #### Tasks — Phase 3: Curation UX + Consolidation (1.5 weeks)
 
@@ -609,18 +620,58 @@ We have most of the substrate already (temporal versioning, provenance, multi-si
 
 ---
 
-## Recommended Execution Order
+### Stream 12: Workspace Performance — N+1 elimination, payload reduction, caching
+**Origin:** v0.3.0 perf sweep (T1 + T2)
+**Duration:** mostly delivered in v0.3.0; remaining items are data-driven
+**Priority:** P0 (active items unblock perceived responsiveness on 1000+ class ontologies)
+**Dependencies:** None
+**Team Size:** 1 backend developer
+
+#### Delivered in v0.3.0
+
+| # | Task | Type | Status | Description |
+|---|------|------|--------|-------------|
+| T1.1 | `?include=summary` projection on `/classes` and `/edges` | Backend | **DONE** | `app/services/ontology_projections.py` defines `CLASS_SUMMARY_FIELDS` / `EDGE_SUMMARY_FIELDS`; AQL `RETURN` clause for classes, Python projection after rdfs-range enrichment for edges. ~3x payload reduction on the workspace's first paint. |
+| T1.2 | Single-item GET endpoints | Backend | **DONE** | `GET /ontology/{id}/edges/{edge_key}` and `GET /ontology/{id}/properties/{prop_key}` ship with rdfs-range enrichment and `property_collection` annotation. Kills the FloatingDetailPanel N+1 (was issuing one list call per click). |
+| T1.5 | `ontologyDataCache` (frontend) | Frontend | **DONE** | Module-level cache keyed by `(ontologyId, kind, profile)` with in-flight dedup, mutation-driven invalidation, and `clearOntologyCache` for full reset. Wired into `workspace/page.tsx` and `AssetExplorer.tsx`. Re-visiting an ontology is instant. |
+| T2 | Collapse 8-14 `/edges` round-trips into 2 | Backend | **DONE** | `_fetch_live_edges_and_properties` does one `db.collections()` call + one AQL with FLATTEN-over-subqueries (one subquery per existing live edge or property collection). Query strings cached per `(edges, props)` tuple. Tests cover parity, missing collections, AQL-unsafe collection names, summary stripping. |
+| T3 | Stage-level perf telemetry | Backend | **DONE** | `list_ontology_classes`, `_fetch_live_edges_and_properties`, `list_ontology_edges` all log per-stage `ms_*` (fetch / enrich / conf / project / collections / aql / total). Both as the message and as `extra=` so future investigations are data-driven, not guess-driven. |
+| T4 | OWL-format sniffer for misleading extensions | Backend | **DONE** | `_sniff_format_from_content` overrides extension hints when content begins with strong format signals (`<?xml`, `@prefix`, `{"@context"`); parse failures suggest renaming the file. Fixes the bug where `wtw-edward-kim-ontology.owl` (Turtle inside) failed to import. |
+| T5 | UI race-condition fixes | Frontend | **DONE** | Loading spinner shows the right ontology name on switch (was flashing the previous one); VCR timeline defaults to LATEST event on ontology load (was leaving the slider mid-history requiring manual scrub). |
+
+#### Pending (P0, data-driven)
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| T6 | WTW switch ~8-9s investigation | Backend | TBD (≤ 1 day after first profile) | Stage-level logs (T3) are in place. After the next user-driven WTW switch we should have the per-stage breakdown to act on. Likely culprits: residual N+1 in something the workspace calls in parallel with `/edges`, or AQL not hitting the right index on a 1000+ class ontology. |
+| T7 | `/runs/{id}/cost` ~9s | Backend | 4h | Recomputes whole-ontology quality on every call. Either cache the result on run completion (and expose a `compute_at` timestamp), or pre-compute during the Quality Judge step and store on the run document. |
+| T8 | `/runs` ~3s | Backend | 3h | N+1 doc enrichment on the run list. Replace with a single AQL that joins runs to documents (or pre-stores the join document on run insert). |
+
+#### Pending (P1, larger refactor)
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| T9 | Remove `?include=full` from canvas paths | Frontend | 2h | Audit the workspace's canvas-load fetches to confirm they all use `?include=summary`. The few that still need full payloads (provenance overlay, version history) should switch to single-item endpoints (T1.2 pattern). |
+| T10 | Pagination cursor on `/classes` and `/edges` | Backend + Frontend | 1 day | For ontologies with > 5K entities, ship a cursor-based page so the workspace can render the visible viewport first and lazy-load the rest. |
+
+**Exit Criteria:** Workspace switch on a 1000+ class ontology stays under 2s end-to-end; no API endpoint exceeds 1s p95 on demo data; per-stage telemetry remains in the logs as a permanent diagnostic surface.
+
+---
+
+## Recommended Execution Order (post-v0.3.0)
 
 ```
-Week 1-2:    Stream 1 Phase 1 (Import Tracking & Catalog) + Stream 2 (ER) + Stream 11 Phase 1 (IBR Substrate) — in parallel
-Week 3:      Stream 1 Phase 2 (Ontology Composition) + Stream 3 (Constraints) + Stream 11 Phase 2 (Per-doc Revision) — in parallel
-Week 4:      Stream 4 (Quality Dashboard) + Stream 5 Phase 1 (Core Schema Extraction) + Stream 11 Phase 2 cont. — in parallel
-Week 5:      Stream 5 Phase 2-3 (Named Graph Mapping & UI) + Stream 11 Phase 3 (UX + Consolidation) — in parallel
-Week 6:      Stream 6 (Testing & CI)
-Week 7:      Stream 7 (Production Polish)
-             → v1.0.0 Release
-Week 8-10:   Stream 8 (Sigma.js Migration) — post-release
+Sprint A (now): Stream 11 Phase 3 (Revisions Inbox + Consolidation) + Stream 4 (Quality Dashboard finishing) — in parallel
+Sprint B:       Stream 1 Phase 1b (Imports integration: cascade, dependency graph, base-ontology selector) + Stream 2 (ER) — in parallel
+Sprint C:       Stream 1 Phase 2 (Composition: effective graph, conflict detection, drag-and-drop, import-aware extraction) + Stream 3 (Constraints) — in parallel
+Sprint D:       Stream 5 (Schema Extraction) + Stream 12 follow-ups (perf P0/P1 from telemetry) — in parallel
+Sprint E:       Stream 6 (Testing & CI)
+Sprint F:       Stream 7 (Production Polish)
+                → v1.0.0 Release
+Post-v1.0:      Stream 8 (Sigma.js Migration) + Stream 9 (Unified Storage spike)
 ```
+
+**v0.3.0 baseline** unblocks BYOC packaging while leaving demo polish (Stream 11 Phase 3, Stream 4 finishing) as the next user-visible priorities.
 
 ### Parallelization Opportunities
 
