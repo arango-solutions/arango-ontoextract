@@ -90,6 +90,25 @@ repos:
   # =======================================================================
   - repo: local
     hooks:
+      # Refuses pushes of `main` (or other configured "release" branches)
+      # to a protected remote (e.g. arango-solutions/) unless HEAD is at a
+      # release tag matching `vX.Y.Z`. Feature branches and release tags
+      # are always allowed; pushes to non-protected remotes (your personal
+      # fork) are silently allowed too. Configure via env vars:
+      # UPSTREAM_PROTECTED_URL_PATTERN, UPSTREAM_PROTECTED_BRANCH,
+      # UPSTREAM_RELEASE_TAG_PATTERN. See docs/git-hygiene.md "Solo-dev
+      # workflow" and the script header for details.
+      - id: protect-upstream-push
+        name: Refuse non-release pushes to protected upstream
+        entry: scripts/githooks/protect-upstream-push.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+        # Must run before the heavy hooks below; if we're going to refuse
+        # the push, refuse it BEFORE running jest/pytest/mypy/smoke.
+        verbose: false
+
       - id: jest-unit
         name: Jest unit tests (pre-push)
         entry: bash -c 'cd frontend && npm test -- --ci --coverage=false'
