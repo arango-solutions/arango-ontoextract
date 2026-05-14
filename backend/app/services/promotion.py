@@ -128,6 +128,26 @@ def promote_staging(
         },
     )
 
+    # Q.2 (Stream 4) — snapshot the promoted ontology so the trend chart
+    # has a "promotion" datapoint distinct from the prior
+    # "extraction_completion" datapoint. Failures here do not roll back
+    # promotion (the graph mutation is the user-visible outcome).
+    try:
+        from app.db import quality_history_repo
+
+        quality_history_repo.record_event_snapshot(
+            target_ontology_id,
+            source="promotion",
+            run_id=run_id,
+            db=db,
+        )
+    except Exception:
+        log.warning(
+            "post-promotion quality snapshot failed",
+            extra={"run_id": run_id, "ontology_id": target_ontology_id},
+            exc_info=True,
+        )
+
     return report
 
 

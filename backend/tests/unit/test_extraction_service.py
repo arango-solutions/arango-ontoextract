@@ -388,6 +388,7 @@ class TestExecuteRunSuccess:
 
         return mock_db, mock_col, run_record, pipeline_state, consistency_result
 
+    @patch("app.db.quality_history_repo.record_event_snapshot")
     @patch("app.services.extraction._create_produced_by_edge")
     @patch("app.services.extraction._auto_register_ontology", return_value="onto_new")
     @patch("app.services.extraction._materialize_to_graph")
@@ -409,6 +410,7 @@ class TestExecuteRunSuccess:
         mock_materialize,
         mock_auto_reg,
         mock_produced_by,
+        mock_record_snapshot,
     ):
         from app.services.extraction import execute_run
 
@@ -436,6 +438,62 @@ class TestExecuteRunSuccess:
         ]
         assert len(ontology_persist) == 1
         assert ontology_persist[0]["_key"] == "run_abc"
+
+        # Q.2 — extraction completion must record a quality snapshot
+        # tagged with the run id so the trend chart can attribute the
+        # datapoint to the run that caused it.
+        mock_record_snapshot.assert_called_once()
+        snap_args = mock_record_snapshot.call_args
+        assert snap_args.args == ("onto_new",)
+        assert snap_args.kwargs["source"] == "extraction_completion"
+        assert snap_args.kwargs["run_id"] == "run_abc"
+
+    @patch(
+        "app.db.quality_history_repo.record_event_snapshot",
+        side_effect=RuntimeError("snapshot blew up"),
+    )
+    @patch("app.services.extraction._create_produced_by_edge")
+    @patch("app.services.extraction._auto_register_ontology", return_value="onto_new")
+    @patch("app.services.extraction._materialize_to_graph")
+    @patch("app.services.extraction._store_results")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "hello"}])
+    @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
+    @patch("app.services.extraction.doc_get")
+    @patch("app.services.extraction._get_collection")
+    @patch("app.services.extraction.get_db")
+    @pytest.mark.asyncio
+    async def test_snapshot_failure_does_not_break_extraction(
+        self,
+        mock_get_db,
+        mock_get_col,
+        mock_doc_get,
+        mock_run_pipeline,
+        mock_load_chunks,
+        mock_store,
+        mock_materialize,
+        mock_auto_reg,
+        mock_produced_by,
+        mock_record_snapshot,
+    ):
+        """Q.2: a quality snapshot bug must never prevent the extraction
+        pipeline from reporting ``status="completed"`` to the caller."""
+        from app.services.extraction import execute_run
+
+        mock_db, mock_col, run_record, pipeline_state, _ = self._setup_mocks()
+        mock_get_db.return_value = mock_db
+        mock_get_col.return_value = mock_col
+        mock_doc_get.side_effect = [run_record, {"_key": "run_abc", "status": "completed"}]
+        mock_run_pipeline.return_value = pipeline_state
+
+        result = await execute_run(
+            run_id="run_abc",
+            document_ids=["doc_1"],
+            event_callback=MagicMock(),
+        )
+
+        # Pipeline still completes despite the snapshot exception.
+        assert result["status"] == "completed"
+        mock_record_snapshot.assert_called_once()
 
     @patch("app.services.extraction._create_produced_by_edge")
     @patch("app.services.extraction._update_existing_ontology", return_value="onto_existing")

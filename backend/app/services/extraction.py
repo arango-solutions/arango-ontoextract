@@ -327,6 +327,27 @@ async def execute_run(
                 _BACKGROUND_TASKS.add(task)
                 task.add_done_callback(_BACKGROUND_TASKS.discard)
 
+                # Q.2 (Stream 4) — record a quality history snapshot tagged
+                # with the originating run so the dashboard's trend chart
+                # has one data point per real ontology mutation, not one
+                # per "user opened the quality report" event. Wrapped to
+                # never break the extraction write path.
+                try:
+                    from app.db import quality_history_repo
+
+                    quality_history_repo.record_event_snapshot(
+                        ontology_id,
+                        source="extraction_completion",
+                        run_id=run_id,
+                        db=db,
+                    )
+                except Exception:
+                    log.warning(
+                        "post-extraction quality snapshot failed",
+                        extra={"run_id": run_id, "ontology_id": ontology_id},
+                        exc_info=True,
+                    )
+
     except Exception as exc:
         log.exception("extraction pipeline failed", extra={"run_id": run_id})
         partial_logs: list[dict[str, Any]] = []

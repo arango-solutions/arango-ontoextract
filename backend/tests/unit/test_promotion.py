@@ -129,6 +129,68 @@ class TestPromoteStaging:
 
         assert report["ontology_id"] == "custom_onto"
 
+    @patch("app.db.quality_history_repo.record_event_snapshot")
+    @patch("app.services.promotion._promote_edges")
+    @patch("app.services.promotion._promote_entity")
+    @patch("app.services.promotion._get_non_approved_staging_entities")
+    @patch("app.services.promotion._get_approved_staging_entities")
+    def test_records_quality_snapshot_after_promotion(
+        self,
+        mock_approved,
+        mock_non_approved,
+        mock_promote_entity,
+        mock_promote_edges,
+        mock_record_snapshot,
+    ):
+        """Q.2: a successful promotion records a quality snapshot tagged
+        ``source="promotion"`` so the trend chart distinguishes the
+        promotion datapoint from the prior extraction-completion one."""
+        from app.services.promotion import promote_staging
+
+        mock_approved.side_effect = [[], [], [], []]
+        mock_non_approved.side_effect = [[], [], [], []]
+        mock_promote_edges.return_value = 0
+
+        mock_db = MagicMock()
+        mock_db.has_collection.return_value = True
+
+        promote_staging(mock_db, run_id="run_5", ontology_id="prod_onto")
+
+        mock_record_snapshot.assert_called_once()
+        snap_args = mock_record_snapshot.call_args
+        assert snap_args.args == ("prod_onto",)
+        assert snap_args.kwargs["source"] == "promotion"
+        assert snap_args.kwargs["run_id"] == "run_5"
+
+    @patch(
+        "app.db.quality_history_repo.record_event_snapshot",
+        side_effect=RuntimeError("snapshot blew up"),
+    )
+    @patch("app.services.promotion._promote_edges")
+    @patch("app.services.promotion._promote_entity")
+    @patch("app.services.promotion._get_non_approved_staging_entities")
+    @patch("app.services.promotion._get_approved_staging_entities")
+    def test_promotion_succeeds_even_if_snapshot_raises(
+        self,
+        mock_approved,
+        mock_non_approved,
+        mock_promote_entity,
+        mock_promote_edges,
+        mock_record_snapshot,
+    ):
+        from app.services.promotion import promote_staging
+
+        mock_approved.side_effect = [[], [], [], []]
+        mock_non_approved.side_effect = [[], [], [], []]
+        mock_promote_edges.return_value = 0
+
+        mock_db = MagicMock()
+        mock_db.has_collection.return_value = True
+
+        report = promote_staging(mock_db, run_id="run_6")
+        assert report["status"] == "completed"
+        mock_record_snapshot.assert_called_once()
+
 
 class TestGetPromotionStatus:
     def test_returns_none_when_not_run(self):
