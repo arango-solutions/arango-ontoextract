@@ -217,6 +217,38 @@ Every ontology mutation follows the edge-interval pattern:
 
 This enables point-in-time snapshots via AQL range filters on `[created, expired]`.
 
+### Belief Revision Flow
+
+After Entity Resolution and before the Quality Judge, the LangGraph Belief
+Revision node compares newly-extracted concepts against the touchpoints they
+hit in the existing ontology. The mechanical phase auto-classifies the
+common cases; the LLM phase handles contradicted/uncertain cases. Outputs
+become rows in `revision_meta`:
+
+```
+  ER Agent ───▶ Belief Revision Agent ───▶ Quality Judge
+                  │
+                  ├─ Phase 1: touchpoint discovery
+                  ├─ Phase 2: mechanical verdict (REINFORCED / REFINED /
+                  │            GAP-FILLING / REDUNDANT / CONTRADICTED /
+                  │            UNCERTAIN)
+                  ├─ Phase 3: LLM revision agent (CONTRADICTED + UNCERTAIN
+                  │            only) emits REINFORCE | REVISE | RETRACT |
+                  │            FLAG_FOR_CURATION
+                  └─ writes audit row to ``revision_meta``
+```
+
+Reversible auto-applied verdicts (REINFORCE confidence boost, GAP_FILL new
+edge) commit immediately. Structural revisions on **approved** entities
+never auto-apply — the published-item guard downgrades them to
+`FLAG_FOR_CURATION` and routes them to the Revisions Inbox surface in the
+workspace. A separate background consolidation job (admin-triggered, with
+cursor-based resumption) re-runs rules and confidence decay across the full
+ontology.
+
+See [ADR-008](./adr/008-belief-revision-substrate.md) for the full
+architectural rationale and the implementation status appendix.
+
 ---
 
 ## Technology Choices and Rationale

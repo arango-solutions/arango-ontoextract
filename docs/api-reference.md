@@ -18,9 +18,10 @@ Interactive documentation (Swagger UI) is available at `http://localhost:8000/do
 8. [Quality metrics](#quality-metrics)
 9. [Curation](#curation)
 10. [Entity Resolution](#entity-resolution)
-11. [WebSocket](#websocket)
-12. [Error Format](#error-format)
-13. [Pagination](#pagination)
+11. [Belief Revision](#belief-revision)
+12. [WebSocket](#websocket)
+13. [Error Format](#error-format)
+14. [Pagination](#pagination)
 
 ---
 
@@ -514,6 +515,124 @@ Upload a file for processing. The file is parsed, chunked, and embedded asynchro
   "min_score": 0.6
 }
 ```
+
+---
+
+## Belief Revision
+
+Curator-facing endpoints for the Incremental Belief Revision (IBR) inbox.
+Every row in `revision_meta` records an agent's verdict on an existing
+ontology belief in light of new evidence; these endpoints let a curator (or
+an MCP agent) accept, reject, or modify those proposals. See
+[ADR-008](./adr/008-belief-revision-substrate.md) for the architectural
+context.
+
+| Method | Path                                       | Description                                          | Auth |
+|--------|--------------------------------------------|------------------------------------------------------|------|
+| `GET`  | `/api/v1/revisions/inbox`                  | List pending `FLAG_FOR_CURATION` revisions           | Yes  |
+| `GET`  | `/api/v1/revisions/`                       | Filterable list (status, agent_type, ontology)       | Yes  |
+| `GET`  | `/api/v1/revisions/{key}`                  | Single revision document                             | Yes  |
+| `GET`  | `/api/v1/revisions/entity/{entity_id}`     | All revisions touching one entity                    | Yes  |
+| `POST` | `/api/v1/revisions/{key}/accept`           | Apply the proposed action via temporal supersede     | Yes  |
+| `POST` | `/api/v1/revisions/{key}/reject`           | Mark rejected; no graph change                       | Yes  |
+| `POST` | `/api/v1/revisions/{key}/modify`           | Override action / payload, then apply                | Yes  |
+
+### GET /api/v1/revisions/inbox
+
+**Query Parameters:** `ontology_id` (required), `limit` (default 50, max 500).
+
+**Response:** `200 OK`
+
+```json
+{
+  "ontology_id": "onto_xyz",
+  "count": 2,
+  "data": [
+    {
+      "_key": "rev_abc",
+      "ontology_id": "onto_xyz",
+      "verdict": "REFINED",
+      "action": "FLAG_FOR_CURATION",
+      "status": "pending",
+      "agent_type": "belief_revision_llm",
+      "agent_version": "v1",
+      "triggering_doc_id": "doc_001",
+      "existing_entity_id": "ontology_classes/onto_xyz__VirtualCare",
+      "existing_version": "v1",
+      "evidence_quotes": ["...telehealth..."],
+      "reasoning": "Description should mention telehealth.",
+      "confidence_before": 0.6,
+      "confidence_after": 0.8,
+      "created": 1715000000
+    }
+  ]
+}
+```
+
+### POST /api/v1/revisions/{key}/accept
+
+**Request Body:**
+
+```json
+{ "decided_by": "curator_alice", "note": "Looks right." }
+```
+
+**Response:** `200 OK`
+
+```json
+{
+  "revision_key": "rev_abc",
+  "decision": "accept",
+  "status": "applied",
+  "already_decided": false,
+  "supersede_result": {
+    "entity_id": "ontology_classes/onto_xyz__VirtualCare",
+    "old_version": "v1",
+    "new_version": "v2"
+  },
+  "revision": { "...": "updated revision_meta doc" }
+}
+```
+
+When `already_decided` is `true`, the response status echoes the prior
+decision and no graph mutation occurs (idempotent).
+
+### POST /api/v1/revisions/{key}/reject
+
+Same envelope as `/accept` but `decision = "reject"` and no
+`supersede_result`. The graph is not modified.
+
+### POST /api/v1/revisions/{key}/modify
+
+**Request Body:**
+
+```json
+{
+  "decided_by": "curator_alice",
+  "note": "Promote to RETRACT — duplicate of existing class.",
+  "override_action": "RETRACT"
+}
+```
+
+`override_action` is one of `REINFORCE | REVISE | RETRACT | GAP_FILL |
+FLAG_FOR_CURATION`. The `agent_version` field on the persisted revision
+gets a `+modified-by:<curator_id>` suffix so the audit trail makes the
+human override unambiguous.
+
+### Admin-only
+
+Background consolidation and circuit breaker visibility live under the
+`/admin` router (admin scope required):
+
+| Method | Path                                                      | Description                                  |
+|--------|-----------------------------------------------------------|----------------------------------------------|
+| `POST` | `/api/v1/admin/ontology/{ontology_id}/consolidate`        | Run rules + decay + stale-belief scan        |
+| `GET`  | `/api/v1/admin/consolidation-jobs`                        | List recent consolidation jobs               |
+| `GET`  | `/api/v1/admin/consolidation-jobs/{job_key}`              | Inspect cursor for one job                   |
+| `GET`  | `/api/v1/admin/belief-revision/circuit-breaker`           | Snapshot of the LLM agent's rate limiter     |
+
+`/consolidate` query parameters: `dry_run` (default `false`), `job_key`
+(resume an interrupted job), `stale_age_days`, `stale_min_confidence`.
 
 ---
 

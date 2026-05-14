@@ -11,8 +11,8 @@
 
 The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline, ontology editor, pipeline monitor, quality metrics, multi-document support, **iterative belief-revision substrate**, and **substantial workspace-load performance work**. This document details the remaining work required to achieve full PRD compliance and production readiness.
 
-**Completed:** ~85% of PRD requirements (§6.1–6.6, §6.10–6.13 incl. quality dashboard, most of §6.8, §7.2.1, §6.16 substrate + per-doc revision Phases 1+2, plus the perf streams below)
-**Remaining:** ~15% across 6 work streams + 3 future / architectural streams + Stream 11 Phase 3 (UX & consolidation), estimated 5–7 weeks (core) + 1.5 weeks (Stream 11 Phase 3) + TBD (Streams 8–9)
+**Completed:** ~88% of PRD requirements (§6.1–6.6, §6.10–6.13 incl. quality dashboard, most of §6.8, §7.2.1, §6.16 substrate + per-doc revision Phases 1+2 **and** Phase 3 UX/consolidation/MCP tools, plus the perf streams below)
+**Remaining:** ~12% across 6 work streams + 3 future / architectural streams, estimated 5–7 weeks (core) + TBD (Streams 8–9)
 
 ### v0.3.0 highlights (since v0.2.0)
 
@@ -65,7 +65,7 @@ The full belief-revision substrate (`revision_meta` collection, evidence-age + e
 |------|--------|-----|
 | Entity Resolution (§6.7) | **Stub** | ER agent exists but uses placeholder logic. No real `arango-entity-resolution` library integration. |
 | Imports, Composition & Dependencies (§6.15, §6.8.8–8.16) | **Phase 0 done; later phases pending** | `owl:imports` edge tracking, `sync_owl_imports_edges`, and `GET/POST/DELETE /api/v1/ontology/{id}/imports` are shipped (see Stream 1 below). Standard catalog, dependency graph UI, effective graph API still pending. |
-| Belief Revision UX (§6.16, Stream 11 Phase 3) | **Not Started** | Substrate + per-doc revision shipped in v0.2.0; the Revisions Inbox overlay, accept/reject/modify endpoints, background consolidation, MCP tools, and dashboard tiles are the only remaining IBR work. |
+| Belief Revision UX (§6.16, Stream 11 Phase 3) | **Complete (v0.4.0-dev)** | Revisions Inbox overlay (IBR.14), inline detail panel (IBR.15), accept/reject/modify REST + service (IBR.16), background consolidation + admin endpoints (IBR.17), four safety guards (IBR.18), Quality Dashboard "Revisions Activity" tile (IBR.19), six MCP tools (IBR.20), and docs cross-link (IBR.21) all shipped. See ADR-008 implementation status appendix. |
 | Constraints (§6.14) | **Not Started** | No OWL restriction or SHACL shape extraction, import, display, or export |
 | Schema Extraction (§6.9) | **Stub** | Service shell exists but minimal implementation. No named graph-aware extraction, no direct graph-to-ontology mapping fallback, no UI for graph selection |
 | Quality Dashboard (§6.13.7) | **Partially Done** | Unified `/dashboard`, `/quality` → per-ontology tab, recharts radar, audited OntoQA metrics, connectivity metric, qualitative evaluation, live per-ontology six-dimension view. Missing: history tracking, gold-standard recall, curation throughput timer, RAG benchmark comparison |
@@ -592,16 +592,16 @@ We have most of the substrate already (temporal versioning, provenance, multi-si
 
 | # | Task | Type | Estimate | Description |
 |---|------|------|----------|-------------|
-| IBR.14 | Revisions Inbox overlay | Frontend | 8h | New workspace overlay component `RevisionsInbox.tsx`. Lists pending revisions with: affected entity + thumbnail, verdict + proposed action, before/after diff (reusing `temporal-diff` from §6.5), evidence panes (existing provenance vs new chunks), downstream-impact list. Sortable by impact / confidence delta / recency. Accessible from Asset Explorer (badge with pending count) and canvas right-click ("Show Pending Revisions"). Per `ui-architecture.mdc`: overlay, not a route; uses `viewportTopRight` placement; accept/reject/modify via right-click context menu on each row. |
-| IBR.15 | Revision detail panel | Frontend | 4h | When a row is selected, opens `RevisionDetailPanel.tsx` (reuses `FloatingDetailPanel` infrastructure with `mainColumnTopLeft` placement to avoid stacking with the inbox). Full diff visualization, expandable evidence quotes, downstream-impact graph mini-view. |
-| IBR.16 | Accept/Reject/Modify endpoints + service | Backend | 6h | Implements `POST /revision/{id}/accept`, `POST /revision/{id}/reject`, `POST /revision/{id}/modify`. Accept invokes the Levi-identity helper (IBR.9). Modify takes a modified action payload, validates it, then accepts. All three update `revision_meta.status`. Unit + integration tests. |
-| IBR.17 | Background consolidation job | Backend | 8h | New `app/services/consolidation.py`. Sweeps the ontology to: re-run rules (IBR.4), recompute confidence with all evidence (IBR.2), apply decay (IBR.3), flag stale beliefs. Returns a `consolidation_report`. Cursor-based resumption (LangGraph checkpoint pattern). Admin endpoint `POST /admin/ontology/{id}/consolidate` triggers it. Unit + integration tests with synthetic ontologies of varying sizes. |
-| IBR.18 | Safety guards | Backend | 4h | (a) Published-item protection: structural revisions on `status: approved` classes always FLAG_FOR_CURATION even when LLM agent's confidence is high. (b) Circuit breaker: a configurable revision rate (default 50/min) halts the LLM revision agent and writes an alertable log line. (c) Dry-run: `?dry_run=true` on consolidation returns the proposed actions without applying them. (d) Cursor resumption: consolidation jobs persist their cursor in `consolidation_jobs` collection and resume on restart. Unit tests for each guard. |
-| IBR.19 | Quality dashboard revision tiles | Frontend | 4h | New tiles on the Quality Dashboard surfacing the metrics from FR-13.26: revisions/doc, contradictions/doc, decay-flagged count, pending inbox count, verdict distribution (recharts pie), LLM revision cost. Reuses existing tile components. |
-| IBR.20 | Belief-revision MCP tools | Backend | 4h | Implement the six MCP tools from FR-16.13 / §7.7b table. Each wraps the corresponding REST endpoint. MCP integration tests. |
-| IBR.21 | Documentation + ADR cross-link | Docs | 2h | Update `backend/AGENTS.md` with the new module locations. Add a `docs/iterative-refinement-howto.md` walkthrough (curator's guide to the Revisions Inbox; admin's guide to consolidation jobs). Cross-link from the existing `docs/DELETION_AND_REFERENTIAL_INTEGRITY.md`. |
+| IBR.14 | Revisions Inbox overlay | Frontend | **DONE** | `frontend/src/components/workspace/RevisionsInboxOverlay.tsx`. Floating overlay over the canvas (no new route per `ui-architecture.mdc` §9). Opened from the ontology context menu, the canvas context menu (when an ontology is loaded), or the new "Revisions Activity" tile in the Quality Report. Inline accept/reject buttons with optimistic row removal + toast feedback. |
+| IBR.15 | Revision detail panel | Frontend | **DONE** | Sibling `RevisionDetailPanel` co-located in `RevisionsInboxOverlay.tsx`. Click any row to expand: verdict, action, agent identity + version, triggering doc, confidence delta, full reasoning, evidence quotes. Modify panel allows curator to override the proposed action and attach an audit note. |
+| IBR.16 | Accept/Reject/Modify endpoints + service | Backend | **DONE** | `backend/app/api/revisions.py` exposes `POST /api/v1/revisions/{key}/{accept,reject,modify}`; service layer in `backend/app/services/revision_actions.py` handles idempotency and translates `ValueError` from the supersede helper into HTTP-friendly errors. Modify supports both `override_action` and `new_vertex_data`. Unit-tested at both layers. |
+| IBR.17 | Background consolidation job | Backend | **DONE** | `backend/app/services/consolidation.py` orchestrates rule engine → confidence decay → stale-belief scan with `ConsolidationCursor` checkpointing (`consolidation_jobs` collection). Admin endpoints in `backend/app/api/admin.py`: `POST /admin/ontology/{id}/consolidate?dry_run=&job_key=`, `GET /admin/consolidation-jobs[/{key}]`. Stage failures are logged and skipped, not aborted. |
+| IBR.18 | Safety guards | Backend | **DONE** | `backend/app/services/revision_safety.py` implements (a) `should_flag_for_curation` — structural revisions on `status="approved"` entities are downgraded to `FLAG_FOR_CURATION`, wired into `belief_revision._apply_mechanical/_apply_llm`; (b) `RevisionRateLimiter` — fixed-window in-memory circuit breaker (`belief_revision_circuit_*` settings) consulted by `belief_revision.revise()` before any LLM call; (c) dry-run support via the consolidate endpoint and `PlannedAction` dataclass; (d) `ConsolidationCursor` for resume-on-restart. Each guard has unit tests. |
+| IBR.19 | Quality dashboard revision tiles | Frontend | **DONE** | "Revisions Activity" section in `frontend/src/components/dashboard/QualityReportOverlay.tsx` — Total / Pending / Applied / Rejected KPIs aggregated from `/api/v1/revisions/?ontology_id=&limit=200`, verdict-distribution chips, top-agent label, and a "Show inbox" CTA wired to IBR.14. |
+| IBR.20 | Belief-revision MCP tools | Backend | **DONE** | `backend/app/mcp/tools/belief_revision.py` registers six tools: `list_revisions_inbox`, `list_recent_revisions`, `get_revision`, `decide_revision` (dispatches to accept/reject/modify), `run_consolidation` (defaults `dry_run=True`), `get_circuit_breaker_state`. Wired into `app/mcp/server.py`. MCP unit tests cover each tool. |
+| IBR.21 | Documentation + ADR cross-link | Docs | **DONE** | ADR-008 grew an "Implementation Status (v0.4.0-dev)" appendix with the file map and operator/curator notes. `docs/user-guide.md` got a new "5. Belief Revision" section (entry points, accept/reject/modify, consolidation, circuit breaker). `docs/api-reference.md` gained a "Belief Revision" section (REST + admin endpoints). `docs/mcp-server.md` gained a "Belief Revision Tools" subsection. `docs/architecture.md` Data Flow now describes the Belief Revision LangGraph node and links to ADR-008. |
 
-**Phase 3 exit criteria:** Curators can accept/reject/modify revisions in the workspace overlay; admins can trigger consolidation passes (with dry-run) and see reports; all safety guards are exercised in tests; MCP tools are usable from external clients; the dashboard shows revision health metrics.
+**Phase 3 exit criteria — MET:** Curators can accept/reject/modify revisions in the workspace overlay; admins can trigger consolidation passes (with dry-run) and inspect cursors; all four safety guards are exercised in unit tests; six MCP tools are registered and unit-tested; the Quality Report tile surfaces revision health and links into the inbox.
 
 #### Implementation Plan — Recommended Order
 
@@ -658,20 +658,20 @@ We have most of the substrate already (temporal versioning, provenance, multi-si
 
 ---
 
-## Recommended Execution Order (post-v0.3.0)
+## Recommended Execution Order (post-v0.3.0, post-Stream-11)
 
 ```
-Sprint A (now): Stream 11 Phase 3 (Revisions Inbox + Consolidation) + Stream 4 (Quality Dashboard finishing) — in parallel
+Sprint A (now): Stream 4 (Quality Dashboard finishing: Q.2/Q.3/Q.4/Q.5) + Stream 12 P0/P1 (T6 WTW switch profile, T7 cost cache, T8 runs join)
 Sprint B:       Stream 1 Phase 1b (Imports integration: cascade, dependency graph, base-ontology selector) + Stream 2 (ER) — in parallel
 Sprint C:       Stream 1 Phase 2 (Composition: effective graph, conflict detection, drag-and-drop, import-aware extraction) + Stream 3 (Constraints) — in parallel
-Sprint D:       Stream 5 (Schema Extraction) + Stream 12 follow-ups (perf P0/P1 from telemetry) — in parallel
+Sprint D:       Stream 5 (Schema Extraction) + remaining Stream 12 follow-ups from telemetry — in parallel
 Sprint E:       Stream 6 (Testing & CI)
 Sprint F:       Stream 7 (Production Polish)
                 → v1.0.0 Release
 Post-v1.0:      Stream 8 (Sigma.js Migration) + Stream 9 (Unified Storage spike)
 ```
 
-**v0.3.0 baseline** unblocks BYOC packaging while leaving demo polish (Stream 11 Phase 3, Stream 4 finishing) as the next user-visible priorities.
+**v0.3.0 baseline** unblocked BYOC packaging; **v0.4.0-dev** closes Stream 11 Phase 3 (Belief Revision UX, consolidation, MCP tools, dashboard tile, docs). Stream 4 finishing + Stream 12 perf follow-ups are now the next user-visible priorities.
 
 ### Parallelization Opportunities
 

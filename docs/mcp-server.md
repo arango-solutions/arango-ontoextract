@@ -184,6 +184,32 @@ Options:
 | `explain_entity_match` | Field-by-field similarity breakdown for two entities | `key1: str`, `key2: str` |
 | `get_entity_clusters` | WCC entity clusters with member details | `ontology_id: str` |
 
+### Belief Revision Tools
+
+Mirror the [Belief Revision REST surface](./api-reference.md#belief-revision)
+so MCP-connected agents can curate and consolidate ontologies. Background
+consolidation defaults to `dry_run=true` here (the REST endpoint defaults to
+`false`) because external agents are more likely to call it speculatively.
+See [ADR-008](./adr/008-belief-revision-substrate.md) for the IBR design.
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `list_revisions_inbox` | Pending `FLAG_FOR_CURATION` rows for one ontology | `ontology_id: str`, `limit: int = 50` |
+| `list_recent_revisions` | Filterable list of recent `revision_meta` rows | `ontology_id: str \| None`, `status: str \| None`, `agent_type: str \| None`, `limit: int = 50` |
+| `get_revision` | One revision by `_key`, full payload | `key: str` |
+| `decide_revision` | Apply curator decision (`accept` / `reject` / `modify`) | `key: str`, `decision: str`, `decided_by: str = "mcp_agent"`, `note: str \| None`, `override_action: str \| None`, `new_vertex_data: dict \| None` |
+| `run_consolidation` | Rules + decay + stale-belief scan; defaults to dry-run | `ontology_id: str`, `dry_run: bool = True`, `job_key: str \| None`, `stale_age_days: int \| None`, `stale_min_confidence: float \| None` |
+| `get_circuit_breaker_state` | Current LLM-revision rate-limiter snapshot | (none) |
+
+**Safety notes for agents:**
+
+- `decide_revision` is **idempotent** — calling it twice on the same key
+  returns `already_decided: true` and does not mutate the graph again.
+- `run_consolidation` with `dry_run=True` produces a `PlannedAction` list
+  without writing to `revision_meta` or the graph; always preview first.
+- `get_circuit_breaker_state` should be polled before submitting a batch of
+  decisions if you suspect the upstream LLM agent is being rate-limited.
+
 ## Resource Catalog
 
 MCP resources provide read-only data summaries.

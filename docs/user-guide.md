@@ -10,13 +10,14 @@ A comprehensive walkthrough for using the Arango-OntoExtract (AOE) platform — 
 2. [Upload a Document](#2-upload-a-document)
 3. [Run Extraction](#3-run-extraction)
 4. [Curate the Ontology](#4-curate-the-ontology)
-5. [Promote to Production](#5-promote-to-production)
-6. [Use the VCR Timeline](#6-use-the-vcr-timeline)
-7. [Entity Resolution](#7-entity-resolution)
-8. [Import and Export](#8-import-and-export)
-9. [MCP Integration](#9-mcp-integration)
-10. [Ontology Library](#10-ontology-library)
-11. [API Reference](#11-api-reference)
+5. [Belief Revision](#5-belief-revision)
+6. [Promote to Production](#6-promote-to-production)
+7. [Use the VCR Timeline](#7-use-the-vcr-timeline)
+8. [Entity Resolution](#8-entity-resolution)
+9. [Import and Export](#9-import-and-export)
+10. [MCP Integration](#10-mcp-integration)
+11. [Ontology Library](#11-ontology-library)
+12. [API Reference](#12-api-reference)
 
 ---
 
@@ -300,7 +301,122 @@ Every decision is recorded as an audit trail entry with timestamps and curator I
 
 ---
 
-## 5. Promote to Production
+## 5. Belief Revision
+
+Once an ontology has accumulated extractions from multiple documents, AOE can
+re-evaluate **existing beliefs** in light of newly-arriving evidence — a
+process called **Incremental Belief Revision (IBR)**. The full architectural
+rationale lives in [ADR-008](./adr/008-belief-revision-substrate.md); this
+section is the operator's quickstart.
+
+### When does belief revision run?
+
+- **Per-document, automatic.** Every time a new document is extracted, the
+  Belief Revision LangGraph node compares the new concepts against existing
+  ontology entities they touch. The mechanical phase auto-classifies the
+  common case (`REINFORCED`, `GAP_FILL`, `REDUNDANT`); the LLM phase handles
+  contradicted/uncertain cases. Outputs are written to the `revision_meta`
+  audit collection.
+- **Background consolidation, on demand.** An admin can trigger a sweep over
+  the entire ontology to re-run rules, apply confidence decay, and surface
+  stale beliefs. See "Run a consolidation pass" below.
+
+### What auto-applies vs. flags for curation?
+
+| Verdict / action                 | Approved entities          | Pending entities           |
+|----------------------------------|----------------------------|----------------------------|
+| `REINFORCE` (confidence boost)   | Auto-applied               | Auto-applied               |
+| `GAP_FILL` (new edge)            | Auto-applied               | Auto-applied               |
+| `REVISE` (new version supersedes)| **Flagged for curation**   | Auto-applied               |
+| `RETRACT` (expire current)       | **Flagged for curation**   | Auto-applied               |
+| `FLAG_FOR_CURATION` (LLM unsure) | Always flagged             | Always flagged             |
+
+Structural revisions (REVISE / RETRACT) on **approved** entities never
+auto-apply. They land in the Revisions Inbox so the original curator's
+authority is preserved.
+
+### Open the Revisions Inbox
+
+Three entry points, all overlay-based (no new pages):
+
+1. **Right-click the ontology** in the asset explorer → **Show Pending Revisions**.
+2. **Right-click on canvas** when the ontology is loaded → **Show Pending Revisions**.
+3. From the **Quality Report** ("View Quality Report" on an ontology), the new
+   "Revisions Activity" tile shows pending count; click **Show inbox →**.
+
+The inbox lists each pending revision with its verdict, action, agent
+identity, reasoning, and a relative timestamp. Inline buttons:
+
+- **✓ Accept** — applies the proposed action via the same temporal
+  `supersede` path used by extraction. The graph updates immediately and
+  the row is removed from the inbox.
+- **✕ Reject** — leaves the graph untouched; only `revision_meta` records
+  the curator's decision.
+
+### Inspect a revision before deciding
+
+Click a row to open the inline detail panel. It shows:
+
+- The full **reasoning** the agent supplied.
+- **Evidence quotes** from the triggering document.
+- The **confidence delta** (before → after).
+- The **agent type and version** (mechanical vs. LLM, which prompt revision).
+
+The panel exposes three actions:
+
+- **Accept and apply** — same as the inline button.
+- **Reject** — same as the inline button.
+- **Modify…** — opens a form where you can override the proposed action
+  (e.g. promote a `FLAG_FOR_CURATION` to `RETRACT`) and attach an audit
+  note. The modified action is stamped onto `revision_meta` and applied as
+  if the agent had emitted it.
+
+### Run a consolidation pass
+
+Admin-only, non-interactive. Default behavior writes inbox rows for any new
+violations or stale beliefs. Always start with `dry_run=true` to preview:
+
+```bash
+# Dry-run: report only, no writes
+curl -X POST "http://localhost:8000/api/v1/admin/ontology/onto_xyz/consolidate?dry_run=true"
+
+# Real pass with default thresholds
+curl -X POST "http://localhost:8000/api/v1/admin/ontology/onto_xyz/consolidate"
+
+# Resume an interrupted job
+curl -X POST "http://localhost:8000/api/v1/admin/ontology/onto_xyz/consolidate?job_key=job_abc"
+```
+
+List recent jobs and inspect a specific cursor:
+
+```bash
+curl "http://localhost:8000/api/v1/admin/consolidation-jobs?ontology_id=onto_xyz&limit=10"
+curl "http://localhost:8000/api/v1/admin/consolidation-jobs/job_abc"
+```
+
+### Check the LLM circuit breaker
+
+If the per-document revision agent exceeds its configured rate
+(`belief_revision_circuit_max_per_minute`), the breaker trips and subsequent
+rows are flagged for curation rather than sent to the LLM. To inspect:
+
+```bash
+curl http://localhost:8000/api/v1/admin/belief-revision/circuit-breaker
+```
+
+Reset is automatic as the rolling window slides forward; there is no manual
+reset endpoint.
+
+### MCP tools for belief revision
+
+The same surface is exposed to AI agents — see the
+[MCP server reference](./mcp-server.md#belief-revision-tools) for
+`list_revisions_inbox`, `get_revision`, `decide_revision`,
+`run_consolidation`, and `get_circuit_breaker_state`.
+
+---
+
+## 6. Promote to Production
 
 After curation, approved entities move from the staging graph to the production ontology.
 
@@ -348,7 +464,7 @@ curl http://localhost:8000/api/v1/curation/promote/run_456/status
 
 ---
 
-## 6. Use the VCR Timeline
+## 7. Use the VCR Timeline
 
 The VCR Timeline enables time-travel through your ontology's history. Every edit, promotion, and merge creates a temporal version.
 
@@ -403,7 +519,7 @@ Creates a new current version that restores the historical state. The revert its
 
 ---
 
-## 7. Entity Resolution
+## 8. Entity Resolution
 
 Entity Resolution (ER) detects and merges duplicate or overlapping concepts across ontologies.
 
@@ -473,7 +589,7 @@ curl -X PUT http://localhost:8000/api/v1/er/config \
 
 ---
 
-## 8. Import and Export
+## 9. Import and Export
 
 ### Import an Existing Ontology
 
@@ -532,7 +648,7 @@ Uses `arango-schema-mapper` to reverse-engineer the database schema into OWL, th
 
 ---
 
-## 9. MCP Integration
+## 10. MCP Integration
 
 AOE exposes all ontology operations to AI agents via the Model Context Protocol (MCP). Two transport modes are supported:
 
@@ -602,7 +718,7 @@ For the full MCP tool catalog with parameters and examples, see [docs/mcp-server
 
 ---
 
-## 10. Ontology Library
+## 11. Ontology Library
 
 The Ontology Library is a managed registry of all ontologies in the system — both imported and extracted.
 
@@ -653,7 +769,7 @@ When Tier 2 extraction runs, the selected domain ontologies are injected as cont
 
 ---
 
-## 11. API Reference
+## 12. API Reference
 
 Full interactive API documentation is available at http://localhost:8000/docs when the backend is running (Swagger UI auto-generated from FastAPI).
 

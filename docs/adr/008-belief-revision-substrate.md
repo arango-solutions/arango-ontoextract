@@ -277,3 +277,35 @@ See `docs/REMAINING_WORK_PLAN.md` Stream 11 for the detailed task breakdown. Hig
 - Graph-Native Cognitive Memory (2026). *arXiv:2603.17244v1* — Formal AGM belief revision over versioned property graphs.
 - ADR-002 — Temporal Versioning Pattern (the substrate this builds on).
 - ADR-005 — Extraction Pipeline Orchestration (where the new node lives).
+
+---
+
+## Implementation Status (as of v0.4.0-dev, May 2026)
+
+Stream 11 from `docs/REMAINING_WORK_PLAN.md` tracks the IBR rollout. Phases
+1 and 2 shipped in v0.2.0; Phase 3 shipped in v0.4.0-dev with the items
+below.
+
+| Task | Surface | Where it lives |
+|---|---|---|
+| IBR.1–IBR.13 | Substrate + per-doc node | `backend/app/services/revision_*`, `backend/app/extraction/agents/belief_revision.py`, `revision_meta` collection (ADR-002 temporal semantics) |
+| IBR.16 — Accept / Reject / Modify | REST | `POST /api/v1/revisions/{key}/{accept,reject,modify}` (`backend/app/api/revisions.py`); business logic in `backend/app/services/revision_actions.py`. See [API reference](../api-reference.md#belief-revision). |
+| IBR.17 — Background consolidation | Admin REST | `POST /api/v1/admin/ontology/{id}/consolidate?dry_run=true` + `GET /api/v1/admin/consolidation-jobs[/{key}]` (`backend/app/api/admin.py`); orchestrator `backend/app/services/consolidation.py` chains rule engine, confidence decay, and stale-belief scan with cursor-based resumption (`ConsolidationCursor`). |
+| IBR.18 — Safety guards | Library | `backend/app/services/revision_safety.py` — published-item protection, in-memory `RevisionRateLimiter` (circuit breaker; configured via `belief_revision_circuit_*` settings), `PlannedAction` dry-run helper, persistent `ConsolidationCursor`. Wired into `belief_revision.revise()` so structural revisions on `status="approved"` entities are downgraded to `FLAG_FOR_CURATION` and LLM calls are skipped when the breaker is tripped. |
+| IBR.19 — Quality dashboard tile | Frontend | "Revisions Activity" section in `frontend/src/components/dashboard/QualityReportOverlay.tsx` — Total / Pending / Applied / Rejected KPIs, verdict-distribution chips, and a "Show inbox" CTA wired to IBR.14. |
+| IBR.14 — Revisions Inbox overlay | Frontend | `frontend/src/components/workspace/RevisionsInboxOverlay.tsx`; opened from the ontology context menu ("Show Pending Revisions") and the canvas context menu when an ontology is loaded. Inline accept/reject buttons with optimistic row removal + toast confirmation. |
+| IBR.15 — Revision detail panel | Frontend | Sibling `RevisionDetailPanel` inside the same overlay file — full reasoning, evidence quotes, confidence delta, agent identity, and a Modify pane for `override_action` + audit note. |
+| IBR.20 — MCP tools | MCP | `backend/app/mcp/tools/belief_revision.py` registers six tools: `list_revisions_inbox`, `list_recent_revisions`, `get_revision`, `decide_revision`, `run_consolidation` (defaults to `dry_run=True`), and `get_circuit_breaker_state`. See [MCP server reference](../mcp-server.md#belief-revision-tools). |
+
+**Operator notes:**
+
+- The circuit breaker is in-memory per backend process. Multi-replica deployments should set `belief_revision_circuit_max_per_minute` low enough that any single replica stays well under the LLM provider's rate limit, since cross-replica coordination is intentionally out of scope (see ADR-005 — single-leader pipeline).
+- `POST /api/v1/admin/ontology/{id}/consolidate` defaults to `dry_run=false`. The MCP `run_consolidation` tool defaults to `dry_run=true` because external agents are more likely to call it speculatively.
+- `ConsolidationCursor` rows live in the `consolidation_jobs` collection and are safe to truncate; a missing cursor causes the job to start from scratch, not to fail.
+
+**Curator notes:**
+
+- The Revisions Inbox is the canonical surface for `FLAG_FOR_CURATION` rows. Items reach it because (a) the LLM agent flagged them, (b) the published-item guard downgraded a structural change to an approved entity, or (c) the circuit breaker tripped while a contradicted/uncertain row was being processed.
+- Accept applies the revision via the same Levi-identity `supersede` path used by per-document extraction — the resulting version is indistinguishable in the temporal record from a normal extraction, except that `revision_meta.decision_log[].decided_by` records the curator id.
+- Reject leaves the graph untouched and only updates `revision_meta`; the row disappears from the inbox immediately.
+- Modify lets the curator pick a different action (e.g. `RETRACT` instead of `REVISE`) or attach an explanatory note before accepting; the modified action is stamped onto `revision_meta` and applied as if the agent had emitted it.
