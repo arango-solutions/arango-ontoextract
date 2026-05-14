@@ -18,6 +18,10 @@ import {
   waitFor,
 } from "@testing-library/react";
 
+// `jest.mock` below is hoisted above all imports by Jest's transform, so this
+// import resolves to the mocked class (not the real one).
+import { ApiError as MockedApiError } from "@/lib/api-client";
+
 import RecallComparisonOverlay from "../RecallComparisonOverlay";
 
 async function uploadFile(input: HTMLInputElement, file: File) {
@@ -34,14 +38,15 @@ const apiPost = jest.fn();
 jest.mock("@/lib/api-client", () => {
   // Defining the class inside the factory avoids the "Cannot access X
   // before initialization" hoist error: jest.mock factories run before
-  // the surrounding module body.
+  // the surrounding module body. Constructor signature matches the real
+  // ApiError so the mock is type-compatible with `import { ApiError }`.
   class ApiError extends Error {
     status: number;
     body: { message: string };
-    constructor(status: number, message: string) {
-      super(message);
+    constructor(status: number, body: { message: string }) {
+      super(body.message);
       this.status = status;
-      this.body = { message };
+      this.body = body;
     }
   }
   return {
@@ -49,11 +54,6 @@ jest.mock("@/lib/api-client", () => {
     ApiError,
   };
 });
-
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { ApiError: MockedApiError } = require("@/lib/api-client") as {
-  ApiError: new (status: number, message: string) => Error;
-};
 
 beforeEach(() => {
   apiPost.mockReset();
@@ -192,7 +192,9 @@ describe("RecallComparisonOverlay", () => {
   });
 
   it("surfaces an ApiError as inline error and does not render a report", async () => {
-    apiPost.mockRejectedValue(new MockedApiError(400, "Failed to parse reference"));
+    apiPost.mockRejectedValue(
+      new MockedApiError(400, { message: "Failed to parse reference" }),
+    );
 
     render(
       <RecallComparisonOverlay
