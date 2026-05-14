@@ -45,6 +45,7 @@ DB unreachable).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import time
 from typing import Any
@@ -52,6 +53,7 @@ from typing import Any
 from app.config import settings
 from app.db.client import get_db
 from app.db.revision_meta_repo import (
+    ACTION_FLAG_FOR_CURATION,
     AGENT_LLM,
     AGENT_MECHANICAL,
     VERDICT_CONTRADICTED,
@@ -62,8 +64,10 @@ from app.db.temporal_revisions_repo import (
     supersede_from_llm_proposal,
     supersede_from_mechanical_revision,
 )
+from app.db.utils import doc_get
 from app.extraction.state import ExtractionPipelineState, StepLog
 from app.services.revision_agent import RevisionContext, revise_batch
+from app.services.revision_safety import should_flag_for_curation
 from app.services.revision_verdict import (
     MechanicalRevision,
     StructuralFeatures,
@@ -495,13 +499,67 @@ def _evidence_quotes_from_extracted(cls: Any) -> tuple[str, ...]:
     return tuple(quotes)
 
 
+def _load_existing_entity(entity_id: str) -> dict[str, Any] | None:
+    """Best-effort fetch of the entity referenced by a touchpoint.
+
+    Used by the published-item guard to decide whether a structural
+    revision must be downgraded. Returns ``None`` on any lookup
+    failure -- the guard interprets that as "not published" rather
+    than blocking on a transient error.
+    """
+    if not entity_id or "/" not in entity_id:
+        return None
+    collection, key = entity_id.split("/", 1)
+    if not collection or not key:
+        return None
+    try:
+        db = get_db()
+        if not db.has_collection(collection):
+            return None
+        return doc_get(db.collection(collection), key)
+    except Exception:  # pragma: no cover -- defensive against driver errors
+        log.exception("belief_revision: entity load failed for %s", entity_id)
+        return None
+
+
 def _apply_mechanical(
     mech: MechanicalRevision,
     *,
     ontology_id: str,
     document_id: str,
 ) -> dict[str, Any]:
-    """Apply one mechanical revision via supersede; convert to a state record."""
+    """Apply one mechanical revision via supersede; convert to a state record.
+
+    Honors the published-item guard (Stream 11 IBR.18): structural
+    revisions on ``status: approved`` entities are recorded as
+    FLAG_FOR_CURATION rather than auto-applied, regardless of the
+    rule's confidence.
+    """
+    existing_entity = _load_existing_entity(mech.touchpoint.existing_class_id)
+    if should_flag_for_curation(
+        entity=existing_entity, proposed_action=mech.action
+    ):
+        log.info(
+            "belief_revision mechanical revision downgraded (published entity)",
+            extra={
+                "existing_entity_id": mech.touchpoint.existing_class_id,
+                "original_action": mech.action,
+            },
+        )
+        # Override the action to FLAG_FOR_CURATION while preserving the
+        # verdict and reasoning so the curator sees what the rule said.
+        mech = MechanicalRevision(
+            touchpoint=mech.touchpoint,
+            verdict=mech.verdict,
+            action=ACTION_FLAG_FOR_CURATION,
+            rule_id=f"{mech.rule_id}+published_protection",
+            confidence=mech.confidence,
+            reasoning=(
+                f"{mech.reasoning} | safety guard: published-item "
+                f"protection downgraded action to FLAG_FOR_CURATION"
+            ),
+        )
+
     try:
         result: SupersedeResult = supersede_from_mechanical_revision(
             mech,
@@ -553,6 +611,13 @@ def _apply_llm(
 
     If ``proposal is None`` (LLM batch failed entirely), record the
     touchpoint as ``status=failed`` so the curator still sees it.
+
+    Honors the published-item guard (Stream 11 IBR.18): if the LLM
+    proposed a structural action against a ``status: approved`` entity,
+    the action is downgraded to FLAG_FOR_CURATION before the
+    supersede helper is invoked. The original proposal text is
+    preserved in the reasoning so the curator can still see what the
+    LLM said.
     """
     if proposal is None:
         return {
@@ -568,6 +633,28 @@ def _apply_llm(
             "skipped": False,
             "revision_meta_key": None,
         }
+    proposed_action = str(getattr(proposal, "action", ""))
+    if proposed_action and proposed_action != ACTION_FLAG_FOR_CURATION:
+        existing_entity = _load_existing_entity(touchpoint.existing_class_id)
+        if should_flag_for_curation(
+            entity=existing_entity, proposed_action=proposed_action
+        ):
+            log.info(
+                "belief_revision LLM proposal downgraded (published entity)",
+                extra={
+                    "existing_entity_id": touchpoint.existing_class_id,
+                    "original_action": proposed_action,
+                },
+            )
+            proposal = dataclasses.replace(
+                proposal,
+                action=ACTION_FLAG_FOR_CURATION,
+                reasoning=(
+                    f"{getattr(proposal, 'reasoning', '')} | safety guard: "
+                    f"published-item protection downgraded "
+                    f"{proposed_action} to FLAG_FOR_CURATION"
+                ).strip(" |"),
+            )
     try:
         result: SupersedeResult = supersede_from_llm_proposal(
             proposal,

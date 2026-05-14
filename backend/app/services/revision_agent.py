@@ -514,6 +514,7 @@ async def revise(
     *,
     llm: Any | None = None,
     model_name: str | None = None,
+    rate_limiter: Any | None = None,
 ) -> LLMRevisionProposal:
     """Run the LLM revision agent on one context, with cross-check + retry.
 
@@ -528,16 +529,53 @@ async def revise(
     model_name:
         Override for the LLM model. Defaults to
         ``settings.llm_extraction_model``.
+    rate_limiter:
+        Optional :class:`~app.services.revision_safety.RevisionRateLimiter`
+        instance. Defaults to the module-level shared limiter
+        (:func:`get_default_limiter`). When the limiter trips,
+        :func:`revise` returns immediately with an action of
+        ``FLAG_FOR_CURATION`` and ``cross_check_notes`` explaining the
+        breaker -- the LLM is **not** called.
 
     Returns
     -------
     LLMRevisionProposal
-        Always returned -- on persistent cross-check failure the
-        proposal carries ``action=FLAG_FOR_CURATION`` and the failure
-        notes, never raises.
+        Always returned -- on persistent cross-check failure or
+        circuit-breaker trip the proposal carries
+        ``action=FLAG_FOR_CURATION`` and the failure notes, never
+        raises.
     """
     started = time.time()
     model = model_name or settings.llm_extraction_model
+
+    # ---- Circuit breaker (Stream 11 IBR.18) -----------------------------
+    # Lazy import to avoid a circular module-load between revision_agent
+    # and revision_safety (safety imports revision_meta_repo which is
+    # also imported here).
+    from app.services.revision_safety import get_default_limiter
+
+    limiter = rate_limiter if rate_limiter is not None else get_default_limiter()
+    if not limiter.check_and_increment():
+        log.warning(
+            "revision_agent: circuit breaker open, downgrading without LLM call",
+            extra={
+                "model": model,
+                "existing_class_id": ctx.mechanical_revision.touchpoint.existing_class_id,
+                "limiter": limiter.current_rate(),
+            },
+        )
+        return _downgrade(
+            ctx,
+            {},
+            (
+                "Circuit breaker tripped: too many revisions per window; "
+                "review the limiter snapshot in the logs and retry once "
+                "the window rotates.",
+            ),
+            latency_ms=(time.time() - started) * 1000,
+            tokens={"prompt_tokens": 0, "completion_tokens": 0},
+        )
+
     client = llm if llm is not None else _get_llm(model)
     system_msg, user_msg = build_revision_prompt(ctx)
 

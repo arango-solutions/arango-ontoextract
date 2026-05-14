@@ -46,6 +46,8 @@ from arango.database import StandardDatabase
 from app.db import revision_meta_repo as rev_repo
 from app.db import temporal_revisions_repo as supersede_repo
 from app.db.client import get_db
+from app.db.utils import doc_get
+from app.services import revision_safety
 
 log = logging.getLogger(__name__)
 
@@ -140,6 +142,30 @@ def _load_pending(
     return row
 
 
+def _load_existing_entity(
+    db: StandardDatabase,
+    *,
+    entity_id: str,
+) -> dict[str, Any] | None:
+    """Best-effort fetch of the entity referenced by a revision row.
+
+    Used by the published-item guard. ``None`` is returned silently
+    on lookup failure -- the caller treats that as "not published"
+    (see ``revision_safety.is_published``) so a transient lookup
+    issue cannot accidentally trigger the downgrade path.
+    """
+    if not entity_id or "/" not in entity_id:
+        return None
+    collection, key = entity_id.split("/", 1)
+    if not collection or not key or not db.has_collection(collection):
+        return None
+    try:
+        return doc_get(db.collection(collection), key)
+    except Exception:  # pragma: no cover -- defensive against driver errors
+        log.exception("revision_actions: failed to load entity %s", entity_id)
+        return None
+
+
 def _supersede_for_row(
     row: dict[str, Any],
     *,
@@ -157,6 +183,12 @@ def _supersede_for_row(
     / evidence -- we just need to plumb them into ``supersede`` along
     with whatever extra payload the curator is providing for
     REVISE / GAP_FILL.
+
+    Published-item protection is intentionally NOT applied to the
+    *curator-driven* accept path: a curator clicking "accept" on a
+    structural change to an approved entity is the explicit signal
+    that the human has approved it. The guard belongs upstream
+    (the LangGraph node + LLM agent), not here.
     """
     action = override_action or str(row.get("action") or "")
     if action == rev_repo.ACTION_FLAG_FOR_CURATION:

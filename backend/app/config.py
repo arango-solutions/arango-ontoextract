@@ -136,6 +136,14 @@ class Settings(BaseSettings):
     #: activate the four-phase IBR pipeline. Setting only -- no code
     #: deploy required to roll out or roll back.
     belief_revision_pipeline_enabled: bool = False
+    #: Circuit breaker for the LLM revision agent (IBR.18). Maximum
+    #: number of revisions allowed within ``circuit_window_seconds``
+    #: before the breaker trips and halts the agent until the next
+    #: window. Defaults are conservative: 50 / 60s allows realistic
+    #: extraction loads while preventing runaway LLM cost. Set
+    #: ``max_per_minute`` to 0 to disable the breaker entirely.
+    belief_revision_circuit_max_per_minute: int = 50
+    belief_revision_circuit_window_seconds: float = 60.0
 
     # -- Ontology Defaults ---------------------------------------------------
     default_ontology_uri: str = "http://example.org/ontology#"
