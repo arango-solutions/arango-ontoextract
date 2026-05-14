@@ -25,6 +25,7 @@ fi
 CHECKS=(
 	"Lint Backend"
 	"Lint Frontend"
+	"Pre-commit hooks"
 	"Unit Tests"
 	"Frontend unit tests"
 	"Integration Tests"

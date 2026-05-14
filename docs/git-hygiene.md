@@ -49,6 +49,7 @@ tip and only runs hooks whose `files:` regex matches at least one changed file.
 | Hook | Trigger files | Action |
 | --- | --- | --- |
 | `jest-unit` | `frontend/**/*.{ts,tsx,js,jsx,json}` | `npm test -- --ci --coverage=false` |
+| `tsc-noemit` | `frontend/**/*.{ts,tsx}` | `npx tsc --noEmit` (catches type errors ESLint cannot) |
 | `pytest-unit` | `backend/**/*.py`, `benchmarks/**/*.py` | `pytest tests/unit/ -q` |
 | `mypy` | `backend/**/*.py` | `mypy app/ --ignore-missing-imports` |
 | `smoke-test` | `Dockerfile`, `nginx*.conf`, `backend/entrypoint`, `backend/app/main.py`, `backend/pyproject.toml`, `backend/uv.lock`, `frontend/next.config.*`, `frontend/package(-lock).json`, `scripts/smoke-test.sh` | `bash scripts/smoke-test.sh` (full Docker stack) |
@@ -71,6 +72,7 @@ Requires `gh` and `jq`. Run as a repo admin once. The script applies:
 - **Required status checks** (must be green before merge):
   - `Lint Backend`
   - `Lint Frontend`
+  - `Pre-commit hooks`
   - `Unit Tests`
   - `Frontend unit tests`
   - `Integration Tests`

@@ -1,0 +1,86 @@
+---
+description: Test mocks must mirror the real implementation's signature - never invent shapes from how a test reads, and never silence linters to defeat jest hoisting
+alwaysApply: true
+---
+
+# Mock Fidelity
+
+> **"A test that passes against a wrong-signature mock is a test that didn't run."**
+
+This rule was written after a real bug: a `jest.mock` for `ApiError` declared
+`constructor(status: number, message: string)` and the test called
+`new ApiError(400, "Failed to parse reference")`. The real class is
+`constructor(status, body: ApiErrorBody)` where `body` is `{code, message, ...}`.
+Tests that "asserted error handling" were silently asserting against a fake
+shape. CI never caught it because every test was internally consistent. A
+human reviewer (Emmet) caught it on push.
+
+## Two Forbidden Moves
+
+### 1. Invented Mock Signatures
+
+Before mocking ANY symbol from production code, you MUST read the real
+declaration. The mock's public surface (constructor args, method
+signatures, exported field names and types) MUST match the real one.
+
+| Wrong | Right |
+| --- | --- |
+| Skim the test that uses the mock and infer the shape | Open the production module and read the declaration |
+| "It's just a stub, the shape doesn't matter" | The shape IS the contract — drift here means tests prove nothing |
+| Use `any` to make the mock "flexible" | Mirror the real types so type-checking catches signature changes |
+
+If the real class's signature changes, the mock should fail to type-check.
+That's the safety net. `any` silently disables it.
+
+### 2. Silencing Linters to Work Around Jest Hoisting
+
+`jest.mock(...)` calls are hoisted by Jest's transform to the very top of
+the file, BEFORE imports. So this works:
+
+```typescript
+// jest.mock factory runs first (hoisted), then imports resolve to the mocked module.
+jest.mock("@/lib/api-client", () => ({ ApiError: class extends Error {} }));
+import { ApiError } from "@/lib/api-client";  // <-- resolves to the mock
+```
+
+If you find yourself reaching for ANY of these patterns, stop:
+
+| Anti-pattern | Why it's wrong |
+| --- | --- |
+| `const { X } = require("@/lib/...")` after `jest.mock(...)` | Hoisting already handled it — `require` is dead weight |
+| `// eslint-disable-next-line @typescript-eslint/no-require-imports` | You're silencing the rule that exists to catch this exact thing |
+| `// @ts-ignore` on a mocked import | Type the mock correctly; ts-ignore hides the real bug |
+| Defining the mock class OUTSIDE the `jest.mock` factory | Triggers "Cannot access 'X' before initialization" — solve by moving the class INSIDE the factory, not by `require`-ing it back out |
+
+The fix is always: define the mock class inside the `jest.mock` factory,
+then use a top-level `import { X as MockedX } from "@/lib/..."` to get a
+typed reference. No `require`, no `eslint-disable`.
+
+## The Reading Protocol (For Mocks)
+
+Before writing any new `jest.mock(...)` factory:
+
+1. Open the production module being mocked
+2. Read every export the test will reach for
+3. Copy the constructor / function signatures into the mock
+4. If the production type uses an interface (`ApiErrorBody`), reference it
+   in the mock so a future field addition forces a test update
+
+## When a Test Catches Less Than It Claims
+
+If a test name says "handles ApiError 400 correctly" but the mock's
+`ApiError` doesn't accept the same constructor args as the real class,
+the test does NOT verify production behaviour. Fix the mock first, then
+verify the test still passes — and if it doesn't, you've found a real
+bug the wrong mock was hiding.
+
+## Anti-Patterns
+
+| Anti-Pattern | Consequence |
+| --- | --- |
+| Mocks shaped from how the test reads | Tests pass with wrong-signature production code |
+| `any` in mocks | Signature changes don't break the test |
+| `eslint-disable` for hoisting | The next reader copy-pastes the workaround |
+| Adding `// @ts-ignore` to mocked imports | Real type errors hidden |
+
+> **"Mocks are part of the contract. Treat them with the same rigor as the production type."**
