@@ -59,15 +59,42 @@ it locally; CI still runs the full smoke job on every PR.
 
 ### Tier C — server-side (the only real enforcement)
 
-GitHub branch protection on `main`, configured by:
+GitHub branch protection on `main`, configured by `scripts/setup-branch-protection.sh`.
+Requires `gh` and `jq`, and must be run as a repo admin. The script supports
+two profiles via the `PROFILE` env var; pick the one that matches your
+team size.
+
+#### `PROFILE=solo` (default) — minimal floor
+
+The `solo` profile only blocks the genuinely catastrophic actions; direct
+pushes by collaborators are allowed because the local pre-push hook
+(`protect-upstream-push`) is the real gate. CI still runs unconditionally
+and shows pass/fail badges, but does not block.
 
 ```bash
-scripts/setup-branch-protection.sh
+scripts/setup-branch-protection.sh           # PROFILE=solo by default
 # or, if your repo lives elsewhere:
 REPO=org/repo BRANCH=main scripts/setup-branch-protection.sh
 ```
 
-Requires `gh` and `jq`. Run as a repo admin once. The script applies:
+Applies:
+
+- `allow_force_pushes: false`
+- `allow_deletions: false`
+- Everything else: not enforced (no required reviews, no required CI gates)
+
+Pair this with the [Solo-dev workflow](#solo-dev-workflow) section below.
+
+#### `PROFILE=team` — PR + status-checks profile
+
+Use once a second developer joins. Requires PR with 1 approval, all CI
+checks green, conversation resolution, no force-push, admins included.
+
+```bash
+PROFILE=team scripts/setup-branch-protection.sh
+```
+
+Applies:
 
 - **Required status checks** (must be green before merge):
   - `Lint Backend`
@@ -88,6 +115,103 @@ Requires `gh` and `jq`. Run as a repo admin once. The script applies:
 
 These names must match the `name:` fields of the jobs in
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml). Keep them in sync.
+
+## Solo-dev workflow
+
+When you're the only developer on a repo, the PR-based flow is overhead
+without a payoff (you're reviewing your own code). The solo-dev workflow
+splits the world into two remotes and uses Tier B as the real gate:
+
+| Remote | Role | Push frequency |
+| --- | --- | --- |
+| `origin` (your personal fork) | Active development scratchpad | Every commit |
+| `upstream` (org/release repo) | Release artifact, externally visible | Only on tagged releases |
+
+Daily commits flow to `origin` only. The org repo stays clean — it sees
+your code only when you cut a release with `make release-to-org`.
+
+### One-shot setup
+
+```bash
+# 1) Reconfigure remotes so `git push` only ever hits the personal fork.
+make setup-dual-push-remotes
+#    Detects the dual-push misconfig (origin with two push URLs) and the
+#    arango-solutions remote, fixes both. Renames arango-solutions ->
+#    upstream by GitHub fork-workflow convention.
+
+# 2) Apply the minimal branch-protection profile on the org repo.
+scripts/setup-branch-protection.sh        # PROFILE=solo by default
+```
+
+### Daily workflow
+
+```bash
+git commit -m "wip: trying a thing"
+git push                                  # → origin (personal fork) only
+```
+
+That's it. `upstream` sees nothing.
+
+### Cutting a release
+
+```bash
+make release-to-org TAG=v0.4.0
+```
+
+`release-to-org` is a fail-fast pipeline:
+
+1. Refuses unless `TAG` matches `vX.Y.Z`.
+2. Refuses unless on `main` with a clean working tree.
+3. Refuses unless local `main` is a fast-forward of `upstream/main`
+   (run `make sync-from-org` first if not).
+4. Runs `make pre-commit-run-all` (Tier A) and `make pre-commit-run-pre-push`
+   (Tier B: jest + tsc + pytest + mypy + smoke).
+5. Creates the annotated tag (or reuses an existing one at HEAD).
+6. Pushes `main` and the tag to `upstream` in a single command.
+
+The local `protect-upstream-push` pre-push hook then verifies that the
+ref being pushed is either a non-protected branch, a release-shaped tag,
+or `main` with HEAD pointing at a release tag. Any other push to
+`upstream` is refused.
+
+### Pulling someone else's changes from upstream
+
+If a collaborator merges a PR on the org repo (rare in solo mode, but
+possible), pull it into your fork:
+
+```bash
+make sync-from-org
+```
+
+This fetches `upstream/main`, fast-forwards your local `main`, and pushes
+the result to `origin`. Refuses non-fast-forward merges so you notice
+divergence instead of papering over it.
+
+### Escape hatch
+
+If you really need to push to `upstream` outside the release flow (e.g. a
+hotfix the framework can't model), the protect hook surfaces the bypass
+in its refusal message:
+
+```bash
+ALLOW_UPSTREAM_PUSH=1 git push upstream <ref>
+```
+
+The bypass is loud (banner in stderr) so it's hard to use accidentally.
+
+### Portability to other repos
+
+The four files that comprise this workflow are designed to drop into any
+dual-push repo:
+
+| File | What it does | Configuration |
+| --- | --- | --- |
+| `scripts/setup-dual-push-remotes.sh` | Fixes remote layout | `ORIGIN_URL`, `UPSTREAM_URL`, `UPSTREAM_PROTECTED_URL_PATTERN`, `UPSTREAM_REMOTE_NAME`, `DROP_REMOTES` env vars |
+| `scripts/githooks/protect-upstream-push.sh` | Pre-push gate | `UPSTREAM_PROTECTED_URL_PATTERN`, `UPSTREAM_PROTECTED_BRANCH`, `UPSTREAM_RELEASE_TAG_PATTERN` env vars |
+| `Makefile` (release-to-org / sync-from-org / setup-dual-push-remotes) | Release + sync targets | `ORIGIN_REMOTE`, `UPSTREAM_REMOTE`, `RELEASE_BRANCH` env vars |
+| `scripts/setup-branch-protection.sh` (`PROFILE=solo`) | Server-side floor | `REPO`, `BRANCH`, `PROFILE` env vars |
+
+Drop them in, set the env vars to match, run the two setup commands.
 
 ## Common operations
 
@@ -137,4 +261,6 @@ make smoke-test
 - [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) — hook configuration
 - [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — CI gates
 - [`scripts/smoke-test.sh`](../scripts/smoke-test.sh) — Docker smoke test
-- [`scripts/setup-branch-protection.sh`](../scripts/setup-branch-protection.sh) — Tier C provisioning
+- [`scripts/setup-branch-protection.sh`](../scripts/setup-branch-protection.sh) — Tier C provisioning (`PROFILE=solo` or `PROFILE=team`)
+- [`scripts/setup-dual-push-remotes.sh`](../scripts/setup-dual-push-remotes.sh) — solo-dev remote layout
+- [`scripts/githooks/protect-upstream-push.sh`](../scripts/githooks/protect-upstream-push.sh) — solo-dev pre-push gate

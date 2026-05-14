@@ -18,8 +18,10 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 SHELL_SCRIPTS = (
     "scripts/githooks/eslint-staged.sh",
+    "scripts/githooks/protect-upstream-push.sh",
     "scripts/smoke-test.sh",
     "scripts/setup-branch-protection.sh",
+    "scripts/setup-dual-push-remotes.sh",
     "scripts/ensure-backend-deps.sh",
 )
 

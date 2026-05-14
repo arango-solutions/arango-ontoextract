@@ -1,4 +1,4 @@
-.PHONY: help setup dev infra backend frontend test test-unit test-integration test-all test-infra-up test-infra-down lint format typecheck type-check clean migrate docker-build docker-up docker-down docker-unified-build docker-unified-run docker-unified-up docker-unified-down package-arango-manual package-arango-manual-all sync-requirements check-requirements install-git-hooks pre-commit-run-all pre-commit-run-pre-push smoke-test setup-branch-protection
+.PHONY: help setup dev infra backend frontend test test-unit test-integration test-all test-infra-up test-infra-down lint format typecheck type-check clean migrate docker-build docker-up docker-down docker-unified-build docker-unified-run docker-unified-up docker-unified-down package-arango-manual package-arango-manual-all sync-requirements check-requirements install-git-hooks pre-commit-run-all pre-commit-run-pre-push smoke-test setup-branch-protection setup-dual-push-remotes release-to-org sync-from-org
 
 # Optional repo-root .env (BACKEND_PORT, etc.). Safe if missing.
 -include .env
@@ -163,7 +163,7 @@ package-arango-manual-all: ## Same + Next static export (SERVICE_URL_PATH_PREFIX
 # ---------------------------------------------------------------------------
 
 install-git-hooks: ensure-deps ## Install pre-commit + pre-push hooks via the pre-commit framework
-	chmod +x scripts/githooks/eslint-staged.sh scripts/smoke-test.sh scripts/setup-branch-protection.sh
+	chmod +x scripts/githooks/eslint-staged.sh scripts/githooks/protect-upstream-push.sh scripts/smoke-test.sh scripts/setup-branch-protection.sh scripts/setup-dual-push-remotes.sh
 	@# An older revision used core.hooksPath=scripts/githooks; clear it so the
 	@# pre-commit framework writes hooks to the standard .git/hooks/ location.
 	-git config --unset core.hooksPath 2>/dev/null || true
@@ -182,6 +182,112 @@ smoke-test: ## Tier B/CI: unified Docker image build + curl/WS smoke (same as CI
 
 setup-branch-protection: ## Tier C: apply GitHub branch protection on `main` (requires gh + jq, repo admin)
 	bash scripts/setup-branch-protection.sh
+
+# ---------------------------------------------------------------------------
+# Dual-repo workflow (personal fork = active, org repo = release artifact)
+# See docs/git-hygiene.md "Solo-dev workflow" for the full picture.
+# ---------------------------------------------------------------------------
+# These targets assume the remote layout produced by setup-dual-push-remotes:
+#   origin     -> personal fork  (default for `git push`, daily work)
+#   upstream   -> org repo        (release pushes only, gated by hook)
+# Override remote names via env if your setup differs:
+ORIGIN_REMOTE   ?= origin
+UPSTREAM_REMOTE ?= upstream
+RELEASE_BRANCH  ?= main
+
+setup-dual-push-remotes: ## One-shot: fix dual-push misconfig and rename arango-solutions -> upstream
+	bash scripts/setup-dual-push-remotes.sh
+
+# `make release-to-org TAG=v0.4.0` is the ONLY supported way to land code
+# on the org/release remote. It enforces a clean tree, fast-forward of
+# upstream/main, full local hook validation (Tier A + Tier B), and creates
+# the annotated tag if it doesn't already exist before pushing both the
+# branch and tag in a single `git push`.
+release-to-org: ## Cut a release: validates + tags + pushes RELEASE_BRANCH + TAG to UPSTREAM_REMOTE. Required: TAG=vX.Y.Z
+	@if [ -z "$(TAG)" ]; then \
+		echo "release-to-org: TAG=vX.Y.Z is required (e.g. make release-to-org TAG=v0.4.0)" >&2; \
+		exit 1; \
+	fi
+	@if ! echo "$(TAG)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$'; then \
+		echo "release-to-org: TAG '$(TAG)' does not match vX.Y.Z" >&2; \
+		exit 1; \
+	fi
+	@current_branch=$$(git rev-parse --abbrev-ref HEAD); \
+	if [ "$$current_branch" != "$(RELEASE_BRANCH)" ]; then \
+		echo "release-to-org: must be on $(RELEASE_BRANCH) (currently on $$current_branch)" >&2; \
+		exit 1; \
+	fi
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "release-to-org: working tree is dirty; commit or stash first" >&2; \
+		git status --short >&2; \
+		exit 1; \
+	fi
+	@echo "==> Fetching $(UPSTREAM_REMOTE) to verify fast-forward..."
+	@git fetch "$(UPSTREAM_REMOTE)" "$(RELEASE_BRANCH)"
+	@local_sha=$$(git rev-parse HEAD); \
+	upstream_sha=$$(git rev-parse "$(UPSTREAM_REMOTE)/$(RELEASE_BRANCH)"); \
+	if [ "$$local_sha" = "$$upstream_sha" ]; then \
+		echo "release-to-org: nothing to release; local $(RELEASE_BRANCH) == $(UPSTREAM_REMOTE)/$(RELEASE_BRANCH)" >&2; \
+		exit 1; \
+	fi; \
+	if ! git merge-base --is-ancestor "$$upstream_sha" "$$local_sha"; then \
+		echo "release-to-org: local $(RELEASE_BRANCH) is not a fast-forward of $(UPSTREAM_REMOTE)/$(RELEASE_BRANCH)." >&2; \
+		echo "  Run 'make sync-from-org' first, then resolve any divergence." >&2; \
+		exit 1; \
+	fi
+	@echo "==> Running Tier A hooks (formatting, lint, hygiene)..."
+	@$(MAKE) pre-commit-run-all
+	@echo "==> Running Tier B hooks (jest, tsc, pytest, mypy, smoke)..."
+	@$(MAKE) pre-commit-run-pre-push
+	@echo "==> Tagging $(TAG) (if not already present)..."
+	@if git rev-parse "refs/tags/$(TAG)" >/dev/null 2>&1; then \
+		existing_sha=$$(git rev-parse "refs/tags/$(TAG)^{}"); \
+		head_sha=$$(git rev-parse HEAD); \
+		if [ "$$existing_sha" != "$$head_sha" ]; then \
+			echo "release-to-org: tag $(TAG) already exists at a different commit ($$existing_sha vs HEAD $$head_sha)" >&2; \
+			exit 1; \
+		fi; \
+		echo "  $(TAG) already at HEAD; reusing"; \
+	else \
+		git tag -a "$(TAG)" -m "Release $(TAG)"; \
+	fi
+	@echo "==> Pushing $(RELEASE_BRANCH) + $(TAG) to $(UPSTREAM_REMOTE)..."
+	git push "$(UPSTREAM_REMOTE)" "$(RELEASE_BRANCH)" "refs/tags/$(TAG)"
+	@echo "==> Released $(TAG) to $(UPSTREAM_REMOTE)/$(RELEASE_BRANCH)."
+
+# `make sync-from-org` integrates any commits Emmet (or anyone) merged on
+# the upstream side back into local main and propagates them to the
+# personal fork. Refuses non-FF merges so you notice divergence instead
+# of papering over it with a noisy merge commit.
+sync-from-org: ## Pull commits from UPSTREAM_REMOTE/main into local main and push to ORIGIN_REMOTE
+	@current_branch=$$(git rev-parse --abbrev-ref HEAD); \
+	if [ "$$current_branch" != "$(RELEASE_BRANCH)" ]; then \
+		echo "sync-from-org: must be on $(RELEASE_BRANCH) (currently on $$current_branch)" >&2; \
+		exit 1; \
+	fi
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "sync-from-org: working tree is dirty; commit or stash first" >&2; \
+		git status --short >&2; \
+		exit 1; \
+	fi
+	@echo "==> Fetching $(UPSTREAM_REMOTE)..."
+	@git fetch "$(UPSTREAM_REMOTE)" "$(RELEASE_BRANCH)"
+	@local_sha=$$(git rev-parse HEAD); \
+	upstream_sha=$$(git rev-parse "$(UPSTREAM_REMOTE)/$(RELEASE_BRANCH)"); \
+	if [ "$$local_sha" = "$$upstream_sha" ]; then \
+		echo "sync-from-org: already up to date with $(UPSTREAM_REMOTE)/$(RELEASE_BRANCH)."; \
+		exit 0; \
+	fi; \
+	count=$$(git rev-list --count "$$local_sha..$$upstream_sha"); \
+	echo "==> Fast-forwarding local $(RELEASE_BRANCH) by $$count commit(s) from $(UPSTREAM_REMOTE)..."
+	@if ! git merge --ff-only "$(UPSTREAM_REMOTE)/$(RELEASE_BRANCH)"; then \
+		echo "sync-from-org: not a fast-forward. Local $(RELEASE_BRANCH) has diverged from $(UPSTREAM_REMOTE)/$(RELEASE_BRANCH)." >&2; \
+		echo "  Resolve manually: rebase your local commits onto $(UPSTREAM_REMOTE)/$(RELEASE_BRANCH)." >&2; \
+		exit 1; \
+	fi
+	@echo "==> Pushing updated $(RELEASE_BRANCH) to $(ORIGIN_REMOTE)..."
+	git push "$(ORIGIN_REMOTE)" "$(RELEASE_BRANCH)"
+	@echo "==> Sync complete."
 
 # ---------------------------------------------------------------------------
 # Dependency parity (BYOC requirements.txt vs canonical backend/pyproject.toml)
