@@ -1254,13 +1254,15 @@ async def list_ontology_classes(
             bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
         )
     )
+    ms_aql = round((time.perf_counter() - t0) * 1000, 1)
     log.info(
-        "list_ontology_classes timing",
+        f"list_ontology_classes timing ont={ontology_id} "
+        f"classes={len(classes)} include={profile} aql={ms_aql}ms",
         extra={
             "ontology_id": ontology_id,
             "class_count": len(classes),
             "include": profile,
-            "ms_aql": round((time.perf_counter() - t0) * 1000, 1),
+            "ms_aql": ms_aql,
         },
     )
     return {"data": classes}
@@ -1504,20 +1506,29 @@ async def list_ontology_edges(
         edges = [summarize_edge(e) for e in edges]
     t_proj = time.perf_counter() - t3
 
+    ms_fetch = round(t_fetch * 1000, 1)
+    ms_enrich = round(t_enrich * 1000, 1)
+    ms_conf = round(t_conf * 1000, 1)
+    ms_proj = round(t_proj * 1000, 1)
+    ms_total = round((t_fetch + t_enrich + t_conf + t_proj) * 1000, 1)
+    # Bake values into the message string -- the dev log formatter only
+    # shows the message, not ``extra``, so structured fields would be
+    # invisible. Keep ``extra`` too for production JSON loggers.
     log.info(
-        "list_ontology_edges timing",
+        f"list_ontology_edges timing ont={ontology_id} edges={len(edges)} "
+        f"props={len(properties_by_id)} include={profile} "
+        f"fetch={ms_fetch}ms enrich={ms_enrich}ms conf={ms_conf}ms "
+        f"project={ms_proj}ms TOTAL={ms_total}ms",
         extra={
             "ontology_id": ontology_id,
             "edge_count": len(edges),
             "prop_count": len(properties_by_id),
             "include": profile,
-            "ms_fetch_aql": round(t_fetch * 1000, 1),
-            "ms_enrich_rdfs": round(t_enrich * 1000, 1),
-            "ms_compute_conf": round(t_conf * 1000, 1),
-            "ms_project": round(t_proj * 1000, 1),
-            "ms_total_handler": round(
-                (t_fetch + t_enrich + t_conf + t_proj) * 1000, 1
-            ),
+            "ms_fetch_aql": ms_fetch,
+            "ms_enrich_rdfs": ms_enrich,
+            "ms_compute_conf": ms_conf,
+            "ms_project": ms_proj,
+            "ms_total_handler": ms_total,
         },
     )
 
@@ -1818,7 +1829,8 @@ def _fetch_live_edges_and_properties(
 
     if not edge_cols and not prop_cols:
         log.info(
-            "fetch_live_edges_and_properties: no collections exist",
+            f"fetch_live_edges_and_properties: no collections exist "
+            f"ont={ontology_id} db.collections()={ms_collections}ms",
             extra={"ontology_id": ontology_id, "ms_collections": ms_collections},
         )
         return [], {}
@@ -1834,7 +1846,9 @@ def _fetch_live_edges_and_properties(
     )
     ms_aql = round((time.perf_counter() - t_aql) * 1000, 1)
     log.info(
-        "fetch_live_edges_and_properties stage timing",
+        f"fetch_live_edges_and_properties timing ont={ontology_id} "
+        f"db.collections()={ms_collections}ms aql={ms_aql}ms "
+        f"edge_cols={len(edge_cols)} prop_cols={len(prop_cols)}",
         extra={
             "ontology_id": ontology_id,
             "ms_collections": ms_collections,
