@@ -24,6 +24,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from app.mcp.resources.ontology import register_ontology_resources
+from app.mcp.tools.belief_revision import register_belief_revision_tools
 from app.mcp.tools.er import register_er_tools
 from app.mcp.tools.export import register_export_tools
 from app.mcp.tools.introspection import register_introspection_tools
@@ -71,6 +72,7 @@ def create_mcp_server(
     register_temporal_tools(mcp)
     register_export_tools(mcp)
     register_er_tools(mcp)
+    register_belief_revision_tools(mcp)
     register_ontology_resources(mcp)
 
     log.info(
