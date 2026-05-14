@@ -1,0 +1,115 @@
+# pre-commit framework config — drives BOTH pre-commit and pre-push hooks.
+#
+# Setup once per clone:    make install-git-hooks   (or `make setup`)
+# Bypass (emergency only): git commit  --no-verify
+#                          git push    --no-verify
+# Manual full run:         make pre-commit-run-all
+#
+# Tier A (pre-commit, fast): formatters + linters on STAGED files only.
+# Tier B (pre-push, heavier): unit tests + mypy + conditional Docker smoke.
+# Tier C (server-side, real enforcement): GitHub branch protection — see
+#   scripts/setup-branch-protection.sh and docs/git-hygiene.md.
+
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+
+default_language_version:
+  python: python3
+
+repos:
+  # -----------------------------------------------------------------------
+  # Hygiene (whitespace, EOF, large files, syntax). Cheap, run on every commit.
+  # -----------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=2048]
+      - id: check-yaml
+        # Helm/CI tooling sometimes embeds custom YAML tags; allow them.
+        args: [--unsafe]
+      - id: check-toml
+      - id: check-json
+        # Next.js/TS configs use JSONC (json with comments); skip those.
+        exclude: ^(frontend/tsconfig.*\.json|frontend/\.vscode/.*\.json)$
+
+  # -----------------------------------------------------------------------
+  # Python: ruff (lint + format) on staged files. Picks up backend/pyproject.toml
+  # automatically by walking up from each file.
+  # -----------------------------------------------------------------------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.5
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        files: ^(backend/|benchmarks/).*\.py$
+      - id: ruff-format
+        files: ^(backend/|benchmarks/).*\.py$
+
+  # -----------------------------------------------------------------------
+  # Frontend (TS/JS): ESLint --fix on staged files only.
+  # Wrapper strips the `frontend/` prefix and runs eslint from frontend/.
+  # -----------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint (frontend, --fix)
+        entry: scripts/githooks/eslint-staged.sh
+        language: system
+        types_or: [ts, tsx, javascript, jsx]
+        files: ^frontend/
+
+  # =======================================================================
+  # Tier B — pre-push only. Runs once per `git push`, not per commit.
+  # =======================================================================
+  - repo: local
+    hooks:
+      - id: jest-unit
+        name: Jest unit tests (pre-push)
+        entry: bash -c 'cd frontend && npm test -- --ci --coverage=false'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        # Only triggers when frontend code is being pushed.
+        files: ^frontend/.*\.(ts|tsx|js|jsx|mjs|cjs|json)$
+
+      - id: pytest-unit
+        name: Pytest unit tests (pre-push)
+        entry: bash -c 'cd backend && .venv/bin/pytest tests/unit/ -q'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        files: ^(backend/|benchmarks/).*\.py$
+
+      - id: mypy
+        name: mypy backend/app (pre-push)
+        entry: bash -c 'cd backend && .venv/bin/mypy app/ --ignore-missing-imports'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        files: ^backend/.*\.py$
+
+      - id: smoke-test
+        name: Docker unified-image smoke (pre-push, only when build inputs change)
+        entry: bash scripts/smoke-test.sh
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        # Trigger only when files that affect the unified Docker image change —
+        # avoids spending ~2 min on every push for code-only changes (CI still
+        # runs the full smoke job for every PR via .github/workflows/ci.yml).
+        files: |
+          (?x)^(
+            Dockerfile|
+            nginx.*\.conf|
+            backend/entrypoint|
+            backend/pyproject\.toml|
+            backend/uv\.lock|
+            backend/app/main\.py|
+            frontend/next\.config\..+|
+            frontend/package(-lock)?\.json|
+            scripts/smoke-test\.sh
+          )$

@@ -1,4 +1,4 @@
-.PHONY: help setup dev infra backend frontend test test-unit test-integration test-all test-infra-up test-infra-down lint format typecheck type-check clean migrate docker-build docker-up docker-down docker-unified-build docker-unified-run docker-unified-up docker-unified-down package-arango-manual package-arango-manual-all sync-requirements check-requirements
+.PHONY: help setup dev infra backend frontend test test-unit test-integration test-all test-infra-up test-infra-down lint format typecheck type-check clean migrate docker-build docker-up docker-down docker-unified-build docker-unified-run docker-unified-up docker-unified-down package-arango-manual package-arango-manual-all sync-requirements check-requirements install-git-hooks pre-commit-run-all pre-commit-run-pre-push smoke-test setup-branch-protection
 
 # Optional repo-root .env (BACKEND_PORT, etc.). Safe if missing.
 -include .env
@@ -14,13 +14,19 @@ help: ## Show this help
 # Setup
 # ---------------------------------------------------------------------------
 
-setup: ## First-time project setup (venv + deps + .env)
-	@echo "==> Creating Python venv..."
-	cd backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-	@echo "==> Installing frontend deps..."
-	cd frontend && npm install
+setup: install-git-hooks ## First-time project setup (venv + deps + .env + git hooks)
 	@test -f .env || cp .env.example .env && echo "==> Created .env from .env.example"
 	@echo "==> Done. Run 'make infra' to start ArangoDB + Redis."
+
+# Split out so install-git-hooks can depend on the venv + frontend deps without
+# `setup` having to repeat itself. Detects uv (preferred — `make setup` and
+# entrypoint both use uv) and falls back to python -m pip via ensurepip.
+.PHONY: ensure-deps
+ensure-deps:
+	@echo "==> Ensuring Python venv + dev deps..."
+	@bash scripts/ensure-backend-deps.sh
+	@echo "==> Ensuring frontend deps..."
+	cd frontend && npm install
 
 dev: ## API + Next in one terminal (Ctrl+C stops both). Uses BACKEND_PORT (default 8010).
 	@BACKEND_PORT=$(BACKEND_PORT) bash scripts/dev-local.sh
@@ -148,6 +154,34 @@ package-arango-manual: ## Build aoe-myservice.tar.gz (flat: entrypoint + pyproje
 
 package-arango-manual-all: ## Same + Next static export (SERVICE_URL_PATH_PREFIX from repo .env via include). Pass PACKAGE_INCLUDE_ENV=1 to bundle .env.
 	PACKAGE_INCLUDE_FRONTEND=1 SERVICE_URL_PATH_PREFIX="$(SERVICE_URL_PATH_PREFIX)" bash scripts/package-arango-manual.sh
+
+# ---------------------------------------------------------------------------
+# Git hygiene — three-tier enforcement (see docs/git-hygiene.md)
+# Tier A: pre-commit hook (fast, staged files)
+# Tier B: pre-push hook (unit tests + conditional Docker smoke)
+# Tier C: GitHub branch protection (real enforcement; admins included)
+# ---------------------------------------------------------------------------
+
+install-git-hooks: ensure-deps ## Install pre-commit + pre-push hooks via the pre-commit framework
+	chmod +x scripts/githooks/eslint-staged.sh scripts/smoke-test.sh scripts/setup-branch-protection.sh
+	@# An older revision used core.hooksPath=scripts/githooks; clear it so the
+	@# pre-commit framework writes hooks to the standard .git/hooks/ location.
+	-git config --unset core.hooksPath 2>/dev/null || true
+	backend/.venv/bin/pre-commit install --install-hooks
+	@echo "==> Git hooks installed (pre-commit + pre-push). Bypass (emergency only):"
+	@echo "    git commit --no-verify   /   git push --no-verify"
+
+pre-commit-run-all: ## Run all Tier A hooks against every tracked file (use after editing .pre-commit-config.yaml)
+	backend/.venv/bin/pre-commit run --all-files
+
+pre-commit-run-pre-push: ## Run Tier B (pre-push) hooks against every tracked file
+	backend/.venv/bin/pre-commit run --hook-stage pre-push --all-files
+
+smoke-test: ## Tier B/CI: unified Docker image build + curl/WS smoke (same as CI unified-image job)
+	bash scripts/smoke-test.sh
+
+setup-branch-protection: ## Tier C: apply GitHub branch protection on `main` (requires gh + jq, repo admin)
+	bash scripts/setup-branch-protection.sh
 
 # ---------------------------------------------------------------------------
 # Dependency parity (BYOC requirements.txt vs canonical backend/pyproject.toml)

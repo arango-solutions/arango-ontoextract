@@ -39,6 +39,9 @@ dev = [
     "pytest-cov>=6.0",
     "ruff>=0.9",
     "mypy>=1.14",
+    # Drives .pre-commit-config.yaml (Tier A pre-commit + Tier B pre-push hooks).
+    # See docs/git-hygiene.md.
+    "pre-commit>=4.0",
 ]
 
 [tool.ruff]
