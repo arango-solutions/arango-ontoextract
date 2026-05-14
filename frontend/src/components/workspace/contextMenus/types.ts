@@ -67,6 +67,14 @@ export type RevisionsInboxArg = {
   name: string;
 } | null;
 
+/** Argument shape for ``setOntologyDelete`` (``null`` closes the dialog).
+ *  Drives the H.4 ``OntologyDeleteDialog``: fetches a deletion-impact
+ *  preview before allowing the typed-name confirmation. */
+export type OntologyDeleteArg = {
+  key: string;
+  name: string;
+} | null;
+
 /** Typed-name confirmation gate for ``ConfirmRequest``. Mirrors
  *  ``ConfirmDialogTypedName`` in ``ConfirmDialog.tsx`` so builders don't have
  *  to import the React component just to reference the type. */
@@ -155,6 +163,12 @@ export interface WorkspaceContextMenuActions {
   deleteDocument: (docKey: string) => void;
   deleteRun: (runKey: string) => void;
   requestConfirm: (request: ConfirmRequest) => void;
+  /** Open the H.4 ``OntologyDeleteDialog`` -- typed-name confirmation
+   *  with a cascade-on-delete dependency preview. Replaces the inline
+   *  ``requestConfirm`` flow that previously gated ontology deletes,
+   *  because the impact analysis must be visible before the user is
+   *  asked to confirm. ``null`` closes the dialog. */
+  setOntologyDelete: (arg: OntologyDeleteArg) => void;
 
   // ── Ontology life-cycle / dialogs ─────────────────────────────────────
   setRenameOntology: (arg: RenameOntologyArg) => void;

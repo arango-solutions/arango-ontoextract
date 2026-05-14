@@ -47,6 +47,7 @@ function makeActions(): WorkspaceContextMenuActions {
     centerPipelineView: jest.fn(),
     closeContextMenu: jest.fn(),
     requestConfirm: jest.fn(),
+    setOntologyDelete: jest.fn(),
     selectedOntologyId: null,
   };
 }
@@ -280,7 +281,7 @@ describe("buildOntologyContextMenu", () => {
     expect(actions.exportOntology).toHaveBeenNthCalledWith(3, "ont-1", "csv");
   });
 
-  it("Delete dispatches a typed-name requestConfirm whose Confirm fires deleteOntology", () => {
+  it("Delete opens the OntologyDeleteDialog instead of bypassing the impact preview (H.4)", () => {
     const actions = makeActions();
     const items = buildOntologyContextMenu(
       { _key: "ont-1", name: "Demo Ontology" },
@@ -290,44 +291,39 @@ describe("buildOntologyContextMenu", () => {
 
     expect(del.danger).toBe(true);
 
+    // Native browser dialogs are forbidden by ui-architecture.mdc §18; the
+    // builder must never call ``window.confirm`` regardless of the route
+    // it picks.
     const confirmSpy = jest.spyOn(window, "confirm");
     del.onClick!();
 
     expect(confirmSpy).not.toHaveBeenCalled();
+
+    // The dedicated H.4 dialog must be opened with the ontology's key
+    // and display name. Crucially, ``deleteOntology`` MUST NOT fire
+    // here -- the dialog itself decides when to call it (after the
+    // typed-name gate AND the impact analysis have been satisfied).
     expect(actions.deleteOntology).not.toHaveBeenCalled();
-    expect(actions.requestConfirm).toHaveBeenCalledTimes(1);
-
-    const req = (actions.requestConfirm as jest.Mock).mock.calls[0][0];
-    expect(req).toEqual(
-      expect.objectContaining({
-        title: "Delete ontology",
-        confirmLabel: "Delete",
-        danger: true,
-      }),
-    );
-    expect(req.message).toContain('"Demo Ontology"');
-    expect(req.message).toMatch(/cascades to its classes/);
-    expect(req.typedName).toEqual({
-      expected: "Demo Ontology",
-      label: "Type the ontology name to confirm:",
-      placeholder: "Demo Ontology",
+    expect(actions.requestConfirm).not.toHaveBeenCalled();
+    expect(actions.setOntologyDelete).toHaveBeenCalledTimes(1);
+    expect(actions.setOntologyDelete).toHaveBeenCalledWith({
+      key: "ont-1",
+      name: "Demo Ontology",
     });
-
-    req.onConfirm();
-    expect(actions.deleteOntology).toHaveBeenCalledWith("ont-1");
 
     confirmSpy.mockRestore();
   });
 
-  it("Delete falls back to the key for the typed-name gate when name + label are absent", () => {
+  it("Delete falls back to the ontology key when name + label are absent", () => {
     const actions = makeActions();
     const items = buildOntologyContextMenu({ _key: "ont-orphan" }, actions);
 
     items.find((it) => it.label === "Delete")!.onClick!();
-    const req = (actions.requestConfirm as jest.Mock).mock.calls[0][0];
 
-    expect(req.typedName.expected).toBe("ont-orphan");
-    expect(req.message).toContain('"ont-orphan"');
+    expect(actions.setOntologyDelete).toHaveBeenCalledWith({
+      key: "ont-orphan",
+      name: "ont-orphan",
+    });
   });
 
   it("does not invoke ontology actions when key is missing", () => {
@@ -344,5 +340,6 @@ describe("buildOntologyContextMenu", () => {
     expect(actions.setManageImports).not.toHaveBeenCalled();
     expect(actions.deleteOntology).not.toHaveBeenCalled();
     expect(actions.requestConfirm).not.toHaveBeenCalled();
+    expect(actions.setOntologyDelete).not.toHaveBeenCalled();
   });
 });

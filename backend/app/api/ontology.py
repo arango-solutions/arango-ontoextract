@@ -321,37 +321,25 @@ async def delete_ontology(
     db = get_db()
     now = __import__("time").time()
 
-    dependents: list[dict[str, Any]] = []
-    if db.has_collection("imports"):
-        dep_edges = list(
-            run_aql(
-                db,
-                "FOR e IN imports "
-                "FILTER e._to == @target AND e.expired == @never "
-                "RETURN DISTINCT e._from",
-                bind_vars={
-                    "target": f"ontology_registry/{ontology_id}",
-                    "never": NEVER_EXPIRES,
-                },
-            )
-        )
-        if dep_edges and db.has_collection("ontology_registry"):
-            dep_keys = [d.split("/")[-1] for d in dep_edges if "/" in d]
-            if dep_keys:
-                dependents = list(
-                    run_aql(
-                        db,
-                        "FOR o IN ontology_registry FILTER o._key IN @keys "
-                        "RETURN {_key: o._key, name: o.name, status: o.status}",
-                        bind_vars={"keys": dep_keys},
-                    )
-                )
+    # Dry-run: surface the same deletion-impact payload the dedicated GET
+    # endpoint returns so the frontend can render a single dialog from
+    # either route. ``dependent_ontologies`` is retained for backward
+    # compatibility with older clients that only consume direct dependents.
+    from app.services.ontology_dependency import analyze_deletion_impact
+
+    try:
+        impact = analyze_deletion_impact(db, ontology_id)
+    except ValueError as exc:
+        raise NotFoundError(str(exc)) from exc
+
+    dependents = impact["direct_dependents"]
 
     if not confirm:
         return {
             "ontology_id": ontology_id,
             "status": "pending_confirmation",
             "dependent_ontologies": dependents,
+            "deletion_impact": impact,
             "message": "Pass ?confirm=true to proceed with deprecation.",
         }
 
@@ -2634,6 +2622,35 @@ async def list_ontology_imports(ontology_id: str) -> dict[str, Any]:
         )
     )
     return {"imports": results}
+
+
+@router.get("/library/{ontology_id}/deletion-impact")
+async def get_ontology_deletion_impact(ontology_id: str) -> dict[str, Any]:
+    """Return the cascade-on-delete dependency analysis (Stream 1 H.4).
+
+    Read-only, idempotent. The frontend ``OntologyDeleteDialog`` calls
+    this before showing the typed-name confirmation so the user sees:
+
+    * Direct AND transitive dependents via ``imports`` (with depth)
+    * Cross-ontology ``extends_domain`` edge counts
+    * Per-collection counts of entities/edges that the cascade will
+      soft-expire
+    * Number of extraction runs whose ``target_ontology_id`` /
+      ``domain_ontology_ids`` reference this ontology
+    * Quality history snapshots, released versions, and pending
+      belief revisions associated with the ontology
+
+    Returns ``404`` if the ontology does not exist. The ``DELETE``
+    endpoint's dry-run path also returns this payload (under
+    ``deletion_impact``) so callers may use either route.
+    """
+    db = get_db()
+    try:
+        from app.services.ontology_dependency import analyze_deletion_impact
+
+        return analyze_deletion_impact(db, ontology_id)
+    except ValueError as exc:
+        raise NotFoundError(str(exc)) from exc
 
 
 @router.get("/{ontology_id}/imported-by")

@@ -8,11 +8,14 @@
  *
  * Notes:
  *
- * - Delete uses ``ConfirmDialog``'s **typed-name** mode per
- *   ``ui-architecture.mdc`` §18: the cascade (classes / properties / edges /
- *   runs / quality history) is unbounded enough that real friction is
- *   warranted. The user must type the ontology's display name verbatim
- *   before Confirm enables.
+ * - Delete opens the dedicated ``OntologyDeleteDialog`` (Stream 1 H.4)
+ *   instead of a bare typed-name ``ConfirmDialog``. The new dialog
+ *   fetches ``GET /library/{id}/deletion-impact`` so the user sees the
+ *   transitive ``imports`` dependents, cross-ontology ``extends_domain``
+ *   edges, and per-collection expire counts BEFORE typing the ontology
+ *   name to confirm. Per ``ui-architecture.mdc`` §18 the typed-name gate
+ *   is preserved -- ontology deletion is irreversible enough to warrant
+ *   real friction even after the impact preview.
  * - Release is gated by ``data.status === "deprecated"`` to match the
  *   existing UX (deprecated ontologies cannot be re-released without going
  *   through admin tooling).
@@ -140,21 +143,11 @@ export function buildOntologyContextMenu(
       onClick: () => {
         if (!ontKey) return;
         const displayName = String(data.name ?? data.label ?? ontKey).trim() || ontKey;
-        actions.requestConfirm({
-          title: "Delete ontology",
-          message:
-            `Delete ontology "${displayName}"?\n` +
-            `This cascades to its classes, properties, edges, extraction runs, and ` +
-            `quality history. This cannot be undone.`,
-          confirmLabel: "Delete",
-          danger: true,
-          typedName: {
-            expected: displayName,
-            label: `Type the ontology name to confirm:`,
-            placeholder: displayName,
-          },
-          onConfirm: () => actions.deleteOntology(ontKey),
-        });
+        // H.4: open the dedicated dialog so the user sees the cascade
+        // dependency analysis before being asked to type the ontology
+        // name. The dialog itself enforces the typed-name gate and
+        // calls ``actions.deleteOntology`` only after Confirm.
+        actions.setOntologyDelete({ key: ontKey, name: displayName });
       },
     },
   ];

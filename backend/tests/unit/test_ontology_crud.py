@@ -152,6 +152,109 @@ class TestDeleteOntology:
         assert resp.status_code == 400
         assert "already deprecated" in resp.text
 
+    def test_dry_run_returns_deletion_impact_payload(self, client):
+        """H.4: DELETE without ?confirm=true must surface the same
+        ``deletion_impact`` payload that GET .../deletion-impact returns,
+        so the frontend dialog can render from either route. Direct
+        dependents are also kept under the legacy ``dependent_ontologies``
+        key for backward compatibility with older clients.
+        """
+        impact = {
+            "ontology_id": "test_onto",
+            "ontology_name": "Test Ontology",
+            "status": "active",
+            "direct_dependents": [{"_key": "dep-1", "name": "Dep One"}],
+            "transitive_dependents": [
+                {"_key": "dep-1", "name": "Dep One", "depth": 1},
+                {"_key": "dep-2", "name": "Dep Two", "depth": 2},
+            ],
+            "imports_outgoing": [],
+            "cross_ontology_extends_edges": 0,
+            "expire_counts": {"ontology_classes": 7},
+            "extraction_runs": {"as_target": 1, "as_domain": 0, "total": 1},
+            "quality_history_snapshots": 3,
+            "released_versions": 0,
+            "open_revisions": 0,
+            "has_dependents": True,
+            "safe_to_delete": False,
+            "warnings": ["1 ontology(ies) depend on this one via imports; ..."],
+        }
+        with (
+            patch("app.api.ontology.registry_repo") as registry_repo,
+            patch(
+                "app.services.ontology_dependency.analyze_deletion_impact",
+                return_value=impact,
+            ),
+        ):
+            registry_repo.get_registry_entry.return_value = {
+                "_key": "test_onto",
+                "name": "Test Ontology",
+                "status": "active",
+            }
+            resp = client.delete("/api/v1/ontology/library/test_onto")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "pending_confirmation"
+        assert body["dependent_ontologies"] == impact["direct_dependents"]
+        assert body["deletion_impact"] == impact
+        # Crucially, no destructive ops were dispatched.
+        registry_repo.deprecate_registry_entry.assert_not_called()
+        registry_repo.delete_registry_entry.assert_not_called()
+
+
+class TestDeletionImpactEndpoint:
+    """Direct tests for ``GET /library/{id}/deletion-impact`` (H.4).
+
+    The endpoint is a thin wrapper around
+    ``analyze_deletion_impact``; we patch the service to verify the
+    HTTP plumbing (404 mapping, payload pass-through) without dragging
+    the AQL layer into the test.
+    """
+
+    def test_returns_payload_from_service(self, client):
+        impact = {
+            "ontology_id": "ont-1",
+            "ontology_name": "Test",
+            "status": "active",
+            "direct_dependents": [],
+            "transitive_dependents": [],
+            "imports_outgoing": [],
+            "cross_ontology_extends_edges": 0,
+            "expire_counts": {},
+            "extraction_runs": {"as_target": 0, "as_domain": 0, "total": 0},
+            "quality_history_snapshots": 0,
+            "released_versions": 0,
+            "open_revisions": 0,
+            "has_dependents": False,
+            "safe_to_delete": True,
+            "warnings": [],
+        }
+        with patch(
+            "app.services.ontology_dependency.analyze_deletion_impact",
+            return_value=impact,
+        ) as mock_analyze:
+            resp = client.get("/api/v1/ontology/library/ont-1/deletion-impact")
+
+        assert resp.status_code == 200
+        assert resp.json() == impact
+        mock_analyze.assert_called_once()
+        # The endpoint must pass the ontology_id through verbatim.
+        _db_arg, oid_arg = mock_analyze.call_args.args
+        assert oid_arg == "ont-1"
+
+    def test_missing_ontology_returns_404(self, client):
+        with patch(
+            "app.services.ontology_dependency.analyze_deletion_impact",
+            side_effect=ValueError("Ontology 'ghost' not found"),
+        ):
+            resp = client.get("/api/v1/ontology/library/ghost/deletion-impact")
+
+        assert resp.status_code == 404
+        body = resp.json()
+        assert body["error"]["code"] == "ENTITY_NOT_FOUND"
+        assert "ghost" in body["error"]["message"]
+
 
 class TestGetClassDetail:
     def test_returns_class_with_attributes_and_relationships(self, client, _mock_db):

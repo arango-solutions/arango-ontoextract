@@ -190,7 +190,9 @@ Upload a file for processing. The file is parsed, chunked, and embedded asynchro
 |--------|------|-------------|------|
 | `GET` | `/api/v1/ontology/library` | List registered ontologies (paginated) | Yes |
 | `GET` | `/api/v1/ontology/library/{ontology_id}` | Get ontology detail with stats | Yes |
+| `GET` | `/api/v1/ontology/library/{ontology_id}/deletion-impact` | Cascade-on-delete dependency analysis (Stream 1 H.4) | Yes |
 | `PUT` | `/api/v1/ontology/library/{ontology_id}` | Update registry metadata: `name`, `description`, `tags`, `tier`, `status` (also syncs `label` with `name`) | Yes |
+| `DELETE` | `/api/v1/ontology/library/{ontology_id}` | Deprecate (or, with `?hard_delete=true`, remove) an ontology. Without `?confirm=true`, returns the same `deletion_impact` payload as a dry-run. | Yes |
 | `PUT` | `/api/v1/ontology/orgs/{org_id}/ontologies` | Set base ontologies for an organization | Yes |
 | `GET` | `/api/v1/ontology/orgs/{org_id}/ontologies` | Get selected base ontologies | Yes |
 
@@ -212,6 +214,99 @@ Upload a file for processing. The file is parsed, chunked, and embedded asynchro
   }
 }
 ```
+
+### GET /api/v1/ontology/library/{ontology_id}/deletion-impact
+
+Read-only dependency analysis used by the workspace's "Delete ontology"
+dialog (Stream 1 H.4) to surface the full blast radius of a deprecation
+or hard-delete **before** the user is asked to confirm.
+
+The same payload is returned by `DELETE /library/{ontology_id}` (without
+`?confirm=true`) under the `deletion_impact` key.
+
+**Response:** `200 OK`
+
+```json
+{
+  "ontology_id": "financial_services",
+  "ontology_name": "Financial Services Ontology",
+  "status": "active",
+  "direct_dependents": [
+    {"_key": "compliance", "name": "Compliance Ontology", "status": "active"}
+  ],
+  "transitive_dependents": [
+    {"_key": "compliance", "name": "Compliance Ontology", "status": "active", "depth": 1},
+    {"_key": "trade_surveillance", "name": "Trade Surveillance", "status": "active", "depth": 2}
+  ],
+  "imports_outgoing": [
+    {"_key": "fibo_core", "name": "FIBO Core", "status": "active"}
+  ],
+  "cross_ontology_extends_edges": 5,
+  "expire_counts": {
+    "ontology_classes": 142,
+    "ontology_properties": 387,
+    "subclass_of": 96,
+    "has_property": 387
+  },
+  "extraction_runs": {"as_target": 12, "as_domain": 4, "total": 14},
+  "quality_history_snapshots": 28,
+  "released_versions": 2,
+  "open_revisions": 0,
+  "has_dependents": true,
+  "safe_to_delete": false,
+  "warnings": [
+    "2 ontology(ies) depend on this one via imports; they will keep their import edges expired but lose live access to imported axioms.",
+    "5 cross-ontology extends_domain edge(s) point into this ontology's classes; they will be expired so dependent extractions lose their domain anchors.",
+    "2 released version(s) exist for this ontology; deletion forfeits the published artifact."
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `direct_dependents` | array | Ontologies importing this one in **one hop** |
+| `transitive_dependents` | array | Full upstream closure with `depth` (1 = direct), sorted by depth then name |
+| `imports_outgoing` | array | Ontologies this one imports (informational; not affected by deletion) |
+| `cross_ontology_extends_edges` | int | Live `extends_domain` edges from another ontology's classes pointing into this one |
+| `expire_counts` | object | Per-collection counts of live entities/edges that the cascade will soft-expire (one row per known collection, zero when empty) |
+| `extraction_runs.as_target` | int | Runs whose `target_ontology_id == ontology_id` |
+| `extraction_runs.as_domain` | int | Runs that include this ontology in `domain_ontology_ids` |
+| `extraction_runs.total` | int | Deduped union of the two |
+| `quality_history_snapshots` | int | Quality history entries referencing the ontology |
+| `released_versions` | int | Release records for the ontology |
+| `open_revisions` | int | `revision_meta` documents in `proposed` status |
+| `has_dependents` | bool | True iff any transitive dependent exists |
+| `safe_to_delete` | bool | True iff there are no upstream dependents AND no cross-ontology edges AND no released versions |
+| `warnings` | array | Human-readable strings, one per concern — render as a list above the typed-name confirmation input |
+
+**Errors:** `404 ENTITY_NOT_FOUND` if the ontology does not exist.
+
+### DELETE /api/v1/ontology/library/{ontology_id}
+
+**Query Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `confirm` | bool | `false` | Without this, the call is a **dry-run** that returns the deletion-impact preview |
+| `hard_delete` | bool | `false` | When `true`, removes the registry entry after expiring its contents. Default: marks the registry entry `deprecated` instead |
+
+**Dry-run response (`confirm=false`):** `200 OK`
+
+```json
+{
+  "ontology_id": "financial_services",
+  "status": "pending_confirmation",
+  "dependent_ontologies": [
+    {"_key": "compliance", "name": "Compliance Ontology", "status": "active"}
+  ],
+  "deletion_impact": { /* same shape as GET .../deletion-impact */ },
+  "message": "Pass ?confirm=true to proceed with deprecation."
+}
+```
+
+`dependent_ontologies` is retained for backward compatibility with older
+clients that only consume direct dependents; new clients should read
+`deletion_impact.transitive_dependents` instead.
 
 ### PUT /api/v1/ontology/orgs/{org_id}/ontologies
 

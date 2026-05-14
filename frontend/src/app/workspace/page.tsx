@@ -9,6 +9,7 @@ import OntologyRenameDialog from "@/components/workspace/OntologyRenameDialog";
 import OntologyReleaseDialog from "@/components/workspace/OntologyReleaseDialog";
 import CreateOntologyDialog from "@/components/workspace/CreateOntologyDialog";
 import ConfirmDialog from "@/components/workspace/ConfirmDialog";
+import OntologyDeleteDialog from "@/components/workspace/OntologyDeleteDialog";
 import ManageImportsOverlay from "@/components/workspace/ManageImportsOverlay";
 import RevisionsInboxOverlay from "@/components/workspace/RevisionsInboxOverlay";
 import FeedbackLearningOverlay from "@/components/workspace/FeedbackLearningOverlay";
@@ -160,6 +161,14 @@ function WorkspacePageInner() {
     name: string;
   } | null>(null);
   const [revisionsInbox, setRevisionsInbox] = useState<{
+    key: string;
+    name: string;
+  } | null>(null);
+  // H.4: typed-name + cascade-impact dialog for ontology deletion. The
+  // context-menu builder requests this via ``actions.setOntologyDelete``;
+  // the dialog itself fetches the impact analysis and calls
+  // ``deleteOntology`` only after the typed-name gate is satisfied.
+  const [ontologyDelete, setOntologyDelete] = useState<{
     key: string;
     name: string;
   } | null>(null);
@@ -883,6 +892,7 @@ function WorkspacePageInner() {
     deleteDocument,
     deleteRun,
     requestConfirm,
+    setOntologyDelete,
     setRenameOntology,
     setReleaseOntology,
     setShowCreateOntology,
@@ -1246,6 +1256,18 @@ function WorkspacePageInner() {
             fn();
           }}
           onClose={() => setPendingConfirm(null)}
+        />
+      )}
+
+      {ontologyDelete && (
+        <OntologyDeleteDialog
+          ontologyId={ontologyDelete.key}
+          ontologyName={ontologyDelete.name}
+          onClose={() => setOntologyDelete(null)}
+          onConfirm={(key) => {
+            setOntologyDelete(null);
+            void deleteOntology(key);
+          }}
         />
       )}
     </div>
