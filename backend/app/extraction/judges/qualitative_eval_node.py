@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.messages import HumanMessage
 
@@ -71,7 +71,7 @@ def _parse_json_response(raw_text: str) -> dict[str, Any]:
         first_newline = text.index("\n")
         last_fence = text.rfind("```")
         text = text[first_newline + 1 : last_fence].strip()
-    return json.loads(text)
+    return cast(dict[str, Any], json.loads(text))
 
 
 async def _invoke_llm_json(
@@ -190,7 +190,12 @@ async def _map_single_batch(
             [HumanMessage(content=prompt)],
             _MAP_OBSERVATIONS_SCHEMA,
         )
-        observations = result.get("observations", [])
+        observations_raw = result.get("observations", [])
+        observations: list[str]
+        if isinstance(observations_raw, list):
+            observations = [str(x) for x in observations_raw]
+        else:
+            observations = []
         log.debug(
             "qualitative map batch %d: %d observations",
             batch_index,

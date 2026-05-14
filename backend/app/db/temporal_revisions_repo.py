@@ -204,9 +204,9 @@ def _apply_reinforce(
     if confidence_after is not None:
         update["current_confidence"] = float(confidence_after)
     return cast(
-        "dict[str, Any]",
-        db.collection(collection).update(update, return_new=True),
-    )["new"]
+        dict[str, Any],
+        cast(dict[str, Any], db.collection(collection).update(update, return_new=True))["new"],
+    )
 
 
 def _apply_revise(
@@ -259,9 +259,11 @@ def _apply_gap_fill(
     payload["expired"] = NEVER_EXPIRES
     payload["ttlExpireAt"] = None
     return cast(
-        "dict[str, Any]",
-        db.collection(edge_collection).insert(payload, return_new=True),
-    )["new"]
+        dict[str, Any],
+        cast(dict[str, Any], db.collection(edge_collection).insert(payload, return_new=True))[
+            "new"
+        ],
+    )
 
 
 def _apply_retract(

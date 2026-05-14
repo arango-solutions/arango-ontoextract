@@ -23,7 +23,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 import fitz
 import tiktoken
@@ -243,7 +245,7 @@ def _pptx_slide_title(slide: object) -> str:
 
 
 def _pptx_collect_text(
-    shapes: object,
+    shapes: Iterable[Any],
     *,
     exclude_title: bool,
 ) -> list[str]:
@@ -253,7 +255,7 @@ def _pptx_collect_text(
     it (the caller already extracted it as the section heading).
     """
     out: list[str] = []
-    for shape in shapes:  # type: ignore[union-attr]
+    for shape in shapes:
         if exclude_title and getattr(shape, "is_placeholder", False):
             ph = getattr(shape, "placeholder_format", None)
             # Title placeholder idx is 0 in OpenXML.
@@ -262,12 +264,12 @@ def _pptx_collect_text(
 
         # Grouped shapes -> recurse.
         if getattr(shape, "shape_type", None) == 6:  # MSO_SHAPE_TYPE.GROUP
-            out.extend(_pptx_collect_text(shape.shapes, exclude_title=False))  # type: ignore[attr-defined]
+            out.extend(_pptx_collect_text(shape.shapes, exclude_title=False))
             continue
 
         # Tables: row by row, cell by cell.
         if getattr(shape, "has_table", False):
-            for row in shape.table.rows:  # type: ignore[attr-defined]
+            for row in shape.table.rows:
                 row_text = " | ".join((cell.text or "").strip() for cell in row.cells).strip(" |")
                 if row_text:
                     out.append(row_text)
@@ -275,7 +277,7 @@ def _pptx_collect_text(
 
         # Plain text frames.
         if getattr(shape, "has_text_frame", False):
-            text = (shape.text_frame.text or "").strip()  # type: ignore[attr-defined]
+            text = (shape.text_frame.text or "").strip()
             if text:
                 out.append(text)
     return out

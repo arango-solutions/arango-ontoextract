@@ -44,7 +44,7 @@ def create_decision(
         "curation decision created",
         extra={"key": result["_key"], "action": data.get("action")},
     )
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 def get_decision(

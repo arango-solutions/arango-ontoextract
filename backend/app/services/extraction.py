@@ -43,7 +43,7 @@ def _generate_run_id() -> str:
     return f"run_{uuid.uuid4().hex[:12]}"
 
 
-def _get_collection(db: StandardDatabase, name: str):
+def _get_collection(db: StandardDatabase, name: str) -> StandardCollection:
     if not db.has_collection(name):
         db.create_collection(name)
     return db.collection(name)
@@ -502,7 +502,8 @@ def get_run_steps(
 ) -> list[dict[str, Any]]:
     """Get per-agent step logs for a run."""
     run = get_run(db, run_id=run_id)
-    return run.get("stats", {}).get("step_logs", [])
+    logs = run.get("stats", {}).get("step_logs", [])
+    return cast(list[dict[str, Any]], logs)
 
 
 def get_run_results(
@@ -521,7 +522,7 @@ def get_run_results(
     results_doc = doc_get(col, results_key)
 
     if results_doc and "extraction_result" in results_doc:
-        return results_doc["extraction_result"]
+        return cast(dict[str, Any], results_doc["extraction_result"])
 
     return {
         "classes": [],
@@ -1450,17 +1451,18 @@ def _auto_register_ontology(
                 "namespace": "http://example.org/ontology#",
             }
         )
-        ontology_id = entry.get("_key", run_id)
+        ontology_id_raw = entry.get("_key", run_id)
+        ontology_key = str(ontology_id_raw)
         log.info(
             "auto-registered ontology",
             extra={
                 "run_id": run_id,
                 "ontology_name": name,
                 "classes": class_count,
-                "ontology_id": ontology_id,
+                "ontology_id": ontology_key,
             },
         )
-        return ontology_id
+        return ontology_key
     except Exception:
         log.warning("auto-registration failed — ontology can be registered manually", exc_info=True)
         return None
@@ -1492,7 +1494,7 @@ def _compute_agreement_rate(pass_results: list[Any]) -> float:
 def _serialize_step_log(step_log: dict[str, Any] | Any) -> dict[str, Any]:
     """Serialize a step log entry for storage."""
     if isinstance(step_log, dict):
-        return step_log
+        return cast(dict[str, Any], step_log)
     if hasattr(step_log, "model_dump"):
-        return step_log.model_dump()
-    return dict(step_log)
+        return cast(dict[str, Any], step_log.model_dump())
+    return cast(dict[str, Any], dict(step_log))

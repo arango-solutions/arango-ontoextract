@@ -5,6 +5,7 @@ from arango.client import ArangoClient
 from arango.database import StandardDatabase
 
 import app.config as app_config
+from app.config import Settings
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ def _settings_signature() -> tuple[Any, ...]:
     )
 
 
-def _get_settings():
+def _get_settings() -> Settings:
     global _config_signature
     settings = app_config.settings
     signature = _settings_signature()

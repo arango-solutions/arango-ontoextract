@@ -37,8 +37,12 @@ _redis_unavailable_until: float = 0.0
 _REDIS_BACKOFF_SECONDS = 60.0
 
 
-def _get_redis():
-    """Lazy import, validate with ``ping``, cache client. Returns None if unavailable."""
+def _get_redis() -> Any | None:
+    """Lazy import, validate with ``ping``, cache client.
+
+    Typed as opaque ``Any | None`` — the concrete ``redis.Redis`` class is imported
+    only inside this function so we avoid a mandatory import hook at startup.
+    """
     global _redis_client, _redis_unavailable_until
 
     now = time.time()

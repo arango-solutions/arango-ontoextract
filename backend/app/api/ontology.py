@@ -5,6 +5,7 @@ import re
 import time
 from typing import Any, cast
 
+from arango.database import StandardDatabase
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field
@@ -1992,7 +1993,7 @@ def _key_from_uri(uri: str) -> str:
     return _slugify(fragment)
 
 
-def _ensure_collection(db, name: str, *, edge: bool = False) -> None:
+def _ensure_collection(db: StandardDatabase, name: str, *, edge: bool = False) -> None:
     if not db.has_collection(name):
         db.create_collection(name, edge=edge)
 

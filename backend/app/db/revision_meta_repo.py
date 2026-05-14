@@ -181,7 +181,7 @@ def record_revision(
         "dict[str, Any]",
         db.collection(_COLLECTION).insert(doc, return_new=True),
     )
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 def get_revision(
@@ -330,4 +330,4 @@ def update_status(
         "decision_log": decision_log,
     }
     result = cast("dict[str, Any]", col.update(update, return_new=True))
-    return result.get("new")
+    return cast(dict[str, Any] | None, result.get("new"))

@@ -72,7 +72,7 @@ def _resolve_ontology_name(
         if col.has(ontology_id):
             doc = doc_get(col, ontology_id)
             if doc and doc.get("name"):
-                return doc["name"]
+                return str(doc["name"])
     return ontology_id
 
 

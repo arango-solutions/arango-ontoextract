@@ -7,6 +7,7 @@ import time
 from collections import Counter
 from typing import Any
 
+from arango.database import StandardDatabase
 from fastapi import APIRouter, HTTPException, Query
 
 from app.config import settings
@@ -57,11 +58,14 @@ ONTOLOGY_COLLECTIONS = [
 ALL_COLLECTIONS = [*ONTOLOGY_COLLECTIONS, "documents", "chunks"]
 
 
-def _remove_ontology_graphs(db) -> list[str]:
+def _remove_ontology_graphs(db: StandardDatabase) -> list[str]:
     """Remove all per-ontology named graphs (ontology_*)."""
     removed: list[str] = []
     try:
-        for g in db.graphs():
+        graphs_any = db.graphs()
+        if not isinstance(graphs_any, list):
+            return removed
+        for g in graphs_any:
             name = g["name"] if isinstance(g, dict) else g
             if isinstance(name, str) and name.startswith("ontology_"):
                 db.delete_graph(name, drop_collections=False)

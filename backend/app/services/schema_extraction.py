@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal, cast
@@ -103,12 +104,20 @@ class _ExtractionRun:
 _runs: dict[str, _ExtractionRun] = {}
 
 
+_SchemaAnalyzerComponents = tuple[
+    Any,
+    Callable[..., Any],
+    Callable[..., Any],
+    Callable[..., Any],
+]
+
+
 # ---------------------------------------------------------------------------
 # schema_analyzer integration (optional dependency)
 # ---------------------------------------------------------------------------
 
 
-def _try_import_schema_mapper():
+def _try_import_schema_mapper() -> _SchemaAnalyzerComponents | None:
     """Return (AgenticSchemaAnalyzer, export_owl, fingerprint_fn, snapshot_fn) or None."""
     try:
         from schema_analyzer import AgenticSchemaAnalyzer
@@ -131,7 +140,7 @@ def _try_import_schema_mapper():
 
 def _run_schema_mapper_extract(
     config: SchemaExtractionConfig,
-    mapper: tuple[Any, ...],
+    mapper: _SchemaAnalyzerComponents,
 ) -> tuple[str, dict[str, Any]]:
     analyzer_cls, export_owl, fingerprint_fn, snapshot_fn = mapper
     from arango.client import ArangoClient

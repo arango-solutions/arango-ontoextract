@@ -48,7 +48,7 @@ def create_document(
         "metadata": metadata or {},
     }
     result = cast("dict[str, Any]", col.insert(doc, return_new=True))
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 def get_document(doc_id: str, *, db: StandardDatabase | None = None) -> dict[str, Any] | None:
@@ -105,7 +105,7 @@ def update_document_status(
     if error_message is not None:
         update["error_message"] = error_message
     result = cast("dict[str, Any]", col.update({"_key": doc_id, **update}, return_new=True))
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 def update_document_chunk_count(
@@ -144,7 +144,7 @@ def update_document_metadata(
     if not updates:
         return doc_get(col, doc_id)
     result = cast("dict[str, Any]", col.update({"_key": doc_id, **updates}, return_new=True))
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 def delete_chunks_for_document(doc_id: str, *, db: StandardDatabase | None = None) -> int:

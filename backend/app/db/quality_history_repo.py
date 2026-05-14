@@ -82,7 +82,7 @@ def save_quality_snapshot(
     if run_id:
         doc["run_id"] = run_id
     result = cast("dict[str, Any]", db.collection(_COLLECTION).insert(doc, return_new=True))
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 def record_event_snapshot(

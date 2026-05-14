@@ -8,6 +8,7 @@ Provides injectable dependencies for route handlers:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TypeVar
 
 from fastapi import Depends, Request
@@ -36,7 +37,7 @@ def get_org_id(user: AuthenticatedUser = Depends(get_current_user)) -> str:
     return user.org_id
 
 
-def require_role(*allowed_roles: str):
+def require_role(*allowed_roles: str) -> Callable[..., AuthenticatedUser]:
     """Return a dependency that enforces role-based access.
 
     Usage::

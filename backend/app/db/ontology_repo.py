@@ -205,7 +205,7 @@ def get_property(
             )
         )
         if results:
-            return results[0]
+            return cast(dict[str, Any], results[0])
     return None
 
 
@@ -361,7 +361,7 @@ def create_edge(
             "to": to_id,
         },
     )
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 def resolve_ontology_edge(

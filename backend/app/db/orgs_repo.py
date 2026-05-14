@@ -44,7 +44,7 @@ def create_organization(
         "updated_at": _now_iso(),
     }
     result = cast("dict[str, Any]", col.insert(doc, return_new=True))
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 def get_organization(org_id: str, *, db: StandardDatabase | None = None) -> dict[str, Any] | None:
@@ -88,7 +88,7 @@ def update_organization(
     col = db.collection(ORGANIZATIONS_COLLECTION)
     updates["updated_at"] = _now_iso()
     result = cast("dict[str, Any]", col.update({"_key": org_id, **updates}, return_new=True))
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 # ---------- Users ----------
@@ -116,7 +116,7 @@ def add_user_to_org(
         "updated_at": _now_iso(),
     }
     result = cast("dict[str, Any]", col.insert(doc, return_new=True))
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 def list_org_users(
@@ -183,7 +183,7 @@ def update_user_role(
             return_new=True,
         ),
     )
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 def remove_user_from_org(
