@@ -66,7 +66,20 @@ def head_sha() -> str:
 @pytest.fixture
 def release_tag_at_head(head_sha: str) -> Iterator[str]:
     """Create a temporary release-shaped tag pointing at HEAD; clean up
-    after the test runs so we don't pollute the user's tag list."""
+    after the test runs so we don't pollute the user's tag list.
+
+    Uses a lightweight tag (no -a/-m) deliberately:
+      1. Annotated tags require user.email/user.name to be set in git
+         config, which CI runners do not have by default — using -a here
+         caused PR #9's first CI run to fail with `fatal: empty ident
+         name not allowed`.
+      2. The protect script uses `git tag --points-at <sha>`, which lists
+         BOTH annotated and lightweight tags pointing at the sha. From
+         the script's perspective the tag types are interchangeable.
+      3. The release flow (`make release-to-org`) still creates annotated
+         tags in real use; that path is exercised by users with git
+         identity configured, not by this hook unit test.
+    """
     tag = "v999.999.999"
     # Defensive cleanup in case a previous failed run left it behind.
     subprocess.run(
@@ -76,7 +89,7 @@ def release_tag_at_head(head_sha: str) -> Iterator[str]:
         check=False,
     )
     subprocess.run(
-        ["git", "tag", "-a", tag, "-m", "test: protect-upstream-push fixture", head_sha],
+        ["git", "tag", tag, head_sha],
         cwd=str(REPO_ROOT),
         check=True,
     )
