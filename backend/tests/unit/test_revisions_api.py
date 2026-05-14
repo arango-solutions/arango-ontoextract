@@ -102,25 +102,29 @@ class TestRouteHandlers:
     async def test_list_revisions_invalid_action_400(self):
         from app.api.errors import ValidationError
 
-        with patch("app.api.revisions.get_db", return_value=object()):
-            with pytest.raises(ValidationError):
-                await list_revisions(
-                    ontology_id="onto_1",
-                    action="NOT_REAL",
-                    status=None,
-                )
+        with (
+            patch("app.api.revisions.get_db", return_value=object()),
+            pytest.raises(ValidationError),
+        ):
+            await list_revisions(
+                ontology_id="onto_1",
+                action="NOT_REAL",
+                status=None,
+            )
 
     @pytest.mark.asyncio
     async def test_list_revisions_invalid_status_400(self):
         from app.api.errors import ValidationError
 
-        with patch("app.api.revisions.get_db", return_value=object()):
-            with pytest.raises(ValidationError):
-                await list_revisions(
-                    ontology_id="onto_1",
-                    action=None,
-                    status="NOT_REAL",
-                )
+        with (
+            patch("app.api.revisions.get_db", return_value=object()),
+            pytest.raises(ValidationError),
+        ):
+            await list_revisions(
+                ontology_id="onto_1",
+                action=None,
+                status="NOT_REAL",
+            )
 
     @pytest.mark.asyncio
     async def test_get_revision_404_when_missing(self):
@@ -129,9 +133,9 @@ class TestRouteHandlers:
         with (
             patch("app.api.revisions.get_db", return_value=object()),
             patch.object(rev_repo, "get_revision", return_value=None),
+            pytest.raises(NotFoundError),
         ):
-            with pytest.raises(NotFoundError):
-                await get_revision("missing")
+            await get_revision("missing")
 
     @pytest.mark.asyncio
     async def test_get_revision_returns_row(self):
@@ -159,9 +163,7 @@ class TestRouteHandlers:
                 return_value=[{"_key": "rev_1"}],
             ) as mock_list,
         ):
-            result = await list_revisions_for_entity(
-                entity_id="ontology_classes/Account", limit=5
-            )
+            result = await list_revisions_for_entity(entity_id="ontology_classes/Account", limit=5)
         mock_list.assert_called_once()
         assert result["entity_id"] == "ontology_classes/Account"
         assert result["count"] == 1
@@ -186,28 +188,30 @@ class TestRouteHandlers:
         from app.api.errors import NotFoundError
 
         body = AcceptRevisionRequest(decided_by="alice")
-        with patch.object(
-            revision_actions,
-            "accept_revision",
-            side_effect=revision_actions.RevisionNotFoundError("rev_1"),
+        with (
+            patch.object(
+                revision_actions,
+                "accept_revision",
+                side_effect=revision_actions.RevisionNotFoundError("rev_1"),
+            ),
+            pytest.raises(NotFoundError),
         ):
-            with pytest.raises(NotFoundError):
-                await accept_revision(body, revision_key="rev_1")
+            await accept_revision(body, revision_key="rev_1")
 
     @pytest.mark.asyncio
     async def test_accept_route_translates_action_error_to_400(self):
         from app.api.errors import ValidationError
 
         body = AcceptRevisionRequest(decided_by="alice")
-        with patch.object(
-            revision_actions,
-            "accept_revision",
-            side_effect=revision_actions.RevisionActionError(
-                "REVISE requires new_vertex_data"
+        with (
+            patch.object(
+                revision_actions,
+                "accept_revision",
+                side_effect=revision_actions.RevisionActionError("REVISE requires new_vertex_data"),
             ),
+            pytest.raises(ValidationError),
         ):
-            with pytest.raises(ValidationError):
-                await accept_revision(body, revision_key="rev_1")
+            await accept_revision(body, revision_key="rev_1")
 
     @pytest.mark.asyncio
     async def test_reject_route_calls_service(self):
@@ -278,9 +282,7 @@ class TestRevisionsHttp:
             ),
         ):
             client = TestClient(app)
-            r = client.get(
-                "/api/v1/revisions/inbox?ontology_id=onto_1&limit=10"
-            )
+            r = client.get("/api/v1/revisions/inbox?ontology_id=onto_1&limit=10")
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["count"] == 1
@@ -331,9 +333,7 @@ class TestRevisionsHttp:
         with patch.object(
             revision_actions,
             "modify_revision",
-            side_effect=revision_actions.RevisionActionError(
-                "REVISE requires new_vertex_data"
-            ),
+            side_effect=revision_actions.RevisionActionError("REVISE requires new_vertex_data"),
         ):
             client = TestClient(app)
             r = client.post(

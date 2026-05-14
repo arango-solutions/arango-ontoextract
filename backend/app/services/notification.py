@@ -38,7 +38,7 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _get_redis():
+def _get_redis() -> Any | None:
     """Lazy Redis connection for pub/sub. Returns None if unavailable."""
     try:
         import redis as redis_lib
@@ -77,9 +77,9 @@ def create_notification(
     result = cast("dict[str, Any]", col.insert(doc, return_new=True))
     notification = result["new"]
 
-    _publish_to_redis(notification)
+    _publish_to_redis(cast(dict[str, Any], notification))
 
-    return notification
+    return cast(dict[str, Any], notification)
 
 
 def _publish_to_redis(notification: dict[str, Any]) -> None:
@@ -150,7 +150,7 @@ def mark_as_read(
             return_new=True,
         ),
     )
-    return result["new"]
+    return cast(dict[str, Any] | None, result.get("new"))
 
 
 def get_unread_count(

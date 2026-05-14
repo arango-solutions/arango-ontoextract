@@ -124,9 +124,7 @@ def belief_revision_node(state: ExtractionPipelineState) -> dict[str, Any]:
                 "belief_revision skipped: feature flag off",
                 extra={"run_id": run_id},
             )
-        elif consistency_result is None or not getattr(
-            consistency_result, "classes", None
-        ):
+        elif consistency_result is None or not getattr(consistency_result, "classes", None):
             summary["reason"] = "no_extraction_results"
             log.info(
                 "belief_revision skipped: no extraction results",
@@ -300,9 +298,7 @@ def _run_phase(
     skipped_idem = 0
 
     for mech in auto_apply:
-        action_record = _apply_mechanical(
-            mech, ontology_id=ontology_id, document_id=document_id
-        )
+        action_record = _apply_mechanical(mech, ontology_id=ontology_id, document_id=document_id)
         revision_actions.append(action_record)
         if action_record.get("skipped"):
             skipped_idem += 1
@@ -409,9 +405,7 @@ def _invoke_llm_for_contested(
     by ``existing_class_id`` so the LLM has the current label,
     description, and evidence quotes to ground its revision.
     """
-    label_to_class = {
-        str(getattr(c, "label", "") or "").lower(): c for c in extracted_classes
-    }
+    label_to_class = {str(getattr(c, "label", "") or "").lower(): c for c in extracted_classes}
 
     contexts: list[RevisionContext] = []
     for tp, mech in contested:
@@ -536,9 +530,7 @@ def _apply_mechanical(
     rule's confidence.
     """
     existing_entity = _load_existing_entity(mech.touchpoint.existing_class_id)
-    if should_flag_for_curation(
-        entity=existing_entity, proposed_action=mech.action
-    ):
+    if should_flag_for_curation(entity=existing_entity, proposed_action=mech.action):
         log.info(
             "belief_revision mechanical revision downgraded (published entity)",
             extra={
@@ -636,9 +628,7 @@ def _apply_llm(
     proposed_action = str(getattr(proposal, "action", ""))
     if proposed_action and proposed_action != ACTION_FLAG_FOR_CURATION:
         existing_entity = _load_existing_entity(touchpoint.existing_class_id)
-        if should_flag_for_curation(
-            entity=existing_entity, proposed_action=proposed_action
-        ):
+        if should_flag_for_curation(entity=existing_entity, proposed_action=proposed_action):
             log.info(
                 "belief_revision LLM proposal downgraded (published entity)",
                 extra={

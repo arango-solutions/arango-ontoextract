@@ -28,12 +28,12 @@ log = logging.getLogger(__name__)
 _URI_MAP_COLLECTION = "aoe_uri_map"
 
 
-def _ensure_arango_rdf():
+def _ensure_arango_rdf() -> type[Any]:
     """Import arango_rdf lazily to avoid hard dependency at module load."""
     try:
-        from arango_rdf import ArangoRDF
+        from arango_rdf import ArangoRDF as _ArangoRDFCls
 
-        return ArangoRDF
+        return cast(type[Any], _ArangoRDFCls)
     except ImportError as exc:
         raise ImportError(
             "arango_rdf is required for OWL import. Install it with: pip install arango-rdf"

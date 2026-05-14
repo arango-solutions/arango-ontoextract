@@ -238,11 +238,18 @@ class TestSummariseRevisionActions:
         actions = [
             {"status": "applied", "skipped": False},
             {"status": "applied", "skipped": False},
-            {"status": "pending", "skipped": False, "revision_meta_key": "r1",
-             "verdict": "UNCERTAIN", "action": "FLAG_FOR_CURATION",
-             "agent_type": "llm", "rule_id": "R7_UNCERTAIN_SUFFIX",
-             "existing_entity_id": "oc/Account",
-             "new_concept_label": "AccountStatus", "reasoning": "suffix"},
+            {
+                "status": "pending",
+                "skipped": False,
+                "revision_meta_key": "r1",
+                "verdict": "UNCERTAIN",
+                "action": "FLAG_FOR_CURATION",
+                "agent_type": "llm",
+                "rule_id": "R7_UNCERTAIN_SUFFIX",
+                "existing_entity_id": "oc/Account",
+                "new_concept_label": "AccountStatus",
+                "reasoning": "suffix",
+            },
             {"status": "failed", "skipped": False, "error": "boom"},
             {"status": "applied", "skipped": True, "skipped_reason": "prior"},
         ]
@@ -257,11 +264,19 @@ class TestSummariseRevisionActions:
 
     def test_pending_payload_only_curator_relevant_fields(self):
         actions = [
-            {"status": "pending", "skipped": False, "revision_meta_key": "r1",
-             "verdict": "UNCERTAIN", "action": "FLAG_FOR_CURATION",
-             "agent_type": "llm", "rule_id": "R7", "existing_entity_id": "oc/X",
-             "new_concept_label": "Y", "reasoning": "r",
-             "private_field_we_dont_want": "secret"},
+            {
+                "status": "pending",
+                "skipped": False,
+                "revision_meta_key": "r1",
+                "verdict": "UNCERTAIN",
+                "action": "FLAG_FOR_CURATION",
+                "agent_type": "llm",
+                "rule_id": "R7",
+                "existing_entity_id": "oc/X",
+                "new_concept_label": "Y",
+                "reasoning": "r",
+                "private_field_we_dont_want": "secret",
+            },
         ]
         out = _summarise_revision_actions(actions)
         assert "private_field_we_dont_want" not in out["pending"][0]
@@ -285,15 +300,20 @@ class TestFilterPropagatesRevisionSummary:
 
     def test_pending_revision_surfaces_in_filter_results(self):
         actions = [
-            {"status": "pending", "skipped": False, "revision_meta_key": "r1",
-             "verdict": "UNCERTAIN", "action": "FLAG_FOR_CURATION",
-             "agent_type": "llm", "rule_id": "R7_UNCERTAIN_SUFFIX",
-             "existing_entity_id": "oc/Account",
-             "new_concept_label": "AccountStatus", "reasoning": "suffix"},
+            {
+                "status": "pending",
+                "skipped": False,
+                "revision_meta_key": "r1",
+                "verdict": "UNCERTAIN",
+                "action": "FLAG_FOR_CURATION",
+                "agent_type": "llm",
+                "rule_id": "R7_UNCERTAIN_SUFFIX",
+                "existing_entity_id": "oc/Account",
+                "new_concept_label": "AccountStatus",
+                "reasoning": "suffix",
+            },
         ]
-        state = self._state_with_revisions(
-            [_cls("http://ex.org#X", "Foo", 0.9)], actions
-        )
+        state = self._state_with_revisions([_cls("http://ex.org#X", "Foo", 0.9)], actions)
         out = filter_agent_node(state)
         fr = out["filter_results"]
         assert fr["revision_summary"]["pending_count"] == 1
@@ -303,11 +323,18 @@ class TestFilterPropagatesRevisionSummary:
     def test_skip_path_still_reports_revisions(self):
         """If consistency_result is None the filter still surfaces revisions."""
         actions = [
-            {"status": "pending", "skipped": False, "revision_meta_key": "r1",
-             "verdict": "CONTRADICTED", "action": "FLAG_FOR_CURATION",
-             "agent_type": "llm", "rule_id": "R7_CONTRADICTED",
-             "existing_entity_id": "oc/X",
-             "new_concept_label": "Y", "reasoning": "contradicts"},
+            {
+                "status": "pending",
+                "skipped": False,
+                "revision_meta_key": "r1",
+                "verdict": "CONTRADICTED",
+                "action": "FLAG_FOR_CURATION",
+                "agent_type": "llm",
+                "rule_id": "R7_CONTRADICTED",
+                "existing_entity_id": "oc/X",
+                "new_concept_label": "Y",
+                "reasoning": "contradicts",
+            },
         ]
         state = _make_state(classes=None)
         state["revision_actions"] = actions

@@ -239,4 +239,3 @@ export interface ClassScore {
   faithfulness_score: number | null;
   semantic_validity_score: number | null;
 }
-

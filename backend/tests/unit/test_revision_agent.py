@@ -92,13 +92,17 @@ def _mechanical(
     touchpoint: Touchpoint | None = None,
 ) -> MechanicalRevision:
     tp = touchpoint or _touchpoint()
-    return classify(tp, StructuralFeatures()) if action == "AUTO" else MechanicalRevision(
-        touchpoint=tp,
-        verdict=verdict,
-        action=action,
-        rule_id="R7_test_fixture",
-        confidence=0.4,
-        reasoning="mechanical reasoning",
+    return (
+        classify(tp, StructuralFeatures())
+        if action == "AUTO"
+        else MechanicalRevision(
+            touchpoint=tp,
+            verdict=verdict,
+            action=action,
+            rule_id="R7_test_fixture",
+            confidence=0.4,
+            reasoning="mechanical reasoning",
+        )
     )
 
 

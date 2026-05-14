@@ -182,7 +182,7 @@ def set_domain_ontology_for_org(
                 return_new=True,
             ),
         )
-        return result["new"]
+        return cast(dict[str, Any], result["new"])
 
     result = cast(
         "dict[str, Any]",
@@ -191,7 +191,7 @@ def set_domain_ontology_for_org(
             return_new=True,
         ),
     )
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 def serialize_multi_domain_context(

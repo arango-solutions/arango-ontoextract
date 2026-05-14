@@ -16,7 +16,7 @@ collection.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, TypedDict
 
 from app.config import settings
 from app.db.client import get_db
@@ -30,6 +30,15 @@ from app.db.utils import run_aql
 log = logging.getLogger(__name__)
 
 _COLLECTION = "revision_meta"
+
+
+class RevisionsSummary(TypedDict):
+    """Stable JSON shape for dashboard revision counts."""
+
+    by_verdict: dict[str, int]
+    by_action: dict[str, int]
+    by_status: dict[str, int]
+    total: int
 
 
 def _ensure_db(db: Any | None) -> Any:
@@ -50,7 +59,7 @@ def revisions_summary(
     ontology_id: str,
     *,
     db: Any | None = None,
-) -> dict[str, dict[str, int]]:
+) -> RevisionsSummary:
     """Counts of revisions by verdict / action / status for one ontology.
 
     Returns
@@ -67,7 +76,7 @@ def revisions_summary(
         as bars/badges and benefits from a stable shape.
     """
     db = _ensure_db(db)
-    summary = {
+    summary: RevisionsSummary = {
         "by_verdict": _empty_counts(VERDICTS),
         "by_action": _empty_counts(ACTIONS),
         "by_status": _empty_counts(STATUSES),

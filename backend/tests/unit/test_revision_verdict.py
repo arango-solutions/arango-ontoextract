@@ -597,9 +597,7 @@ class TestClassifyBatch:
             signals=_signals(label_fuzzy=0.54),
         )
         lookup = {
-            "ontology_classes/Account": StructuralFeatures(
-                existing_has_subclasses=True
-            ),
+            "ontology_classes/Account": StructuralFeatures(existing_has_subclasses=True),
         }
         r = classify_batch([tp_no_struct], structural_lookup=None)
         assert r.revisions[0].verdict == VERDICT_REFINED
@@ -775,11 +773,7 @@ class TestFixtureQ3aBankingAccountSubtypes:
                     signals=_signals(label_fuzzy=fuzzy, embedding_sim=0.85),
                 )
             )
-        lookup = {
-            "ontology_classes/Account": StructuralFeatures(
-                existing_has_subclasses=True
-            )
-        }
+        lookup = {"ontology_classes/Account": StructuralFeatures(existing_has_subclasses=True)}
         report = classify_batch(tps, lookup)
         assert report.verdict_counts[VERDICT_GAP_FILLING] == 2
         assert report.verdict_counts[VERDICT_UNCERTAIN] == 1

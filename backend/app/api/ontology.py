@@ -5,6 +5,7 @@ import re
 import time
 from typing import Any, cast
 
+from arango.database import StandardDatabase
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field
@@ -38,7 +39,6 @@ from app.services.edge_confidence import (
 )
 from app.services.ontology_projections import (
     CLASS_SUMMARY_RETURN,
-    EDGE_SUMMARY_RETURN,
     INCLUDE_SUMMARY,
     normalize_include,
     summarize_edge,
@@ -1581,9 +1581,7 @@ async def get_edge_detail(
         raise NotFoundError(f"Edge '{edge_key}' not found")
     edge_col, doc = found
     if doc.get("ontology_id") != ontology_id:
-        raise NotFoundError(
-            f"Edge '{edge_key}' does not belong to ontology '{ontology_id}'"
-        )
+        raise NotFoundError(f"Edge '{edge_key}' does not belong to ontology '{ontology_id}'")
     if doc.get("expired") != NEVER_EXPIRES:
         # Older, expired versions are reachable via /edge/{edge_key}/history,
         # not via this point-in-time live-edge endpoint.
@@ -1672,9 +1670,7 @@ async def get_property_detail(ontology_id: str, prop_key: str) -> dict[str, Any]
         # panel can branch on object vs datatype without a second
         # round-trip.
         return dict(doc, property_collection=col_name)
-    raise NotFoundError(
-        f"Property '{prop_key}' not found in ontology '{ontology_id}'"
-    )
+    raise NotFoundError(f"Property '{prop_key}' not found in ontology '{ontology_id}'")
 
 
 def _live_properties_by_id(db: Any, ontology_id: str) -> dict[str, dict[str, Any]]:
@@ -1698,9 +1694,7 @@ def _live_properties_by_id(db: Any, ontology_id: str) -> dict[str, dict[str, Any
             continue
         rows = run_aql(
             db,
-            f"FOR p IN {col_name} "
-            "FILTER p.ontology_id == @oid AND p.expired == @never "
-            "RETURN p",
+            f"FOR p IN {col_name} FILTER p.ontology_id == @oid AND p.expired == @never RETURN p",
             bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
         )
         for row in rows:
@@ -1735,9 +1729,7 @@ _LIVE_PROP_COLLECTIONS: tuple[str, ...] = (
 # lifetime (created at ontology bootstrap, never dropped at runtime), so
 # we will hit one or two distinct cache keys for the lifetime of the
 # server.  Avoids re-stringifying the query on every request.
-_LIVE_EDGES_AND_PROPS_QUERY_CACHE: dict[
-    tuple[tuple[str, ...], tuple[str, ...]], str
-] = {}
+_LIVE_EDGES_AND_PROPS_QUERY_CACHE: dict[tuple[tuple[str, ...], tuple[str, ...]], str] = {}
 
 
 def _build_live_edges_and_props_query(
@@ -1764,22 +1756,12 @@ def _build_live_edges_and_props_query(
         for col in edge_collections
     )
     prop_subqueries = ",\n        ".join(
-        f"(FOR p IN {col} "
-        "FILTER p.ontology_id == @oid AND p.expired == @never "
-        "RETURN p)"
+        f"(FOR p IN {col} FILTER p.ontology_id == @oid AND p.expired == @never RETURN p)"
         for col in prop_collections
     )
 
-    edges_expr = (
-        f"FLATTEN([\n        {edge_subqueries}\n    ], 1)"
-        if edge_collections
-        else "[]"
-    )
-    props_expr = (
-        f"FLATTEN([\n        {prop_subqueries}\n    ], 1)"
-        if prop_collections
-        else "[]"
-    )
+    edges_expr = f"FLATTEN([\n        {edge_subqueries}\n    ], 1)" if edge_collections else "[]"
+    props_expr = f"FLATTEN([\n        {prop_subqueries}\n    ], 1)" if prop_collections else "[]"
 
     query = (
         f"LET edges = {edges_expr}\n"
@@ -2011,7 +1993,7 @@ def _key_from_uri(uri: str) -> str:
     return _slugify(fragment)
 
 
-def _ensure_collection(db, name: str, *, edge: bool = False) -> None:
+def _ensure_collection(db: StandardDatabase, name: str, *, edge: bool = False) -> None:
     if not db.has_collection(name):
         db.create_collection(name, edge=edge)
 

@@ -14,6 +14,7 @@ report::
         --dataset webnlg --adapter aoe \
         --out reports/webnlg-2026-04-17.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -27,7 +28,12 @@ from time import perf_counter
 from benchmarks.ontology_extraction import metrics
 from benchmarks.ontology_extraction.adapters.base import ExtractionAdapter
 from benchmarks.ontology_extraction.adapters.mock import MockAdapter
-from benchmarks.ontology_extraction.datasets import GoldDocument, hitl_regression, redocred, webnlg
+from benchmarks.ontology_extraction.datasets import (
+    GoldDocument,
+    hitl_regression,
+    redocred,
+    webnlg,
+)
 
 log = logging.getLogger("benchmark")
 
@@ -165,7 +171,9 @@ def _normalize_result_metadata(metadata: dict) -> dict:
     normalized["input_tokens"] = input_tokens
     normalized["output_tokens"] = output_tokens
     normalized["total_tokens"] = total_tokens
-    normalized["estimated_cost_usd"] = _float_or_zero(normalized.get("estimated_cost_usd"))
+    normalized["estimated_cost_usd"] = _float_or_zero(
+        normalized.get("estimated_cost_usd")
+    )
     return normalized
 
 
@@ -202,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=(
             "Optional JSON file with 'labels' and/or 'relations' alias groups: "
-            "{\"canonical\": [\"alias\"]}."
+            '{"canonical": ["alias"]}.'
         ),
     )
     parser.add_argument(

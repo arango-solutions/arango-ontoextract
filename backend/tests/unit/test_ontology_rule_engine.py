@@ -515,10 +515,7 @@ class TestR3OrphanObjectPropertyRange:
         )
         # Must explain WHY no candidate matched so the curator knows
         # to look for new evidence rather than an existing class.
-        assert (
-            "no candidate" in v.description.lower()
-            or "new evidence" in v.description.lower()
-        )
+        assert "no candidate" in v.description.lower() or "new evidence" in v.description.lower()
 
     def test_unrecoverable_with_no_domain_class_uses_single_entity(self, monkeypatch):
         """Edge case: an orphan with no domain SHOULD still emit a
@@ -772,9 +769,7 @@ class TestR4RedundantClass:
         assert len(violations) == 1
         assert set(violations[0].entity_ids) == {"Country", "Countries"}
 
-    def test_plural_pass_does_not_merge_when_only_one_form_present(
-        self, monkeypatch
-    ):
+    def test_plural_pass_does_not_merge_when_only_one_form_present(self, monkeypatch):
         """``Address`` alone should NOT be flagged just because the
         plural pass would generate ``Addresss``/``Addresses`` candidates."""
         db = _db_with_collections("ontology_classes")
@@ -855,9 +850,7 @@ class TestR4RedundantClass:
         violations = engine._r4_redundant_class(db, "OID")
         assert violations == []
 
-    def test_violations_are_sorted_by_entity_ids_for_diffability(
-        self, monkeypatch
-    ):
+    def test_violations_are_sorted_by_entity_ids_for_diffability(self, monkeypatch):
         """Two independent clusters in one ontology -- the report's
         violation order MUST be deterministic so re-running the rule
         produces a diffable output (audit log + reflection report).
@@ -925,9 +918,7 @@ class TestEvaluateRulesOrchestrator:
         def good(_db, _oid):
             return [Violation("good", SEVERITY_WARNING, (), "ok")]
 
-        report = evaluate_rules(
-            db, "OID", rules=(("bad", boom), ("good", good))
-        )
+        report = evaluate_rules(db, "OID", rules=(("bad", boom), ("good", good)))
         assert "bad" in report.rules_skipped
         assert "good" in report.rules_evaluated
         assert len(report.violations) == 1

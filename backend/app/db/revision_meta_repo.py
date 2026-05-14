@@ -152,8 +152,7 @@ def record_revision(
         raise ValueError(f"unknown action {action!r}; expected one of {sorted(ACTIONS)}")
     if agent_type not in (AGENT_MECHANICAL, AGENT_LLM):
         raise ValueError(
-            f"unknown agent_type {agent_type!r}; expected one of "
-            f"{[AGENT_MECHANICAL, AGENT_LLM]}"
+            f"unknown agent_type {agent_type!r}; expected one of {[AGENT_MECHANICAL, AGENT_LLM]}"
         )
     if status is None:
         status = STATUS_PENDING if action == ACTION_FLAG_FOR_CURATION else STATUS_APPLIED
@@ -182,7 +181,7 @@ def record_revision(
         "dict[str, Any]",
         db.collection(_COLLECTION).insert(doc, return_new=True),
     )
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 def get_revision(
@@ -331,4 +330,4 @@ def update_status(
         "decision_log": decision_log,
     }
     result = cast("dict[str, Any]", col.update(update, return_new=True))
-    return result.get("new")
+    return cast(dict[str, Any] | None, result.get("new"))

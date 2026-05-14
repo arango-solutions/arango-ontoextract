@@ -137,12 +137,8 @@ class TestExtractionFlow:
         with (
             patch("app.services.extraction.get_db", return_value=test_db),
             patch("app.extraction.agents.extractor._get_llm", return_value=mock_llm),
-            patch(
-                "app.extraction.judges.faithfulness._get_llm", return_value=mock_llm
-            ),
-            patch(
-                "app.extraction.judges.semantic_validator._get_llm", return_value=mock_llm
-            ),
+            patch("app.extraction.judges.faithfulness._get_llm", return_value=mock_llm),
+            patch("app.extraction.judges.semantic_validator._get_llm", return_value=mock_llm),
             patch(
                 "app.extraction.judges.qualitative_eval_node._get_llm",
                 return_value=mock_llm,
@@ -185,12 +181,8 @@ class TestExtractionFlow:
         with (
             patch("app.services.extraction.get_db", return_value=test_db),
             patch("app.extraction.agents.extractor._get_llm", return_value=mock_llm),
-            patch(
-                "app.extraction.judges.faithfulness._get_llm", return_value=mock_llm
-            ),
-            patch(
-                "app.extraction.judges.semantic_validator._get_llm", return_value=mock_llm
-            ),
+            patch("app.extraction.judges.faithfulness._get_llm", return_value=mock_llm),
+            patch("app.extraction.judges.semantic_validator._get_llm", return_value=mock_llm),
             patch(
                 "app.extraction.judges.qualitative_eval_node._get_llm",
                 return_value=mock_llm,

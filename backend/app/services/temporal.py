@@ -106,10 +106,10 @@ def create_version(
         "temporal version created",
         extra={"collection": collection, "key": result["_key"]},
     )
-    ontology_id = data.get("ontology_id")
-    if ontology_id:
-        invalidate_snapshot_cache(ontology_id)
-    return result["new"]
+    ontology_id_raw = data.get("ontology_id")
+    if ontology_id_raw is not None:
+        invalidate_snapshot_cache(str(ontology_id_raw))
+    return cast(dict[str, Any], result["new"])
 
 
 def expire_entity(
@@ -143,7 +143,7 @@ def expire_entity(
             "temporal entity expired",
             extra={"collection": collection, "key": key},
         )
-        return result["new"]
+        return cast(dict[str, Any], result["new"])
     except Exception:
         log.warning(
             "failed to expire entity",
@@ -574,9 +574,7 @@ FOR doc IN @@col
   LIMIT 1
   RETURN { _from: doc._from, _to: doc._to, ontology_id: doc.ontology_id }"""
 
-    pivot_results = list(
-        run_aql(db, pivot_query, bind_vars={"@col": collection, "key": key})
-    )
+    pivot_results = list(run_aql(db, pivot_query, bind_vars={"@col": collection, "key": key}))
     if not pivot_results:
         return []
 
@@ -828,4 +826,4 @@ FOR doc IN @@col
     )
     if not results:
         raise ValueError(f"No current version found for uri={uri} in {collection}")
-    return results[0]
+    return str(results[0])

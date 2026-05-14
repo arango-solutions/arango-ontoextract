@@ -144,15 +144,9 @@ class TestRecentRevisions:
 
 class TestDecayStatus:
     def test_missing_classes_collection_returns_settings_only(self, monkeypatch):
-        monkeypatch.setattr(
-            metrics.settings, "belief_revision_decay_enabled", True
-        )
-        monkeypatch.setattr(
-            metrics.settings, "belief_revision_decay_half_life_days", 30.0
-        )
-        monkeypatch.setattr(
-            metrics.settings, "belief_revision_decay_floor", 0.05
-        )
+        monkeypatch.setattr(metrics.settings, "belief_revision_decay_enabled", True)
+        monkeypatch.setattr(metrics.settings, "belief_revision_decay_half_life_days", 30.0)
+        monkeypatch.setattr(metrics.settings, "belief_revision_decay_floor", 0.05)
         db = MagicMock()
         db.has_collection.return_value = False
         out = metrics.decay_status("OID", db=db)
@@ -164,23 +158,15 @@ class TestDecayStatus:
         assert out["decayed_classes"] == 0
 
     def test_aggregates_over_decayed_classes(self, monkeypatch):
-        monkeypatch.setattr(
-            metrics.settings, "belief_revision_decay_enabled", True
-        )
-        monkeypatch.setattr(
-            metrics.settings, "belief_revision_decay_half_life_days", 90.0
-        )
-        monkeypatch.setattr(
-            metrics.settings, "belief_revision_decay_floor", 0.05
-        )
+        monkeypatch.setattr(metrics.settings, "belief_revision_decay_enabled", True)
+        monkeypatch.setattr(metrics.settings, "belief_revision_decay_half_life_days", 90.0)
+        monkeypatch.setattr(metrics.settings, "belief_revision_decay_floor", 0.05)
         db = MagicMock()
         db.has_collection.return_value = True
         _patch_run_aql(
             monkeypatch,
             by_aql={
-                "FOR c IN ontology_classes": [
-                    {"count": 12, "last_run": 1_700_000_000.0}
-                ],
+                "FOR c IN ontology_classes": [{"count": 12, "last_run": 1_700_000_000.0}],
             },
         )
         out = metrics.decay_status("OID", db=db)
@@ -188,15 +174,9 @@ class TestDecayStatus:
         assert out["last_decay_run_at"] == 1_700_000_000.0
 
     def test_no_decayed_classes_keeps_last_run_none(self, monkeypatch):
-        monkeypatch.setattr(
-            metrics.settings, "belief_revision_decay_enabled", False
-        )
-        monkeypatch.setattr(
-            metrics.settings, "belief_revision_decay_half_life_days", 90.0
-        )
-        monkeypatch.setattr(
-            metrics.settings, "belief_revision_decay_floor", 0.05
-        )
+        monkeypatch.setattr(metrics.settings, "belief_revision_decay_enabled", False)
+        monkeypatch.setattr(metrics.settings, "belief_revision_decay_half_life_days", 90.0)
+        monkeypatch.setattr(metrics.settings, "belief_revision_decay_floor", 0.05)
         db = MagicMock()
         db.has_collection.return_value = True
         # Empty aggregation -- pre-decay ontology.

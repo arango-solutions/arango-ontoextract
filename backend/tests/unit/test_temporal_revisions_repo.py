@@ -160,9 +160,10 @@ class TestSupersedeIdempotency:
             "new_version": "v2",
             "existing_version": "v1",
         }
-        with _patch_run_aql([prior]), patch(
-            "app.db.temporal_revisions_repo.record_revision"
-        ) as record:
+        with (
+            _patch_run_aql([prior]),
+            patch("app.db.temporal_revisions_repo.record_revision") as record,
+        ):
             result = supersede(
                 ontology_id="ont1",
                 existing_entity_id="ontology_classes/k1",
@@ -192,12 +193,16 @@ class TestSupersedeIdempotency:
                 "current_confidence": 0.8,
             }
         }
-        with patch(
-            "app.db.temporal_revisions_repo.temporal.get_current",
-            return_value={"_key": "k1", "evidence": []},
-        ), _patch_run_aql([prior]), patch(
-            "app.db.temporal_revisions_repo.record_revision",
-            return_value={"_key": "rev_new", "status": STATUS_APPLIED},
+        with (
+            patch(
+                "app.db.temporal_revisions_repo.temporal.get_current",
+                return_value={"_key": "k1", "evidence": []},
+            ),
+            _patch_run_aql([prior]),
+            patch(
+                "app.db.temporal_revisions_repo.record_revision",
+                return_value={"_key": "rev_new", "status": STATUS_APPLIED},
+            ),
         ):
             result = supersede(
                 ontology_id="ont1",
@@ -232,13 +237,17 @@ class TestSupersedeReinforce:
                 "current_confidence": 0.85,
             }
         }
-        with patch(
-            "app.db.temporal_revisions_repo.temporal.get_current",
-            return_value={"_key": "k1", "evidence": ["existing quote"]},
-        ), _patch_run_aql([]), patch(
-            "app.db.temporal_revisions_repo.record_revision",
-            return_value={"_key": "rev_r1", "status": STATUS_APPLIED},
-        ) as record:
+        with (
+            patch(
+                "app.db.temporal_revisions_repo.temporal.get_current",
+                return_value={"_key": "k1", "evidence": ["existing quote"]},
+            ),
+            _patch_run_aql([]),
+            patch(
+                "app.db.temporal_revisions_repo.record_revision",
+                return_value={"_key": "rev_r1", "status": STATUS_APPLIED},
+            ) as record,
+        ):
             result = supersede(
                 ontology_id="ont1",
                 existing_entity_id="ontology_classes/k1",
@@ -267,12 +276,16 @@ class TestSupersedeReinforce:
     def test_reinforce_without_confidence_after_does_not_set_field(self) -> None:
         db, vertex, _ = _mock_db()
         vertex.update.return_value = {"new": {"_key": "k1", "evidence_count": 1}}
-        with patch(
-            "app.db.temporal_revisions_repo.temporal.get_current",
-            return_value={"_key": "k1", "evidence": []},
-        ), _patch_run_aql([]), patch(
-            "app.db.temporal_revisions_repo.record_revision",
-            return_value={"_key": "rev_r1", "status": STATUS_APPLIED},
+        with (
+            patch(
+                "app.db.temporal_revisions_repo.temporal.get_current",
+                return_value={"_key": "k1", "evidence": []},
+            ),
+            _patch_run_aql([]),
+            patch(
+                "app.db.temporal_revisions_repo.record_revision",
+                return_value={"_key": "rev_r1", "status": STATUS_APPLIED},
+            ),
         ):
             supersede(
                 ontology_id="ont1",
@@ -290,10 +303,14 @@ class TestSupersedeReinforce:
 
     def test_reinforce_missing_current_raises(self) -> None:
         db, _vertex, _ = _mock_db()
-        with patch(
-            "app.db.temporal_revisions_repo.temporal.get_current",
-            return_value=None,
-        ), _patch_run_aql([]), pytest.raises(ValueError, match="no current version"):
+        with (
+            patch(
+                "app.db.temporal_revisions_repo.temporal.get_current",
+                return_value=None,
+            ),
+            _patch_run_aql([]),
+            pytest.raises(ValueError, match="no current version"),
+        ):
             supersede(
                 ontology_id="ont1",
                 existing_entity_id="ontology_classes/k1",
@@ -315,13 +332,17 @@ class TestSupersedeReinforce:
 class TestSupersedeRevise:
     def test_revise_calls_update_entity_and_records_audit(self) -> None:
         db, *_ = _mock_db()
-        with patch(
-            "app.db.temporal_revisions_repo.temporal.update_entity",
-            return_value={"_key": "k1_v2", "_id": "ontology_classes/k1_v2"},
-        ) as upd, _patch_run_aql([]), patch(
-            "app.db.temporal_revisions_repo.record_revision",
-            return_value={"_key": "rev_r2", "status": STATUS_APPLIED},
-        ) as record:
+        with (
+            patch(
+                "app.db.temporal_revisions_repo.temporal.update_entity",
+                return_value={"_key": "k1_v2", "_id": "ontology_classes/k1_v2"},
+            ) as upd,
+            _patch_run_aql([]),
+            patch(
+                "app.db.temporal_revisions_repo.record_revision",
+                return_value={"_key": "rev_r2", "status": STATUS_APPLIED},
+            ) as record,
+        ):
             result = supersede(
                 ontology_id="ont1",
                 existing_entity_id="ontology_classes/k1",
@@ -381,9 +402,12 @@ class TestSupersedeGapFill:
                 "ontology_id": "ont1",
             }
         }
-        with _patch_run_aql([]), patch(
-            "app.db.temporal_revisions_repo.record_revision",
-            return_value={"_key": "rev_r3", "status": STATUS_APPLIED},
+        with (
+            _patch_run_aql([]),
+            patch(
+                "app.db.temporal_revisions_repo.record_revision",
+                return_value={"_key": "rev_r3", "status": STATUS_APPLIED},
+            ),
         ):
             result = supersede(
                 ontology_id="ont1",
@@ -427,10 +451,14 @@ class TestSupersedeGapFill:
 
     def test_gap_fill_missing_edge_collection_raises(self) -> None:
         db, _, _ = _mock_db(has_edge_collection=False)
-        with _patch_run_aql([]), patch(
-            "app.db.temporal_revisions_repo.record_revision",
-            return_value={"_key": "x", "status": STATUS_APPLIED},
-        ), pytest.raises(ValueError, match="edge collection not found"):
+        with (
+            _patch_run_aql([]),
+            patch(
+                "app.db.temporal_revisions_repo.record_revision",
+                return_value={"_key": "x", "status": STATUS_APPLIED},
+            ),
+            pytest.raises(ValueError, match="edge collection not found"),
+        ):
             supersede(
                 ontology_id="ont1",
                 existing_entity_id="ontology_classes/child",
@@ -472,12 +500,16 @@ class TestSupersedeGapFill:
 class TestSupersedeRetract:
     def test_retract_calls_expire_entity(self) -> None:
         db, *_ = _mock_db()
-        with patch(
-            "app.db.temporal_revisions_repo.temporal.expire_entity",
-            return_value={"_key": "k1", "expired": 1234.0},
-        ) as expire, _patch_run_aql([]), patch(
-            "app.db.temporal_revisions_repo.record_revision",
-            return_value={"_key": "rev_r4", "status": STATUS_APPLIED},
+        with (
+            patch(
+                "app.db.temporal_revisions_repo.temporal.expire_entity",
+                return_value={"_key": "k1", "expired": 1234.0},
+            ) as expire,
+            _patch_run_aql([]),
+            patch(
+                "app.db.temporal_revisions_repo.record_revision",
+                return_value={"_key": "rev_r4", "status": STATUS_APPLIED},
+            ),
         ):
             result = supersede(
                 ontology_id="ont1",
@@ -495,13 +527,17 @@ class TestSupersedeRetract:
 
     def test_retract_no_op_still_writes_audit(self) -> None:
         db, *_ = _mock_db()
-        with patch(
-            "app.db.temporal_revisions_repo.temporal.expire_entity",
-            return_value=None,
-        ), _patch_run_aql([]), patch(
-            "app.db.temporal_revisions_repo.record_revision",
-            return_value={"_key": "rev_r4", "status": STATUS_APPLIED},
-        ) as record:
+        with (
+            patch(
+                "app.db.temporal_revisions_repo.temporal.expire_entity",
+                return_value=None,
+            ),
+            _patch_run_aql([]),
+            patch(
+                "app.db.temporal_revisions_repo.record_revision",
+                return_value={"_key": "rev_r4", "status": STATUS_APPLIED},
+            ) as record,
+        ):
             result = supersede(
                 ontology_id="ont1",
                 existing_entity_id="ontology_classes/k1",
@@ -524,10 +560,13 @@ class TestSupersedeRetract:
 class TestSupersedeFlagForCuration:
     def test_flag_writes_audit_only_no_graph_change(self) -> None:
         db, vertex, edge = _mock_db()
-        with _patch_run_aql([]), patch(
-            "app.db.temporal_revisions_repo.record_revision",
-            return_value={"_key": "rev_flag", "status": STATUS_PENDING},
-        ) as record:
+        with (
+            _patch_run_aql([]),
+            patch(
+                "app.db.temporal_revisions_repo.record_revision",
+                return_value={"_key": "rev_flag", "status": STATUS_PENDING},
+            ) as record,
+        ):
             result = supersede(
                 ontology_id="ont1",
                 existing_entity_id="ontology_classes/k1",
@@ -597,13 +636,17 @@ class TestAuditRecordContract:
                 "current_confidence": 0.9,
             }
         }
-        with patch(
-            "app.db.temporal_revisions_repo.temporal.get_current",
-            return_value={"_key": "k1", "evidence": []},
-        ), _patch_run_aql([]), patch(
-            "app.db.temporal_revisions_repo.record_revision",
-            return_value={"_key": "rev1", "status": STATUS_APPLIED},
-        ) as record:
+        with (
+            patch(
+                "app.db.temporal_revisions_repo.temporal.get_current",
+                return_value={"_key": "k1", "evidence": []},
+            ),
+            _patch_run_aql([]),
+            patch(
+                "app.db.temporal_revisions_repo.record_revision",
+                return_value={"_key": "rev1", "status": STATUS_APPLIED},
+            ) as record,
+        ):
             supersede(
                 ontology_id="ont1",
                 existing_entity_id="ontology_classes/k1",
@@ -778,8 +821,6 @@ class TestSupersedeResultContract:
     def test_result_is_frozen(self) -> None:
         from dataclasses import FrozenInstanceError
 
-        r = SupersedeResult(
-            revision_meta_key="r", action=ACTION_REINFORCE, status=STATUS_APPLIED
-        )
+        r = SupersedeResult(revision_meta_key="r", action=ACTION_REINFORCE, status=STATUS_APPLIED)
         with pytest.raises(FrozenInstanceError):
             r.action = ACTION_REVISE  # type: ignore[misc]

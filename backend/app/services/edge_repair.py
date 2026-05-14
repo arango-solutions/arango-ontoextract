@@ -92,7 +92,7 @@ class RangeMatch:
 
     class_key: str
     matched_text: str  # the literal substring that hit (normalised form)
-    matched_via: str   # ``"key"`` or ``"label"``
+    matched_via: str  # ``"key"`` or ``"label"``
     other_candidates: tuple[str, ...] = ()  # for ambiguity reporting
 
 

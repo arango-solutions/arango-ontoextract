@@ -11,7 +11,7 @@ import csv
 import io
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from rdflib import OWL, RDF, RDFS, XSD, Graph, Literal, Namespace, URIRef
 
@@ -182,7 +182,7 @@ def export_jsonld(ontology_id: str) -> dict[str, Any]:
     """
     g = _build_rdf_graph(ontology_id)
     jsonld_str = g.serialize(format="json-ld")
-    result = json.loads(jsonld_str)
+    result = cast(dict[str, Any], json.loads(jsonld_str))
     log.info(
         "exported ontology as JSON-LD",
         extra={"ontology_id": ontology_id, "triples": len(g)},

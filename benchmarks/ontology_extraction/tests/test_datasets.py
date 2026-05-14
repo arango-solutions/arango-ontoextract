@@ -3,6 +3,7 @@
 These tests write tiny synthetic fixtures to a temp directory so they run
 without any downloaded corpora.
 """
+
 from __future__ import annotations
 
 import json
@@ -30,7 +31,7 @@ REDOCRED_SAMPLE = [
         ],
         "labels": [
             {"h": 0, "t": 2, "r": "P108", "evidence": [0]},  # Alice works_at Acme
-            {"h": 1, "t": 0, "r": "P26", "evidence": [1]},   # Bob knows Alice
+            {"h": 1, "t": 0, "r": "P26", "evidence": [1]},  # Bob knows Alice
         ],
     }
 ]
@@ -40,7 +41,9 @@ class TestRedocredLoader:
     def test_loads_document(self, tmp_path: Path):
         root = tmp_path / "redocred"
         root.mkdir()
-        (root / "dev_revised.json").write_text(json.dumps(REDOCRED_SAMPLE), encoding="utf-8")
+        (root / "dev_revised.json").write_text(
+            json.dumps(REDOCRED_SAMPLE), encoding="utf-8"
+        )
 
         docs = list(redocred.load(root))
         assert len(docs) == 1

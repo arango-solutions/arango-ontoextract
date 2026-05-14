@@ -7,6 +7,7 @@ import time
 from collections import Counter
 from typing import Any
 
+from arango.database import StandardDatabase
 from fastapi import APIRouter, HTTPException, Query
 
 from app.config import settings
@@ -57,11 +58,14 @@ ONTOLOGY_COLLECTIONS = [
 ALL_COLLECTIONS = [*ONTOLOGY_COLLECTIONS, "documents", "chunks"]
 
 
-def _remove_ontology_graphs(db) -> list[str]:
+def _remove_ontology_graphs(db: StandardDatabase) -> list[str]:
     """Remove all per-ontology named graphs (ontology_*)."""
     removed: list[str] = []
     try:
-        for g in db.graphs():
+        graphs_any = db.graphs()
+        if not isinstance(graphs_any, list):
+            return removed
+        for g in graphs_any:
             name = g["name"] if isinstance(g, dict) else g
             if isinstance(name, str) and name.startswith("ontology_"):
                 db.delete_graph(name, drop_collections=False)
@@ -202,9 +206,7 @@ async def dedupe_ontology_edges(
         )
     try:
         db = get_db()
-        report = dedupe_live_edges(
-            db, ontology_id, collection, dry_run=dry_run
-        )
+        report = dedupe_live_edges(db, ontology_id, collection, dry_run=dry_run)
         return report.to_dict()
     except ValueError as exc:
         # Defensive: dedupe_live_edges has its own allowlist gate
@@ -217,9 +219,7 @@ async def dedupe_ontology_edges(
             collection,
             dry_run,
         )
-        raise HTTPException(
-            status_code=500, detail="Internal server error"
-        ) from exc
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @router.get("/ontology/{ontology_id}/reflection-report")
@@ -361,8 +361,7 @@ async def consolidate_ontology(
         default=None,
         gt=0,
         description=(
-            "Override the stale-belief threshold. Defaults to the "
-            "configured decay half-life."
+            "Override the stale-belief threshold. Defaults to the configured decay half-life."
         ),
     ),
     stale_inbox_limit: int = Query(

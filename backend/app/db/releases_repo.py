@@ -117,4 +117,4 @@ def create_release(
         },
         db=db,
     )
-    return new_doc
+    return cast(dict[str, Any], new_doc)

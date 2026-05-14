@@ -20,7 +20,6 @@ from app.services import (
     revision_safety,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixture builders
 # ---------------------------------------------------------------------------
@@ -76,23 +75,15 @@ class TestRunConsolidationHappyPath:
             )
         ]
         with (
-            patch.object(
-                ontology_rule_engine, "evaluate_rules", return_value=rules
-            ) as mock_rules,
+            patch.object(ontology_rule_engine, "evaluate_rules", return_value=rules) as mock_rules,
             patch.object(
                 confidence_decay, "apply_confidence_decay", return_value=decay
             ) as mock_decay,
-            patch.object(
-                consolidation, "_scan_stale_beliefs", return_value=stale
-            ) as mock_stale,
-            patch.object(
-                revision_safety, "checkpoint_cursor"
-            ) as mock_checkpoint,
+            patch.object(consolidation, "_scan_stale_beliefs", return_value=stale) as mock_stale,
+            patch.object(revision_safety, "checkpoint_cursor") as mock_checkpoint,
             patch.object(rev_repo, "record_revision", return_value={"_key": "r1"}),
         ):
-            report = consolidation.run_consolidation(
-                "onto_1", dry_run=False, db=MagicMock()
-            )
+            report = consolidation.run_consolidation("onto_1", dry_run=False, db=MagicMock())
 
         assert report.status == "completed"
         assert report.rules is rules
@@ -117,21 +108,15 @@ class TestRunConsolidationHappyPath:
             )
         ]
         with (
-            patch.object(
-                ontology_rule_engine, "evaluate_rules", return_value=rules
-            ),
+            patch.object(ontology_rule_engine, "evaluate_rules", return_value=rules),
             patch.object(
                 confidence_decay, "apply_confidence_decay", return_value=decay
             ) as mock_decay,
-            patch.object(
-                consolidation, "_scan_stale_beliefs", return_value=stale
-            ),
+            patch.object(consolidation, "_scan_stale_beliefs", return_value=stale),
             patch.object(revision_safety, "checkpoint_cursor"),
             patch.object(rev_repo, "record_revision") as mock_record,
         ):
-            report = consolidation.run_consolidation(
-                "onto_1", dry_run=True, db=MagicMock()
-            )
+            report = consolidation.run_consolidation("onto_1", dry_run=True, db=MagicMock())
 
         assert report.dry_run is True
         assert report.revisions_written_rules == 0
@@ -146,20 +131,14 @@ class TestRunConsolidationHappyPath:
     def test_explicit_job_key_propagates(self):
         rules = _rules_report()
         with (
-            patch.object(
-                ontology_rule_engine, "evaluate_rules", return_value=rules
-            ),
+            patch.object(ontology_rule_engine, "evaluate_rules", return_value=rules),
             patch.object(
                 confidence_decay,
                 "apply_confidence_decay",
                 return_value=_decay_report(),
             ),
-            patch.object(
-                consolidation, "_scan_stale_beliefs", return_value=[]
-            ),
-            patch.object(
-                revision_safety, "checkpoint_cursor"
-            ) as mock_checkpoint,
+            patch.object(consolidation, "_scan_stale_beliefs", return_value=[]),
+            patch.object(revision_safety, "checkpoint_cursor") as mock_checkpoint,
         ):
             report = consolidation.run_consolidation(
                 "onto_1", dry_run=False, job_key="my_resumable_job", db=MagicMock()
@@ -188,9 +167,7 @@ class TestStageFailureHandling:
             patch.object(consolidation, "_scan_stale_beliefs") as mock_stale,
             patch.object(revision_safety, "checkpoint_cursor"),
         ):
-            report = consolidation.run_consolidation(
-                "onto_1", dry_run=False, db=MagicMock()
-            )
+            report = consolidation.run_consolidation("onto_1", dry_run=False, db=MagicMock())
         assert report.status == "failed"
         assert "AQL boom" in (report.error or "")
         # Subsequent stages must NOT have run on rules failure
@@ -212,22 +189,16 @@ class TestStageFailureHandling:
             patch.object(consolidation, "_scan_stale_beliefs") as mock_stale,
             patch.object(revision_safety, "checkpoint_cursor"),
         ):
-            report = consolidation.run_consolidation(
-                "onto_1", dry_run=False, db=MagicMock()
-            )
+            report = consolidation.run_consolidation("onto_1", dry_run=False, db=MagicMock())
         assert report.status == "failed"
         assert "decay boom" in (report.error or "")
         # Stale stage must NOT have run
         mock_stale.assert_not_called()
 
     def test_record_revision_failure_does_not_abort_pass(self):
-        rules = _rules_report(
-            violations=[_violation(), _violation(rule_id="R4")]
-        )
+        rules = _rules_report(violations=[_violation(), _violation(rule_id="R4")])
         with (
-            patch.object(
-                ontology_rule_engine, "evaluate_rules", return_value=rules
-            ),
+            patch.object(ontology_rule_engine, "evaluate_rules", return_value=rules),
             patch.object(
                 confidence_decay,
                 "apply_confidence_decay",
@@ -242,9 +213,7 @@ class TestStageFailureHandling:
                 side_effect=[RuntimeError("disk full"), {"_key": "r2"}],
             ),
         ):
-            report = consolidation.run_consolidation(
-                "onto_1", dry_run=False, db=MagicMock()
-            )
+            report = consolidation.run_consolidation("onto_1", dry_run=False, db=MagicMock())
         # Pass still completes; only one row was actually written
         assert report.status == "completed"
         assert report.revisions_written_rules == 1
@@ -305,9 +274,7 @@ class TestInboxRowWriters:
                 db=MagicMock(),
             )
         assert written == 1
-        assert (
-            captured[0]["existing_entity_id"] == "ontology_classes/Account"
-        )
+        assert captured[0]["existing_entity_id"] == "ontology_classes/Account"
         assert "200.0 days" in captured[0]["reasoning"]
 
 

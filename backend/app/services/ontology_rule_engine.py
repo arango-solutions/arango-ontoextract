@@ -413,10 +413,7 @@ def _cardinality_violation(db: Any, ontology_id: str) -> list[Violation]:
     documents of ``constraint_type=="cardinality"`` exist for this
     ontology.
     """
-    if not (
-        db.has_collection("ontology_constraints")
-        and db.has_collection("rdfs_domain")
-    ):
+    if not (db.has_collection("ontology_constraints") and db.has_collection("rdfs_domain")):
         return []
 
     bind = {"oid": ontology_id, "never": NEVER_EXPIRES}
@@ -539,9 +536,7 @@ def _r3_orphan_object_property_range(db: Any, ontology_id: str) -> list[Violatio
     # easier to mock in tests via ``monkeypatch.setattr(engine, ...)``.
     from app.services.edge_repair import repair_orphan_object_property_ranges
 
-    report = repair_orphan_object_property_ranges(
-        db, ontology_id, dry_run=True
-    )
+    report = repair_orphan_object_property_ranges(db, ontology_id, dry_run=True)
 
     violations: list[Violation] = []
 
@@ -564,9 +559,7 @@ def _r3_orphan_object_property_range(db: Any, ontology_id: str) -> list[Violatio
 
     for u in report.unrecoverable:
         entity_ids: tuple[str, ...] = (
-            (u.prop_key,)
-            if u.domain_class_key is None
-            else (u.prop_key, u.domain_class_key)
+            (u.prop_key,) if u.domain_class_key is None else (u.prop_key, u.domain_class_key)
         )
         violations.append(
             Violation(

@@ -6,6 +6,7 @@ adapter without any backend dependencies. Pytest is invoked with
 ``rootdir=<repo root>`` in the make target; for ad-hoc ``pytest
 benchmarks/...`` runs we prepend the repo root to ``sys.path`` here.
 """
+
 from __future__ import annotations
 
 import sys

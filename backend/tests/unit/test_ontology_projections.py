@@ -35,7 +35,6 @@ from app.services.ontology_projections import (
     summarize_edge,
 )
 
-
 # ---------------------------------------------------------------------------
 # Allow-list contract: heavy fields are excluded, identity fields included.
 # ---------------------------------------------------------------------------
@@ -246,4 +245,4 @@ class TestNormalizeInclude:
     def test_valid_include_values_constant_matches_helpers(self) -> None:
         # Sanity check that the public constant lists exactly the values
         # normalize_include() will accept.
-        assert VALID_INCLUDE_VALUES == frozenset({INCLUDE_FULL, INCLUDE_SUMMARY})
+        assert frozenset({INCLUDE_FULL, INCLUDE_SUMMARY}) == VALID_INCLUDE_VALUES

@@ -260,8 +260,7 @@ def _format_existing_belief(belief: dict[str, Any]) -> str:
     properties = belief.get("properties") or belief.get("attributes") or []
     if properties:
         prop_names = [
-            str(p.get("label") or p.get("_key") or p.get("uri") or "?")
-            for p in properties[:10]
+            str(p.get("label") or p.get("_key") or p.get("uri") or "?") for p in properties[:10]
         ]
         parts.append(f"Properties (first 10): {', '.join(prop_names)}")
     confidence = belief.get("confidence") or belief.get("current_confidence")
@@ -344,9 +343,7 @@ def cross_check(payload: dict[str, Any], ctx: RevisionContext) -> CrossCheckResu
         notes.append(f"unknown action {action!r}; expected one of {_ACTION_ENUM}")
 
     if not isinstance(confidence_raw, int | float):
-        notes.append(
-            f"confidence must be a number, got {type(confidence_raw).__name__}"
-        )
+        notes.append(f"confidence must be a number, got {type(confidence_raw).__name__}")
         confidence = 0.0
     else:
         confidence = float(confidence_raw)
@@ -355,13 +352,10 @@ def cross_check(payload: dict[str, Any], ctx: RevisionContext) -> CrossCheckResu
 
     if not isinstance(reasoning, str) or len(reasoning.strip()) < MIN_REASONING_LENGTH:
         notes.append(
-            f"reasoning is too short (< {MIN_REASONING_LENGTH} chars); "
-            "likely a non-answer"
+            f"reasoning is too short (< {MIN_REASONING_LENGTH} chars); likely a non-answer"
         )
 
-    if not isinstance(quotes_raw, list) or not all(
-        isinstance(q, str) for q in quotes_raw
-    ):
+    if not isinstance(quotes_raw, list) or not all(isinstance(q, str) for q in quotes_raw):
         notes.append("evidence_quotes must be a list of strings")
         quotes_raw = []
 
@@ -373,9 +367,7 @@ def cross_check(payload: dict[str, Any], ctx: RevisionContext) -> CrossCheckResu
         if not needle:
             continue
         if needle not in haystack:
-            notes.append(
-                f"evidence quote not found in supplied source text: {q[:80]!r}"
-            )
+            notes.append(f"evidence quote not found in supplied source text: {q[:80]!r}")
 
     # ---- Action prerequisites ----------------------------------------
     if action == ACTION_RETRACT:
@@ -383,8 +375,7 @@ def cross_check(payload: dict[str, Any], ctx: RevisionContext) -> CrossCheckResu
             notes.append("RETRACT requires at least one evidence quote")
         if confidence < RETRACT_CONFIDENCE_FLOOR:
             notes.append(
-                f"RETRACT requires confidence >= {RETRACT_CONFIDENCE_FLOOR}, "
-                f"got {confidence:.2f}"
+                f"RETRACT requires confidence >= {RETRACT_CONFIDENCE_FLOOR}, got {confidence:.2f}"
             )
     elif action in (ACTION_REINFORCE, ACTION_REVISE) and not quotes:
         notes.append(f"{action} requires at least one evidence quote")
@@ -586,9 +577,7 @@ async def revise(
 
     for attempt in range(LLM_MAX_RETRIES + 1):
         try:
-            raw, tokens = await _invoke_llm(
-                client, system_msg, user_msg, extra_user_msg=extra
-            )
+            raw, tokens = await _invoke_llm(client, system_msg, user_msg, extra_user_msg=extra)
             accumulated_tokens["prompt_tokens"] += tokens.get("prompt_tokens", 0)
             accumulated_tokens["completion_tokens"] += tokens.get("completion_tokens", 0)
             last_payload = parse_llm_payload(raw)

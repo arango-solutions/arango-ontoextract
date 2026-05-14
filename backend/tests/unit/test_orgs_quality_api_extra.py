@@ -174,7 +174,9 @@ class TestQualityRoutes:
         returns the report unchanged."""
         body = RecallRequest(
             ontology_id="onto1",
-            reference_content="@prefix : <http://x#> . :A a <http://www.w3.org/2002/07/owl#Class> .",
+            reference_content=(
+                "@prefix : <http://x#> . :A a <http://www.w3.org/2002/07/owl#Class> ."
+            ),
             rdf_format="turtle",
             match_threshold=0.9,
             include_object_properties=False,

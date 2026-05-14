@@ -46,7 +46,7 @@ def create_registry_entry(
     entry.setdefault("created_at", now)
     entry.setdefault("updated_at", now)
     result = cast("dict[str, Any]", db.collection(_COLLECTION).insert(entry, return_new=True))
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 def get_registry_entry(
@@ -107,7 +107,7 @@ def update_registry_entry(
         raise ValueError(f"Ontology registry entry '{ontology_id}' not found")
     updates["updated_at"] = datetime.now(UTC).isoformat()
     result = cast("dict[str, Any]", col.update({**updates, "_key": ontology_id}, return_new=True))
-    return result["new"]
+    return cast(dict[str, Any], result["new"])
 
 
 def deprecate_registry_entry(

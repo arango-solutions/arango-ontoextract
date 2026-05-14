@@ -33,7 +33,6 @@ from fastapi.testclient import TestClient
 
 from app.db.temporal_constants import NEVER_EXPIRES
 
-
 # ---------------------------------------------------------------------------
 # Test fixtures: a stub db with per-collection ``.get()`` and ``.has_collection()``.
 # ---------------------------------------------------------------------------
@@ -232,8 +231,12 @@ class TestGetEdgeDetail:
             assert r.status_code == 200
             body = r.json()
             assert body["edge_type"] == "rdfs_range_class"
-            assert body["label"] == "has owner", "rdfs_range_class label must be lifted from property"
-            assert body["confidence"] == 0.92, "rdfs_range_class confidence must be lifted from property"
+            assert body["label"] == "has owner", (
+                "rdfs_range_class label must be lifted from property"
+            )
+            assert body["confidence"] == 0.92, (
+                "rdfs_range_class confidence must be lifted from property"
+            )
         finally:
             client._patcher.stop()  # type: ignore[attr-defined]
 

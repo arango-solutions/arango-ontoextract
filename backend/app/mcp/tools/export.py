@@ -8,7 +8,7 @@ Two tools:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from mcp.server.fastmcp import FastMCP
 
@@ -82,7 +82,7 @@ def _property_vertex_kind(prop: dict[str, Any]) -> str:
     """Infer owl:ObjectProperty vs DatatypeProperty from source collection / fields."""
     explicit = prop.get("property_type")
     if explicit in ("object", "datatype"):
-        return explicit
+        return str(explicit)
     pid = prop.get("_id", "")
     if isinstance(pid, str) and "ontology_object_properties" in pid:
         return "object"
@@ -307,7 +307,7 @@ FOR doc IN @@col
             )
         )
         if results:
-            return results[0]
+            return cast(dict[str, Any], results[0])
     return None
 
 

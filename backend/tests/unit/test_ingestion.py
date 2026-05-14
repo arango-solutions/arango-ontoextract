@@ -375,8 +375,9 @@ class TestParseDoc:
 
         from app.services import ingestion as _ing
 
-        with patch.object(_ing, "_find_libreoffice", return_value=None), _pytest.raises(
-            RuntimeError, match="LibreOffice"
+        with (
+            patch.object(_ing, "_find_libreoffice", return_value=None),
+            _pytest.raises(RuntimeError, match="LibreOffice"),
         ):
             _ing.parse_doc(b"fake-doc-bytes")
 
@@ -409,8 +410,9 @@ class TestParseDoc:
             result.stderr = b""
             return result
 
-        with patch.object(_ing, "_find_libreoffice", return_value="/fake/soffice"), patch(
-            "app.services.ingestion.subprocess.run", side_effect=_fake_run
+        with (
+            patch.object(_ing, "_find_libreoffice", return_value="/fake/soffice"),
+            patch("app.services.ingestion.subprocess.run", side_effect=_fake_run),
         ):
             parsed = _ing.parse_doc(b"fake-doc-bytes")
 
@@ -431,9 +433,11 @@ class TestParseDoc:
         result.returncode = 2
         result.stderr = b"soffice: source file not found"
 
-        with patch.object(_ing, "_find_libreoffice", return_value="/fake/soffice"), patch(
-            "app.services.ingestion.subprocess.run", return_value=result
-        ), _pytest.raises(RuntimeError, match="exit=2"):
+        with (
+            patch.object(_ing, "_find_libreoffice", return_value="/fake/soffice"),
+            patch("app.services.ingestion.subprocess.run", return_value=result),
+            _pytest.raises(RuntimeError, match="exit=2"),
+        ):
             _ing.parse_doc(b"fake")
 
     def test_timeout_raises_with_clear_message(self):
@@ -443,10 +447,14 @@ class TestParseDoc:
 
         from app.services import ingestion as _ing
 
-        with patch.object(_ing, "_find_libreoffice", return_value="/fake/soffice"), patch(
-            "app.services.ingestion.subprocess.run",
-            side_effect=_sp.TimeoutExpired(cmd="soffice", timeout=60),
-        ), _pytest.raises(RuntimeError, match="timed out"):
+        with (
+            patch.object(_ing, "_find_libreoffice", return_value="/fake/soffice"),
+            patch(
+                "app.services.ingestion.subprocess.run",
+                side_effect=_sp.TimeoutExpired(cmd="soffice", timeout=60),
+            ),
+            _pytest.raises(RuntimeError, match="timed out"),
+        ):
             _ing.parse_doc(b"fake")
 
     def test_no_docx_output_raises(self):
@@ -459,9 +467,11 @@ class TestParseDoc:
         result.stderr = b""
 
         # subprocess returns success but produces no .docx (LO gone weird)
-        with patch.object(_ing, "_find_libreoffice", return_value="/fake/soffice"), patch(
-            "app.services.ingestion.subprocess.run", return_value=result
-        ), _pytest.raises(RuntimeError, match=r"no \.docx output"):
+        with (
+            patch.object(_ing, "_find_libreoffice", return_value="/fake/soffice"),
+            patch("app.services.ingestion.subprocess.run", return_value=result),
+            _pytest.raises(RuntimeError, match=r"no \.docx output"),
+        ):
             _ing.parse_doc(b"fake")
 
 
@@ -491,15 +501,18 @@ class TestFindLibreoffice:
         from app.services import ingestion as _ing
 
         mac_path = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
-        with patch("app.services.ingestion.shutil.which", return_value=None), patch(
-            "app.services.ingestion.os.path.isfile", return_value=True
-        ), patch("app.services.ingestion.os.access", return_value=True):
+        with (
+            patch("app.services.ingestion.shutil.which", return_value=None),
+            patch("app.services.ingestion.os.path.isfile", return_value=True),
+            patch("app.services.ingestion.os.access", return_value=True),
+        ):
             assert _ing._find_libreoffice() == mac_path
 
     def test_returns_none_when_truly_absent(self):
         from app.services import ingestion as _ing
 
-        with patch("app.services.ingestion.shutil.which", return_value=None), patch(
-            "app.services.ingestion.os.path.isfile", return_value=False
+        with (
+            patch("app.services.ingestion.shutil.which", return_value=None),
+            patch("app.services.ingestion.os.path.isfile", return_value=False),
         ):
             assert _ing._find_libreoffice() is None

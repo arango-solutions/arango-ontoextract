@@ -242,9 +242,7 @@ class TestDecideRevisionTool:
         from app.mcp.tools.belief_revision import register_belief_revision_tools
 
         tools = _capture_tools(register_belief_revision_tools)
-        result = tools["decide_revision"](
-            "rev_1", decision="please_accept", decided_by="alice"
-        )
+        result = tools["decide_revision"]("rev_1", decision="please_accept", decided_by="alice")
         assert "error" in result
         assert "valid" in result
 
@@ -257,9 +255,7 @@ class TestDecideRevisionTool:
             side_effect=RevisionNotFoundError("rev_1"),
         ):
             tools = _capture_tools(register_belief_revision_tools)
-            result = tools["decide_revision"](
-                "rev_1", decision="accept", decided_by="alice"
-            )
+            result = tools["decide_revision"]("rev_1", decision="accept", decided_by="alice")
         assert result["error"] == "not_found"
 
     def test_action_error_translated_to_validation_envelope(self):
@@ -271,9 +267,7 @@ class TestDecideRevisionTool:
             side_effect=RevisionActionError("REVISE requires new_vertex_data"),
         ):
             tools = _capture_tools(register_belief_revision_tools)
-            result = tools["decide_revision"](
-                "rev_1", decision="accept", decided_by="alice"
-            )
+            result = tools["decide_revision"]("rev_1", decision="accept", decided_by="alice")
         assert result["error"] == "validation_error"
         assert "new_vertex_data" in result["message"]
 
@@ -297,9 +291,7 @@ class TestRunConsolidationTool:
             finished_at=1.0,
             status="completed",
         )
-        with patch(
-            "app.services.consolidation.run_consolidation", return_value=report
-        ) as mock_run:
+        with patch("app.services.consolidation.run_consolidation", return_value=report) as mock_run:
             tools = _capture_tools(register_belief_revision_tools)
             tools["run_consolidation"]("onto_1")
         kwargs = mock_run.call_args.kwargs
@@ -318,9 +310,7 @@ class TestRunConsolidationTool:
             finished_at=2.0,
             status="completed",
         )
-        with patch(
-            "app.services.consolidation.run_consolidation", return_value=report
-        ) as mock_run:
+        with patch("app.services.consolidation.run_consolidation", return_value=report) as mock_run:
             tools = _capture_tools(register_belief_revision_tools)
             result = tools["run_consolidation"](
                 "onto_1",

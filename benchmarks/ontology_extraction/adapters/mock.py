@@ -6,12 +6,16 @@ from adjacent sentences. This is not a useful extractor — it is a reproducible
 baseline that exercises the metrics and dataset loaders end-to-end without
 touching LLMs, databases, or the real pipeline.
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
 
-from benchmarks.ontology_extraction.adapters.base import ExtractionAdapter, ExtractionResult
+from benchmarks.ontology_extraction.adapters.base import (
+    ExtractionAdapter,
+    ExtractionResult,
+)
 from benchmarks.ontology_extraction.metrics import ClassMention, Triple
 
 _WORD = re.compile(r"\b([A-Z][a-zA-Z][a-zA-Z0-9_-]+)\b")

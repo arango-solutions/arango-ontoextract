@@ -27,7 +27,8 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from arango.database import StandardDatabase
-from rdflib import OWL, RDF, RDFS, Graph as RDFGraph, URIRef
+from rdflib import OWL, RDF, RDFS, URIRef
+from rdflib import Graph as RDFGraph
 from rdflib.term import Literal
 
 from app.db.client import get_db
@@ -286,11 +287,7 @@ def _greedy_match(
         else:
             missed.append(ref)
 
-    false_positives = [
-        row
-        for uri, row in extracted_by_uri.items()
-        if uri not in claimed
-    ]
+    false_positives = [row for uri, row in extracted_by_uri.items() if uri not in claimed]
     return matches, missed, false_positives
 
 
@@ -420,10 +417,7 @@ def _build_section(
             }
             for m in matches
         ],
-        "missed": [
-            {"reference_uri": ref.uri, "reference_label": ref.label}
-            for ref in missed
-        ],
+        "missed": [{"reference_uri": ref.uri, "reference_label": ref.label} for ref in missed],
         "false_positives": [
             {
                 "extracted_uri": row.get("uri"),

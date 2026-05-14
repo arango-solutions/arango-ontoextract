@@ -133,9 +133,7 @@ class TestEnrichRdfsRangeClassEdges:
             "description": "Generates a risk profile that categorizes the customer.",
             "uri": "http://example.org/local#generatesRiskProfile",
             "confidence": 0.9,
-            "evidence": [
-                {"evidence_confidence": 0.9, "source_chunk_ids": ["c1"]}
-            ],
+            "evidence": [{"evidence_confidence": 0.9, "source_chunk_ids": ["c1"]}],
             **rest,
         }
 
@@ -229,9 +227,7 @@ class TestEnrichRdfsRangeClassEdges:
         del edge_no_from["_from"]
         edge_int_from = self._edge(_from=123)
 
-        enrich_rdfs_range_class_edges(
-            [edge_no_from, edge_int_from], {prop["_id"]: prop}
-        )
+        enrich_rdfs_range_class_edges([edge_no_from, edge_int_from], {prop["_id"]: prop})
 
         assert "label" not in edge_no_from
         assert "label" not in edge_int_from
@@ -258,12 +254,8 @@ class TestEnrichRdfsRangeClassEdges:
             label="beta",
             confidence=0.6,
         )
-        edge_a = self._edge(
-            _key="ea", _from="ontology_object_properties/A"
-        )
-        edge_b = self._edge(
-            _key="eb", _from="ontology_object_properties/B"
-        )
+        edge_a = self._edge(_key="ea", _from="ontology_object_properties/A")
+        edge_b = self._edge(_key="eb", _from="ontology_object_properties/B")
         enrich_rdfs_range_class_edges(
             [edge_a, edge_b], {prop_a["_id"]: prop_a, prop_b["_id"]: prop_b}
         )

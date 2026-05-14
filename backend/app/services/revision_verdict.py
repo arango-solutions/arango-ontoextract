@@ -162,12 +162,12 @@ RULE_R7_CONTRADICTED_DIRECT = "R7_contradicted_direct_evidence"
 
 CO_CLASSIFIER_SUFFIXES: tuple[str, ...] = (
     # Strong negatives (Q.2c, Q.3c, and general knowledge):
-    "Status",     # AccountStatus, OrderStatus -- vocabulary/enum
-    "Activity",   # MuleAccountActivity -- action observed on the entity
-    "Channel",    # TransactionChannel -- modality/dimension
-    "Code",       # CountryCode -- vocabulary
-    "Role",       # CustomerRole -- relational role, not subtype
-    "Category",   # ProductCategory -- classifier
+    "Status",  # AccountStatus, OrderStatus -- vocabulary/enum
+    "Activity",  # MuleAccountActivity -- action observed on the entity
+    "Channel",  # TransactionChannel -- modality/dimension
+    "Code",  # CountryCode -- vocabulary
+    "Role",  # CustomerRole -- relational role, not subtype
+    "Category",  # ProductCategory -- classifier
     # Ambiguous (Q.2b -- TransactionDetail): could be subtype OR
     # composition. Always escalate so the LLM reads the source text.
     "Detail",
@@ -180,9 +180,7 @@ CO_CLASSIFIER_SUFFIXES: tuple[str, ...] = (
 # We deliberately match camel-case suffixes (e.g. "AccountStatus" not
 # "account status") because the source labels in our extraction pipeline
 # are PascalCase URIs / titlecase labels.
-_SUFFIX_RE = re.compile(
-    r"(" + "|".join(re.escape(s) for s in CO_CLASSIFIER_SUFFIXES) + r")$"
-)
+_SUFFIX_RE = re.compile(r"(" + "|".join(re.escape(s) for s in CO_CLASSIFIER_SUFFIXES) + r")$")
 
 
 # ---------------------------------------------------------------------------
@@ -294,9 +292,11 @@ class VerdictReport:
         The IBR.10 LangGraph node uses this to implement FR-11.15:
         skip Phase 3 (LLM agent) when no verdict is contested.
         """
-        return self.verdict_counts.get(VERDICT_CONTRADICTED, 0) + self.verdict_counts.get(
-            VERDICT_UNCERTAIN, 0
-        ) > 0
+        return (
+            self.verdict_counts.get(VERDICT_CONTRADICTED, 0)
+            + self.verdict_counts.get(VERDICT_UNCERTAIN, 0)
+            > 0
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -382,8 +382,7 @@ def classify(
             rule_id=RULE_R7_CONTRADICTED_DIRECT,
             confidence=score,
             reasoning=(
-                "Direct contradiction with existing belief: "
-                + "; ".join(s.contradiction_evidence)
+                "Direct contradiction with existing belief: " + "; ".join(s.contradiction_evidence)
             ),
         )
 
@@ -414,10 +413,7 @@ def classify(
             action=ACTION_REVISE,
             rule_id=RULE_R7_REDUNDANT_URI,
             confidence=max(score, sig.uri_exact),
-            reasoning=(
-                "URI matches existing class exactly; same concept "
-                "(delegating to ER)."
-            ),
+            reasoning=("URI matches existing class exactly; same concept (delegating to ER)."),
         )
 
     # Rule 3b -- REDUNDANT via normalised-label exact match. Slightly
@@ -472,9 +468,7 @@ def classify(
     # the obvious explanation.
     if s.polymorphic_range_count >= 1 and sig.label_fuzzy > 0:
         action = (
-            ACTION_GAP_FILL
-            if score >= AUTO_APPLY_SCORE_THRESHOLD
-            else ACTION_FLAG_FOR_CURATION
+            ACTION_GAP_FILL if score >= AUTO_APPLY_SCORE_THRESHOLD else ACTION_FLAG_FOR_CURATION
         )
         return MechanicalRevision(
             touchpoint=touchpoint,
@@ -497,9 +491,7 @@ def classify(
     # decides on FLAG_FOR_CURATION cases).
     if len(s.shared_property_names) >= 2 and sig.label_fuzzy > 0:
         action = (
-            ACTION_GAP_FILL
-            if score >= AUTO_APPLY_SCORE_THRESHOLD
-            else ACTION_FLAG_FOR_CURATION
+            ACTION_GAP_FILL if score >= AUTO_APPLY_SCORE_THRESHOLD else ACTION_FLAG_FOR_CURATION
         )
         return MechanicalRevision(
             touchpoint=touchpoint,
@@ -519,14 +511,9 @@ def classify(
     # Label is a clear suffix/prefix of the existing class AND the
     # existing class already has subclasses, so the new concept slots
     # in as another sibling.
-    if (
-        sig.label_fuzzy >= LABEL_FUZZY_SUBTYPE_FLOOR
-        and s.existing_has_subclasses
-    ):
+    if sig.label_fuzzy >= LABEL_FUZZY_SUBTYPE_FLOOR and s.existing_has_subclasses:
         action = (
-            ACTION_GAP_FILL
-            if score >= AUTO_APPLY_SCORE_THRESHOLD
-            else ACTION_FLAG_FOR_CURATION
+            ACTION_GAP_FILL if score >= AUTO_APPLY_SCORE_THRESHOLD else ACTION_FLAG_FOR_CURATION
         )
         return MechanicalRevision(
             touchpoint=touchpoint,

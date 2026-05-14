@@ -1,4 +1,5 @@
 """Unit tests for the benchmark metrics module."""
+
 from __future__ import annotations
 
 import pytest
