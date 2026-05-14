@@ -127,5 +127,19 @@ export function buildCanvasContextMenu(
     },
   );
 
+  // Show Pending Revisions only when an ontology is loaded -- otherwise
+  // there's no inbox to show.
+  if (actions.selectedOntologyId) {
+    items.push({
+      label: "Show Pending Revisions",
+      icon: "📨",
+      onClick: () => {
+        const ontKey = actions.selectedOntologyId;
+        if (!ontKey) return;
+        actions.setRevisionsInbox({ key: ontKey, name: ontKey });
+      },
+    });
+  }
+
   return items;
 }

@@ -61,6 +61,12 @@ export type EdgeRepairArg = {
   name: string;
 } | null;
 
+/** Argument shape for ``setRevisionsInbox`` (``null`` closes the overlay). */
+export type RevisionsInboxArg = {
+  key: string;
+  name: string;
+} | null;
+
 /** Typed-name confirmation gate for ``ConfirmRequest``. Mirrors
  *  ``ConfirmDialogTypedName`` in ``ConfirmDialog.tsx`` so builders don't have
  *  to import the React component just to reference the type. */
@@ -162,6 +168,10 @@ export interface WorkspaceContextMenuActions {
    *  this surface is an overlay over the workspace canvas, never a
    *  separate route. */
   setEdgeRepair: (arg: EdgeRepairArg) => void;
+  /** Opens the ``RevisionsInboxOverlay`` for one ontology — pending
+   *  FLAG_FOR_CURATION revisions from the belief-revision pipeline.
+   *  ``null`` closes the overlay. Same overlay-not-route rule. */
+  setRevisionsInbox: (arg: RevisionsInboxArg) => void;
   exportOntology: (ontologyKey: string, format: "turtle" | "jsonld" | "csv") => void;
 
   // ── Pipeline ──────────────────────────────────────────────────────────

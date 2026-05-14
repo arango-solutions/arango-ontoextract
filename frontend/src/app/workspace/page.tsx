@@ -10,6 +10,7 @@ import OntologyReleaseDialog from "@/components/workspace/OntologyReleaseDialog"
 import CreateOntologyDialog from "@/components/workspace/CreateOntologyDialog";
 import ConfirmDialog from "@/components/workspace/ConfirmDialog";
 import ManageImportsOverlay from "@/components/workspace/ManageImportsOverlay";
+import RevisionsInboxOverlay from "@/components/workspace/RevisionsInboxOverlay";
 import FeedbackLearningOverlay from "@/components/workspace/FeedbackLearningOverlay";
 import CanvasLensLegend from "@/components/workspace/CanvasLensLegend";
 import EmptyCanvasState from "@/components/workspace/EmptyCanvasState";
@@ -155,6 +156,10 @@ function WorkspacePageInner() {
     ontologyName?: string | null;
   } | null>(null);
   const [edgeRepair, setEdgeRepair] = useState<{
+    key: string;
+    name: string;
+  } | null>(null);
+  const [revisionsInbox, setRevisionsInbox] = useState<{
     key: string;
     name: string;
   } | null>(null);
@@ -884,6 +889,7 @@ function WorkspacePageInner() {
     setManageImports,
     setFeedbackLearning,
     setEdgeRepair,
+    setRevisionsInbox,
     exportOntology,
     retryRun,
     pipelineRunId,
@@ -1163,6 +1169,9 @@ function WorkspacePageInner() {
           name={qualityOverlay.name}
           data={qualityOverlay.data}
           onClose={() => setQualityOverlay(null)}
+          onShowInbox={(ontologyId, ontologyName) => {
+            setRevisionsInbox({ key: ontologyId, name: ontologyName });
+          }}
         />
       )}
 
@@ -1192,6 +1201,22 @@ function WorkspacePageInner() {
           onApplied={() => {
             // Re-fetch the canvas so the newly-inserted rdfs_range_class
             // edges become visible without a full page reload.
+            refreshGraph();
+            setExplorerLibraryNonce((n) => n + 1);
+          }}
+        />
+      )}
+
+      {revisionsInbox && (
+        <RevisionsInboxOverlay
+          ontologyId={revisionsInbox.key}
+          ontologyName={revisionsInbox.name}
+          onClose={() => setRevisionsInbox(null)}
+          onChanged={() => {
+            // Refresh the canvas so any auto-applied (REINFORCE/REVISE/
+            // GAP_FILL/RETRACT) decisions show up immediately. The
+            // explorer also gets a nonce bump so per-ontology badges
+            // refresh.
             refreshGraph();
             setExplorerLibraryNonce((n) => n + 1);
           }}

@@ -100,6 +100,15 @@ export function buildOntologyContextMenu(
       },
     },
     {
+      label: "Show Pending Revisions",
+      icon: "📨",
+      onClick: () => {
+        if (!ontKey) return;
+        const n = String(data.name ?? data.label ?? ontKey).trim();
+        actions.setRevisionsInbox({ key: ontKey, name: n || ontKey });
+      },
+    },
+    {
       label: "Export",
       icon: "📤",
       submenu: [

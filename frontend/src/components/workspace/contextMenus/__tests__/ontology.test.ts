@@ -31,6 +31,7 @@ function makeActions(): WorkspaceContextMenuActions {
     setManageImports: jest.fn(),
     setFeedbackLearning: jest.fn(),
     setEdgeRepair: jest.fn(),
+    setRevisionsInbox: jest.fn(),
     exportOntology: jest.fn(),
     retryRun: jest.fn(),
     pipelineRunId: null,
@@ -71,6 +72,7 @@ describe("buildOntologyContextMenu", () => {
       "View Quality Report",
       "View Feedback Learning",
       "Repair Orphan Properties…",
+      "Show Pending Revisions",
       "Export",
       "Delete",
     ]);
@@ -107,6 +109,28 @@ describe("buildOntologyContextMenu", () => {
       key: "ont-bare",
       name: "ont-bare",
     });
+  });
+
+  it("Show Pending Revisions seeds the inbox overlay with key + name", () => {
+    const actions = makeActions();
+    const items = buildOntologyContextMenu(
+      { _key: "ont-1", name: "WTW Ontology" },
+      actions,
+    );
+
+    items.find((it) => it.label === "Show Pending Revisions")!.onClick!();
+    expect(actions.setRevisionsInbox).toHaveBeenCalledWith({
+      key: "ont-1",
+      name: "WTW Ontology",
+    });
+  });
+
+  it("Show Pending Revisions is a no-op when the ontology has no key", () => {
+    const actions = makeActions();
+    const items = buildOntologyContextMenu({ name: "Floating" }, actions);
+
+    items.find((it) => it.label === "Show Pending Revisions")!.onClick!();
+    expect(actions.setRevisionsInbox).not.toHaveBeenCalled();
   });
 
   it("Open in Canvas dispatches handleSelectOntology with the key", () => {

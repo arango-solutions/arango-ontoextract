@@ -15,6 +15,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { ApiError, api } from "@/lib/api-client";
 import {
   loadQualityHistory,
   type QualityHistorySnapshot,
@@ -32,6 +33,14 @@ interface Props {
   name: string;
   data: PerOntologyQualityApiShape;
   onClose: () => void;
+  /**
+   * Optional click-through to the Revisions Inbox overlay (IBR.14).
+   * When provided, the "Pending revisions" tile in the new
+   * ``RevisionsActivitySection`` becomes a CTA that opens the inbox
+   * for this ontology. Per ``ui-architecture.mdc`` rule 9 we never
+   * navigate to a new route for this; the parent owns overlay state.
+   */
+  onShowInbox?: (ontologyId: string, ontologyName: string) => void;
 }
 
 interface RadarDatum {
@@ -66,7 +75,12 @@ function formatSchemaValue(key: string, v: number): string {
   return v.toFixed(4);
 }
 
-export default function QualityReportOverlay({ name, data, onClose }: Props) {
+export default function QualityReportOverlay({
+  name,
+  data,
+  onClose,
+  onShowInbox,
+}: Props) {
   const [schemaExpanded, setSchemaExpanded] = useState(false);
   const [history, setHistory] = useState<QualityHistorySnapshot[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -260,6 +274,12 @@ export default function QualityReportOverlay({ name, data, onClose }: Props) {
               </div>
             )}
 
+          <RevisionsActivitySection
+            ontologyId={ontologyId}
+            ontologyName={name}
+            onShowInbox={onShowInbox}
+          />
+
           <QualityHistorySection
             loading={historyLoading}
             error={historyError}
@@ -393,4 +413,255 @@ function Metric({ label, value }: { label: string; value: string }) {
       <p className="font-semibold text-gray-800">{value}</p>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// IBR.19 — Revisions activity tile
+// ---------------------------------------------------------------------------
+//
+// Aggregates the most recent ``revision_meta`` rows for the current ontology
+// into four small KPI tiles + a verdict-distribution row. We aggregate
+// client-side from the existing ``GET /api/v1/revisions/?ontology_id=…``
+// endpoint to avoid adding a backend stats endpoint just for the dashboard
+// (we can promote it to a real stats endpoint when the inbox grows past a
+// few hundred rows).
+
+interface RevisionMetaSummary {
+  _key: string;
+  verdict: string;
+  action: string;
+  status: string;
+  agent_type: string;
+  created: number;
+}
+
+interface RevisionsListResponse {
+  data: RevisionMetaSummary[];
+  count: number;
+}
+
+interface RevisionStats {
+  total: number;
+  pending: number;
+  applied: number;
+  rejected: number;
+  verdictCounts: Record<string, number>;
+  topAgent: string | null;
+  windowSize: number;
+}
+
+const VERDICT_BADGE: Record<string, string> = {
+  REINFORCED: "bg-emerald-50 text-emerald-700 border border-emerald-200",
+  REFINED: "bg-amber-50 text-amber-700 border border-amber-200",
+  "GAP-FILLING": "bg-indigo-50 text-indigo-700 border border-indigo-200",
+  REDUNDANT: "bg-slate-100 text-slate-600 border border-slate-200",
+  CONTRADICTED: "bg-rose-50 text-rose-700 border border-rose-200",
+  UNCERTAIN: "bg-yellow-50 text-yellow-800 border border-yellow-200",
+};
+
+function aggregateRevisions(rows: RevisionMetaSummary[]): RevisionStats {
+  const verdictCounts: Record<string, number> = {};
+  const agentCounts: Record<string, number> = {};
+  let pending = 0;
+  let applied = 0;
+  let rejected = 0;
+  for (const r of rows) {
+    verdictCounts[r.verdict] = (verdictCounts[r.verdict] ?? 0) + 1;
+    if (r.agent_type) {
+      agentCounts[r.agent_type] = (agentCounts[r.agent_type] ?? 0) + 1;
+    }
+    const status = (r.status || "").toLowerCase();
+    if (status === "pending") pending += 1;
+    else if (status === "rejected") rejected += 1;
+    else if (status === "applied" || status === "accepted" || status === "modified")
+      applied += 1;
+  }
+  let topAgent: string | null = null;
+  let topAgentCount = -1;
+  for (const [agent, count] of Object.entries(agentCounts)) {
+    if (count > topAgentCount) {
+      topAgent = agent;
+      topAgentCount = count;
+    }
+  }
+  return {
+    total: rows.length,
+    pending,
+    applied,
+    rejected,
+    verdictCounts,
+    topAgent,
+    windowSize: rows.length,
+  };
+}
+
+function RevisionsActivitySection({
+  ontologyId,
+  ontologyName,
+  onShowInbox,
+}: {
+  ontologyId: string | undefined;
+  ontologyName: string;
+  onShowInbox?: (ontologyId: string, ontologyName: string) => void;
+}) {
+  const [stats, setStats] = useState<RevisionStats | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!ontologyId) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const res = await api.get<RevisionsListResponse>(
+          `/api/v1/revisions/?ontology_id=${encodeURIComponent(ontologyId)}&limit=200`,
+        );
+        if (cancelled) return;
+        setStats(aggregateRevisions(res.data ?? []));
+      } catch (err) {
+        if (cancelled) return;
+        const msg =
+          err instanceof ApiError
+            ? err.body.message
+            : err instanceof Error
+              ? err.message
+              : "Failed to load revisions";
+        setError(msg);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ontologyId]);
+
+  if (!ontologyId) return null;
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700">
+            Revisions Activity
+          </h3>
+          <p className="mt-1 text-xs text-gray-500">
+            Belief-revision audit trail — most recent {stats?.windowSize ?? 0}{" "}
+            decisions for this ontology.
+          </p>
+        </div>
+        {stats && stats.pending > 0 && onShowInbox && (
+          <button
+            type="button"
+            onClick={() => onShowInbox(ontologyId, ontologyName)}
+            className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+          >
+            Show inbox →
+          </button>
+        )}
+      </div>
+
+      {loading && (
+        <p className="mt-4 text-sm text-gray-500">Loading revisions…</p>
+      )}
+      {error && (
+        <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+          {error}
+        </p>
+      )}
+      {!loading && !error && stats && stats.total === 0 && (
+        <p className="mt-4 text-sm text-gray-500">
+          No belief-revision activity recorded yet for this ontology.
+        </p>
+      )}
+      {!loading && !error && stats && stats.total > 0 && (
+        <div className="mt-5 space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <RevisionTile label="Total" value={stats.total} tone="neutral" />
+            <RevisionTile
+              label="Pending"
+              value={stats.pending}
+              tone={stats.pending > 0 ? "warning" : "neutral"}
+              cta={
+                stats.pending > 0 && onShowInbox
+                  ? () => onShowInbox(ontologyId, ontologyName)
+                  : undefined
+              }
+            />
+            <RevisionTile label="Applied" value={stats.applied} tone="success" />
+            <RevisionTile label="Rejected" value={stats.rejected} tone="muted" />
+          </div>
+
+          {Object.keys(stats.verdictCounts).length > 0 && (
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-gray-400 mb-2">
+                Verdict distribution
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(stats.verdictCounts)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([verdict, count]) => (
+                    <span
+                      key={verdict}
+                      className={`text-[11px] px-2 py-1 rounded-md font-medium ${
+                        VERDICT_BADGE[verdict] ??
+                        "bg-slate-50 text-slate-700 border border-slate-200"
+                      }`}
+                    >
+                      {verdict} · {count}
+                    </span>
+                  ))}
+              </div>
+            </div>
+          )}
+
+          {stats.topAgent && (
+            <p className="text-[11px] text-gray-500">
+              Top agent in window: <strong>{stats.topAgent}</strong>
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RevisionTile({
+  label,
+  value,
+  tone,
+  cta,
+}: {
+  label: string;
+  value: number;
+  tone: "neutral" | "success" | "warning" | "muted";
+  cta?: () => void;
+}) {
+  const tones: Record<string, string> = {
+    neutral: "bg-gray-50 border-gray-200 text-gray-800",
+    success: "bg-emerald-50 border-emerald-200 text-emerald-800",
+    warning: "bg-amber-50 border-amber-200 text-amber-800",
+    muted: "bg-rose-50 border-rose-200 text-rose-800",
+  };
+  const baseClasses = `rounded-lg border p-3 ${tones[tone]} ${
+    cta ? "cursor-pointer hover:opacity-90" : ""
+  }`;
+  const inner = (
+    <>
+      <p className="text-[11px] uppercase tracking-wide text-gray-500">
+        {label}
+      </p>
+      <p className="mt-1 text-2xl font-bold">{value}</p>
+    </>
+  );
+  if (cta) {
+    return (
+      <button type="button" onClick={cta} className={`${baseClasses} text-left`}>
+        {inner}
+      </button>
+    );
+  }
+  return <div className={baseClasses}>{inner}</div>;
 }

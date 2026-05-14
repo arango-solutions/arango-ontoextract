@@ -46,6 +46,7 @@ function makeActions(): WorkspaceContextMenuActions {
     setManageImports: jest.fn(),
     setFeedbackLearning: jest.fn(),
     setEdgeRepair: jest.fn(),
+    setRevisionsInbox: jest.fn(),
     exportOntology: jest.fn(),
     retryRun: jest.fn(),
     pipelineRunId: null,

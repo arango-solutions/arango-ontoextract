@@ -36,6 +36,7 @@ function makeActions(
     setManageImports: jest.fn(),
     setFeedbackLearning: jest.fn(),
     setEdgeRepair: jest.fn(),
+    setRevisionsInbox: jest.fn(),
     exportOntology: jest.fn(),
     retryRun: jest.fn(),
     pipelineRunId: null,
@@ -202,6 +203,31 @@ describe("buildCanvasContextMenu", () => {
     expect(actions.setFeedbackLearning).toHaveBeenCalledWith({
       ontologyId: null,
       ontologyName: null,
+    });
+  });
+
+  it("hides Show Pending Revisions when no ontology is selected", () => {
+    const actions = makeActions({ selectedOntologyId: null });
+    const items = buildCanvasContextMenu({}, actions);
+
+    const visibleLabels = items
+      .filter((it) => !it.separator)
+      .map((it) => it.label);
+
+    expect(visibleLabels).not.toContain("Show Pending Revisions");
+  });
+
+  it("shows Show Pending Revisions when an ontology is selected and dispatches with that key", () => {
+    const actions = makeActions({ selectedOntologyId: "ont-active" });
+    const items = buildCanvasContextMenu({}, actions);
+
+    const inbox = items.find((it) => it.label === "Show Pending Revisions");
+    expect(inbox).toBeDefined();
+
+    inbox!.onClick!();
+    expect(actions.setRevisionsInbox).toHaveBeenCalledWith({
+      key: "ont-active",
+      name: "ont-active",
     });
   });
 });
