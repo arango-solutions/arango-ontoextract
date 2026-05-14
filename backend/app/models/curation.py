@@ -55,6 +55,17 @@ class CurationDecisionCreate(BaseModel):
         None,
         description="New data when action is 'edit'; ignored for approve/reject.",
     )
+    decision_latency_ms: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Q.5 — client-measured milliseconds from the previous decision "
+            "(or session start) to this one. Used to compute curator "
+            "throughput without trusting the wall clock between two "
+            "server-side ``created_at`` values, which would conflate "
+            "active curation time with idle / coffee time."
+        ),
+    )
 
 
 class CurationDecisionResponse(BaseModel):
@@ -72,6 +83,7 @@ class CurationDecisionResponse(BaseModel):
     edited_data: dict[str, Any] | None = None
     edit_diff: dict[str, Any] | None = None
     created_at: float
+    decision_latency_ms: int | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -93,6 +105,7 @@ class BatchDecisionItem(BaseModel):
     notes: str | None = None
     issue_reasons: list[CurationIssueReason] = Field(default_factory=list)
     edited_data: dict[str, Any] | None = None
+    decision_latency_ms: int | None = Field(None, ge=0)
 
 
 class BatchDecisionResponse(BaseModel):

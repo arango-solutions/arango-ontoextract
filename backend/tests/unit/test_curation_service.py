@@ -338,3 +338,210 @@ class TestGetDecisions:
         mock_db = MagicMock()
         result = get_decision(mock_db, decision_id="missing")
         assert result is None
+
+
+class TestRecordDecisionLatency:
+    """Q.5 — record_decision must persist the optional decision_latency_ms."""
+
+    @patch("app.services.curation.curation_repo")
+    @patch("app.services.curation.update_entity")
+    def test_persists_latency_when_provided(self, mock_update, mock_repo):
+        from app.services.curation import record_decision
+
+        mock_repo.create_decision.return_value = {"_key": "d1"}
+
+        record_decision(
+            MagicMock(),
+            run_id="run_1",
+            entity_key="cls1",
+            entity_type="class",
+            action="approve",
+            curator_id="curator_a",
+            decision_latency_ms=4_500,
+        )
+
+        decision_doc = mock_repo.create_decision.call_args.kwargs["data"]
+        assert decision_doc["decision_latency_ms"] == 4_500
+
+    @patch("app.services.curation.curation_repo")
+    @patch("app.services.curation.update_entity")
+    def test_persists_none_latency_when_omitted(self, mock_update, mock_repo):
+        from app.services.curation import record_decision
+
+        mock_repo.create_decision.return_value = {"_key": "d2"}
+
+        record_decision(
+            MagicMock(),
+            run_id="run_1",
+            entity_key="cls1",
+            entity_type="class",
+            action="approve",
+            curator_id="curator_a",
+        )
+
+        decision_doc = mock_repo.create_decision.call_args.kwargs["data"]
+        # MUST be present as None so the field is queryable later, rather
+        # than missing on the doc (which would force COALESCE in AQL).
+        assert decision_doc["decision_latency_ms"] is None
+
+
+class TestComputeCurationThroughput:
+    """Q.5 — compute_curation_throughput aggregates active vs wall-clock."""
+
+    def test_returns_empty_when_collection_missing(self):
+        from app.services.curation import compute_curation_throughput
+
+        db = MagicMock()
+        db.has_collection.return_value = False
+
+        result = compute_curation_throughput(db)
+        assert result["decisions_in_window"] == 0
+        assert result["decisions_per_hour"] is None
+        assert result["source"] == "none"
+        assert result["window_seconds"] == 3600
+
+    def test_returns_empty_when_no_decisions_in_window(self):
+        from app.services.curation import compute_curation_throughput
+
+        db = MagicMock()
+        db.has_collection.return_value = True
+        with patch(
+            "app.services.curation.run_aql",
+            return_value=iter([{"count": 0, "active_ms_sum": None, "measured_count": 0}]),
+        ):
+            result = compute_curation_throughput(db, window_seconds=3600)
+        assert result["decisions_in_window"] == 0
+        assert result["source"] == "none"
+
+    def test_uses_active_time_when_latencies_present(self):
+        """Active-time path: 12 decisions, 600 s of active time → 72/h."""
+        from app.services.curation import compute_curation_throughput
+
+        db = MagicMock()
+        db.has_collection.return_value = True
+        with patch(
+            "app.services.curation.run_aql",
+            return_value=iter(
+                [
+                    {
+                        "count": 12,
+                        "active_ms_sum": 600_000,
+                        "measured_count": 12,
+                        "first_ts": 1_700_000_000.0,
+                        "last_ts": 1_700_000_900.0,
+                    }
+                ]
+            ),
+        ):
+            result = compute_curation_throughput(db)
+        assert result["decisions_in_window"] == 12
+        assert result["active_time_seconds"] == pytest.approx(600.0)
+        assert result["decisions_per_hour"] == pytest.approx(72.0)
+        assert result["source"] == "active_time"
+
+    def test_extrapolates_active_time_for_partial_measurements(self):
+        """When only some decisions carry latencies, scale active time
+        up so the rate doesn't undercount the unmeasured rows."""
+        from app.services.curation import compute_curation_throughput
+
+        db = MagicMock()
+        db.has_collection.return_value = True
+        with patch(
+            "app.services.curation.run_aql",
+            return_value=iter(
+                [
+                    {
+                        "count": 10,
+                        "active_ms_sum": 300_000,  # 5 min across measured rows
+                        "measured_count": 5,  # only half had latencies
+                        "first_ts": 1_700_000_000.0,
+                        "last_ts": 1_700_000_900.0,
+                    }
+                ]
+            ),
+        ):
+            result = compute_curation_throughput(db)
+        # Extrapolated active time = 300 s × (10 / 5) = 600 s ⇒ 60/h
+        assert result["active_time_seconds"] == pytest.approx(600.0)
+        assert result["decisions_per_hour"] == pytest.approx(60.0)
+        assert result["source"] == "active_time"
+
+    def test_falls_back_to_wall_clock_when_no_latencies(self):
+        from app.services.curation import compute_curation_throughput
+
+        db = MagicMock()
+        db.has_collection.return_value = True
+        with patch(
+            "app.services.curation.run_aql",
+            return_value=iter(
+                [
+                    {
+                        "count": 6,
+                        "active_ms_sum": None,
+                        "measured_count": 0,
+                        "first_ts": 1_700_000_000.0,
+                        "last_ts": 1_700_000_600.0,  # 600 s wall-clock span
+                    }
+                ]
+            ),
+        ):
+            result = compute_curation_throughput(db)
+        # 6 decisions over 600 s wall-clock ⇒ 36/h
+        assert result["decisions_per_hour"] == pytest.approx(36.0)
+        assert result["source"] == "wall_clock"
+        assert result["active_time_seconds"] is None
+
+    def test_source_none_when_count_one_and_no_latency(self):
+        """A single unmeasured decision yields no rate at all (wall-clock
+        span is zero), but we still report the count."""
+        from app.services.curation import compute_curation_throughput
+
+        db = MagicMock()
+        db.has_collection.return_value = True
+        with patch(
+            "app.services.curation.run_aql",
+            return_value=iter(
+                [
+                    {
+                        "count": 1,
+                        "active_ms_sum": None,
+                        "measured_count": 0,
+                        "first_ts": 1_700_000_000.0,
+                        "last_ts": 1_700_000_000.0,
+                    }
+                ]
+            ),
+        ):
+            result = compute_curation_throughput(db)
+        assert result["decisions_in_window"] == 1
+        assert result["decisions_per_hour"] is None
+        assert result["source"] == "none"
+
+    def test_run_id_filter_passed_to_aql(self):
+        from app.services.curation import compute_curation_throughput
+
+        db = MagicMock()
+        db.has_collection.return_value = True
+        with patch(
+            "app.services.curation.run_aql",
+            return_value=iter([{"count": 0}]),
+        ) as mock_aql:
+            compute_curation_throughput(db, run_id="run_42")
+        bind_vars = mock_aql.call_args.kwargs["bind_vars"]
+        assert bind_vars["run_id"] == "run_42"
+
+    def test_ontology_id_filter_uses_extraction_runs_join(self):
+        from app.services.curation import compute_curation_throughput
+
+        db = MagicMock()
+        db.has_collection.return_value = True
+        with patch(
+            "app.services.curation.run_aql",
+            return_value=iter([{"count": 0}]),
+        ) as mock_aql:
+            compute_curation_throughput(db, ontology_id="onto_99")
+        query = mock_aql.call_args.args[1] if len(mock_aql.call_args.args) >= 2 else mock_aql.call_args.kwargs.get("query")
+        # The AQL must join through extraction_runs to translate
+        # ontology_id → run_id since curation_decisions stores run_id.
+        assert "extraction_runs" in (query or "")
+        assert mock_aql.call_args.kwargs["bind_vars"]["oid"] == "onto_99"

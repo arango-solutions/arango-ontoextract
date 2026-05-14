@@ -62,6 +62,7 @@ def record_decision(
     notes: str | None = None,
     issue_reasons: list[str] | None = None,
     edited_data: dict[str, Any] | None = None,
+    decision_latency_ms: int | None = None,
 ) -> dict[str, Any]:
     """Record a single curation decision and apply the temporal side-effect.
 
@@ -99,6 +100,9 @@ def record_decision(
             _build_edit_diff(current_entity, edited_data or {}) if action == "edit" else None
         ),
         "created_at": time.time(),
+        # Q.5 — None when the client did not supply a measurement (e.g. CLI,
+        # MCP, batch import). Querying for throughput filters these out.
+        "decision_latency_ms": decision_latency_ms,
     }
     saved = curation_repo.create_decision(db, data=decision_doc)
 
@@ -219,6 +223,7 @@ def batch_decide(
                 notes=item.get("notes"),
                 issue_reasons=item.get("issue_reasons"),
                 edited_data=item.get("edited_data"),
+                decision_latency_ms=item.get("decision_latency_ms"),
             )
             results.append(saved)
         except Exception as exc:
@@ -357,6 +362,142 @@ def get_decision(
     if db is None:
         db = get_db()
     return curation_repo.get_decision(db, key=decision_id)
+
+
+def compute_curation_throughput(
+    db: StandardDatabase | None = None,
+    *,
+    run_id: str | None = None,
+    ontology_id: str | None = None,
+    window_seconds: int = 3600,
+) -> dict[str, Any]:
+    """Compute curator throughput as concepts-reviewed-per-hour (Q.5).
+
+    Two strategies, in order of preference:
+
+    1. **Active time** — sum the client-supplied ``decision_latency_ms``
+       across decisions in the window. This is the "real" curation time
+       because the client only ticks the timer between consecutive
+       decisions; idle / break time is not counted.
+    2. **Wall-clock fallback** — if no latencies were recorded (e.g. all
+       decisions came from MCP / batch import), divide the decision
+       count by the wall-clock span between first and last decision.
+
+    Always returns a stable shape so the frontend can render even when
+    there is no data:
+
+        {
+          "decisions_in_window": int,
+          "decisions_per_hour": float | None,
+          "active_time_seconds": float | None,
+          "wall_clock_seconds": float | None,
+          "first_decision_at": float | None,
+          "last_decision_at": float | None,
+          "source": "active_time" | "wall_clock" | "none",
+          "window_seconds": int,
+          "run_id": str | None,
+          "ontology_id": str | None,
+        }
+    """
+    if db is None:
+        db = get_db()
+
+    if not db.has_collection("curation_decisions"):
+        return _throughput_empty(window_seconds, run_id, ontology_id)
+
+    cutoff = time.time() - window_seconds
+
+    # Filter clauses are composed conditionally so the AQL stays simple
+    # for the common case (no run_id / ontology_id) and the optional
+    # ontology_id case still uses the (cheap) ``decisions WHERE run IN
+    # runs OF ontology`` join via ``extraction_runs.ontology_id``.
+    filters = ["d.created_at >= @cutoff"]
+    bind_vars: dict[str, Any] = {"cutoff": cutoff}
+    if run_id:
+        filters.append("d.run_id == @run_id")
+        bind_vars["run_id"] = run_id
+    if ontology_id:
+        filters.append(
+            "d.run_id IN ("
+            "  FOR r IN extraction_runs "
+            "  FILTER HAS(r, 'ontology_id') AND r.ontology_id == @oid "
+            "  RETURN r._key"
+            ")"
+        )
+        bind_vars["oid"] = ontology_id
+
+    query = (
+        "FOR d IN curation_decisions "
+        f"FILTER {' AND '.join(filters)} "
+        "COLLECT AGGREGATE "
+        "  count = COUNT(d), "
+        "  active_ms_sum = SUM(d.decision_latency_ms), "
+        "  measured_count = SUM(d.decision_latency_ms != null ? 1 : 0), "
+        "  first_ts = MIN(d.created_at), "
+        "  last_ts = MAX(d.created_at) "
+        "RETURN { count, active_ms_sum, measured_count, first_ts, last_ts }"
+    )
+    rows = list(run_aql(db, query, bind_vars=bind_vars))
+    row = rows[0] if rows else {}
+    count = int(row.get("count") or 0)
+    if count == 0:
+        return _throughput_empty(window_seconds, run_id, ontology_id)
+
+    measured_count = int(row.get("measured_count") or 0)
+    active_ms_sum = row.get("active_ms_sum")
+    first_ts = row.get("first_ts")
+    last_ts = row.get("last_ts")
+    wall_clock_seconds = (last_ts - first_ts) if (first_ts and last_ts) else None
+
+    decisions_per_hour: float | None = None
+    active_time_seconds: float | None = None
+    source = "none"
+
+    if measured_count > 0 and active_ms_sum and active_ms_sum > 0:
+        # Scale the measured-only active time up to the full count so a
+        # mix of measured + unmeasured decisions still produces a sane
+        # rate (rather than under-counting when a few rows happen to
+        # have null latencies).
+        active_time_seconds = (active_ms_sum / 1000.0) * (count / measured_count)
+        if active_time_seconds > 0:
+            decisions_per_hour = count / (active_time_seconds / 3600.0)
+            source = "active_time"
+
+    if decisions_per_hour is None and wall_clock_seconds and wall_clock_seconds > 0:
+        decisions_per_hour = count / (wall_clock_seconds / 3600.0)
+        source = "wall_clock"
+
+    return {
+        "decisions_in_window": count,
+        "decisions_per_hour": decisions_per_hour,
+        "active_time_seconds": active_time_seconds,
+        "wall_clock_seconds": wall_clock_seconds,
+        "first_decision_at": first_ts,
+        "last_decision_at": last_ts,
+        "source": source,
+        "window_seconds": window_seconds,
+        "run_id": run_id,
+        "ontology_id": ontology_id,
+    }
+
+
+def _throughput_empty(
+    window_seconds: int,
+    run_id: str | None,
+    ontology_id: str | None,
+) -> dict[str, Any]:
+    return {
+        "decisions_in_window": 0,
+        "decisions_per_hour": None,
+        "active_time_seconds": None,
+        "wall_clock_seconds": None,
+        "first_decision_at": None,
+        "last_decision_at": None,
+        "source": "none",
+        "window_seconds": window_seconds,
+        "run_id": run_id,
+        "ontology_id": ontology_id,
+    }
 
 
 def _get_current_by_key(

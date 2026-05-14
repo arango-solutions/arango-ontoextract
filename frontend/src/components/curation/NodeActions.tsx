@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { api } from "@/lib/api-client";
+import { recordCurationDecision } from "@/lib/curationThroughput";
 import type { CurationDecisionType } from "@/types/curation";
 
 interface NodeActionsProps {
@@ -30,7 +30,7 @@ export default function NodeActions({
       onDecision?.(entityKey, decision);
 
       try {
-        await api.post("/api/v1/curation/decide", {
+        await recordCurationDecision({
           run_id: runId,
           entity_key: entityKey,
           entity_type: entityType,

@@ -6,6 +6,11 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { api, ApiError } from "@/lib/api-client";
 import { withBasePath } from "@/lib/base-path";
+import {
+  recordCurationDecision,
+  resetCurationSession,
+} from "@/lib/curationThroughput";
+import CurationThroughputCounter from "@/components/curation/CurationThroughputCounter";
 import type {
   StagingGraph,
   OntologyClass,
@@ -106,6 +111,14 @@ function CurationPageInner() {
   useEffect(() => {
     fetchGraph();
   }, [fetchGraph]);
+
+  // Q.5 — start a fresh throughput session on (re-)entry to the curation
+  // page. This means the "concepts/hour" badge measures *this* sitting
+  // rather than carrying a stale 0.04/hr from a tab someone left open
+  // overnight.
+  useEffect(() => {
+    resetCurationSession();
+  }, [runId]);
 
   const selectedNode = useMemo(
     () => graph?.classes.find((c) => c._key === selectedNodeKey) ?? null,
@@ -220,15 +233,13 @@ function CurationPageInner() {
           ),
         };
       });
-      api
-        .post("/api/v1/curation/decide", {
-          run_id: runId,
-          entity_key: key,
-          entity_type: "class",
-          decision: "edit",
-          after_state: { description },
-        })
-        .catch(() => {});
+      recordCurationDecision({
+        run_id: runId,
+        entity_key: key,
+        entity_type: "class",
+        decision: "edit",
+        after_state: { description },
+      }).catch(() => {});
     },
     [runId],
   );
@@ -342,6 +353,7 @@ function CurationPageInner() {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            <CurationThroughputCounter />
             <div className="flex rounded-lg border border-gray-200 overflow-hidden">
               <button
                 onClick={() => setColorMode("confidence")}

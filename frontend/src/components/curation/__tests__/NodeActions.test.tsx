@@ -62,7 +62,7 @@ describe("NodeActions", () => {
     });
   });
 
-  it("calls API with correct payload on reject", async () => {
+  it("calls API with correct payload on reject (including Q.5 latency)", async () => {
     mockFetchSuccess();
     render(
       <NodeActions
@@ -78,17 +78,24 @@ describe("NodeActions", () => {
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(
         expect.stringContaining("/api/v1/curation/decide"),
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({
-            run_id: "run_abc",
-            entity_key: "cls_001",
-            entity_type: "class",
-            decision: "reject",
-          }),
-        }),
+        expect.objectContaining({ method: "POST" }),
       );
     });
+
+    const callArgs = (global.fetch as jest.Mock).mock.calls[0];
+    const body = JSON.parse(callArgs[1].body);
+    expect(body).toEqual(
+      expect.objectContaining({
+        run_id: "run_abc",
+        entity_key: "cls_001",
+        entity_type: "class",
+        decision: "reject",
+      }),
+    );
+    // Q.5: every decide call carries a non-negative latency so the
+    // backend can compute concepts/hour.
+    expect(typeof body.decision_latency_ms).toBe("number");
+    expect(body.decision_latency_ms).toBeGreaterThanOrEqual(0);
   });
 
   it("shows error when API call fails", async () => {

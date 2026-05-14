@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { api } from "@/lib/api-client";
+import { recordCurationBatchDecision } from "@/lib/curationThroughput";
 import type { CurationDecisionType } from "@/types/curation";
 
 interface BatchActionsProps {
@@ -31,7 +31,7 @@ export default function BatchActions({
       onBatchDecision?.(selectedKeys, decision);
 
       try {
-        await api.post("/api/v1/curation/batch", {
+        await recordCurationBatchDecision({
           run_id: runId,
           decisions: selectedKeys.map((key) => ({
             entity_key: key,

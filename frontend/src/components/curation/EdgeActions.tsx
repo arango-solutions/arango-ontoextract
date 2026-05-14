@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { api } from "@/lib/api-client";
+import { recordCurationDecision } from "@/lib/curationThroughput";
 import type { EdgeType, CurationDecisionType } from "@/types/curation";
 
 interface EdgeActionsProps {
@@ -42,7 +42,7 @@ export default function EdgeActions({
       onDecision?.(edgeKey, decision);
 
       try {
-        await api.post("/api/v1/curation/decide", {
+        await recordCurationDecision({
           run_id: runId,
           entity_key: edgeKey,
           entity_type: "edge",
@@ -64,7 +64,7 @@ export default function EdgeActions({
     onTypeChange?.(edgeKey, selectedType);
 
     try {
-      await api.post("/api/v1/curation/decide", {
+      await recordCurationDecision({
         run_id: runId,
         entity_key: edgeKey,
         entity_type: "edge",

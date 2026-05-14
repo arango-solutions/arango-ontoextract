@@ -45,6 +45,7 @@ async def record_decision(body: CurationDecisionCreate) -> dict[str, Any]:
         notes=body.notes,
         issue_reasons=[reason.value for reason in body.issue_reasons],
         edited_data=body.edited_data,
+        decision_latency_ms=body.decision_latency_ms,
     )
     return result
 
@@ -61,12 +62,38 @@ async def batch_decide(body: BatchDecisionRequest) -> dict[str, Any]:
             "notes": d.notes,
             "issue_reasons": [reason.value for reason in d.issue_reasons],
             "edited_data": d.edited_data,
+            "decision_latency_ms": d.decision_latency_ms,
         }
         for d in body.decisions
     ]
 
     result = curation_svc.batch_decide(run_id=body.run_id, decisions=decisions)
     return result
+
+
+@router.get("/throughput")
+async def curation_throughput(
+    run_id: str | None = Query(None, description="Filter by extraction run ID"),
+    ontology_id: str | None = Query(None, description="Filter by ontology ID"),
+    window_seconds: int = Query(
+        3600,
+        ge=60,
+        le=86400,
+        description="Trailing window over which to compute throughput",
+    ),
+) -> dict[str, Any]:
+    """Q.5 — return curator throughput as concepts-reviewed-per-hour.
+
+    Aggregates ``curation_decisions.decision_latency_ms`` over the window
+    and divides by the active curation time. Falls back to wall-clock
+    span between first and last decision when no latency was recorded
+    (e.g. decisions submitted via MCP / CLI).
+    """
+    return curation_svc.compute_curation_throughput(
+        run_id=run_id,
+        ontology_id=ontology_id,
+        window_seconds=window_seconds,
+    )
 
 
 @router.get("/decisions")

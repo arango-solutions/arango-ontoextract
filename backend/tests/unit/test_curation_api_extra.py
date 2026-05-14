@@ -8,6 +8,7 @@ import pytest
 
 from app.api.curation import (
     batch_decide,
+    curation_throughput,
     execute_merge,
     get_curation_diff,
     get_decision,
@@ -156,6 +157,74 @@ class TestCurationRoutes:
         assert len(diff["added"]) == 1
         assert len(diff["removed"]) == 1
         assert len(diff["changed"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_record_decision_forwards_latency(self):
+        """Q.5 — latency must reach the service so it is persisted."""
+        body = CurationDecisionCreate(
+            run_id="r1",
+            entity_key="c1",
+            entity_type=EntityType.CLASS,
+            action=CurationAction.APPROVE,
+            curator_id="u1",
+            decision_latency_ms=2_750,
+        )
+        with patch(
+            "app.api.curation.curation_svc.record_decision",
+            return_value={"ok": True},
+        ) as mock_record:
+            await record_decision(body)
+        assert mock_record.call_args.kwargs["decision_latency_ms"] == 2_750
+
+    @pytest.mark.asyncio
+    async def test_batch_decide_forwards_latency(self):
+        body = BatchDecisionRequest(
+            run_id="r1",
+            decisions=[
+                BatchDecisionItem(
+                    entity_key="c1",
+                    entity_type=EntityType.CLASS,
+                    action=CurationAction.APPROVE,
+                    curator_id="u1",
+                    decision_latency_ms=1_000,
+                )
+            ],
+        )
+        with patch(
+            "app.api.curation.curation_svc.batch_decide",
+            return_value={"processed": 1},
+        ) as mock_batch:
+            await batch_decide(body)
+        assert mock_batch.call_args.kwargs["decisions"][0]["decision_latency_ms"] == 1_000
+
+    @pytest.mark.asyncio
+    async def test_throughput_endpoint_forwards_filters(self):
+        """Q.5 — the /throughput route must forward query params verbatim
+        and return the service payload."""
+        with patch(
+            "app.api.curation.curation_svc.compute_curation_throughput",
+            return_value={
+                "decisions_in_window": 5,
+                "decisions_per_hour": 30.0,
+                "active_time_seconds": 600.0,
+                "wall_clock_seconds": 600.0,
+                "first_decision_at": 1.0,
+                "last_decision_at": 2.0,
+                "source": "active_time",
+                "window_seconds": 1800,
+                "run_id": "r1",
+                "ontology_id": "onto1",
+            },
+        ) as mock_compute:
+            payload = await curation_throughput(
+                run_id="r1",
+                ontology_id="onto1",
+                window_seconds=1800,
+            )
+        assert payload["decisions_per_hour"] == 30.0
+        assert payload["source"] == "active_time"
+        kwargs = mock_compute.call_args.kwargs
+        assert kwargs == {"run_id": "r1", "ontology_id": "onto1", "window_seconds": 1800}
 
     @pytest.mark.asyncio
     async def test_get_promotion_status_handles_missing_and_present(self):
