@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.config import settings
 from app.db.client import get_db
 from app.services.confidence_decay import apply_confidence_decay
+from app.services.consolidation import run_consolidation
 from app.services.edge_dedup import (
     DEDUPABLE_COLLECTIONS,
     dedupe_live_edges,
@@ -19,6 +20,11 @@ from app.services.edge_dedup import (
 from app.services.edge_repair import repair_orphan_object_property_ranges
 from app.services.feedback_learning import build_feedback_learning_examples
 from app.services.ontology_rule_engine import evaluate_rules
+from app.services.revision_safety import (
+    get_default_limiter,
+    list_recent_jobs,
+    load_cursor,
+)
 
 log = logging.getLogger(__name__)
 
@@ -326,3 +332,112 @@ async def feedback_learning_artifacts(
     except Exception as exc:
         log.exception("failed to build feedback-learning artifacts")
         raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
+# ---------------------------------------------------------------------------
+# Belief-revision consolidation (Stream 11 IBR.17)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/ontology/{ontology_id}/consolidate")
+async def consolidate_ontology(
+    ontology_id: str,
+    dry_run: bool = Query(
+        default=False,
+        description=(
+            "When True, returns the planned actions without writing any "
+            "revision_meta rows or applying decay. Use to preview impact "
+            "before kicking off the real run."
+        ),
+    ),
+    job_key: str | None = Query(
+        default=None,
+        description=(
+            "Optional explicit job key. Pass an existing key to resume a "
+            "checkpointed job (see GET /admin/consolidation-jobs)."
+        ),
+    ),
+    stale_after_days: float | None = Query(
+        default=None,
+        gt=0,
+        description=(
+            "Override the stale-belief threshold. Defaults to the "
+            "configured decay half-life."
+        ),
+    ),
+    stale_inbox_limit: int = Query(
+        default=200,
+        ge=1,
+        le=5000,
+        description="Cap on the number of inbox rows written for stale beliefs.",
+    ),
+) -> dict[str, Any]:
+    """Run a consolidation pass on one ontology (rules + decay + stale).
+
+    Three sequential stages:
+      1. Re-runs the ontology rule engine and writes one
+         FLAG_FOR_CURATION revision_meta row per violation.
+      2. Applies confidence decay to live classes (already-existing
+         service; respects the global decay flag unless dry_run=True
+         which forces a preview).
+      3. Scans for stale beliefs (live classes not re-evidenced
+         within the threshold) and writes one FLAG_FOR_CURATION
+         row per stale class.
+
+    Resumable via job_key cursor (consolidation_jobs collection);
+    safe to dry-run before hitting for real.
+    """
+    try:
+        report = run_consolidation(
+            ontology_id,
+            dry_run=dry_run,
+            job_key=job_key,
+            stale_after_days=stale_after_days,
+            stale_inbox_limit=stale_inbox_limit,
+        )
+        return report.to_dict()
+    except Exception as exc:
+        log.exception("consolidation failed for ontology %s", ontology_id)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
+@router.get("/consolidation-jobs")
+async def list_consolidation_jobs(
+    ontology_id: str | None = Query(
+        default=None,
+        description="Optional ontology filter; omit for global recent runs.",
+    ),
+    limit: int = Query(default=25, ge=1, le=200),
+) -> dict[str, Any]:
+    """List the most-recent consolidation jobs (newest-first).
+
+    Powers the admin dashboard's "recent runs" panel and gives operators
+    the job_key needed to resume a partially-completed job.
+    """
+    try:
+        return {
+            "data": list_recent_jobs(ontology_id=ontology_id, limit=limit),
+            "ontology_id": ontology_id,
+        }
+    except Exception as exc:
+        log.exception("failed to list consolidation jobs")
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
+@router.get("/consolidation-jobs/{job_key}")
+async def get_consolidation_job(job_key: str) -> dict[str, Any]:
+    """Fetch one consolidation job's checkpointed state by ``job_key``."""
+    cursor = load_cursor(job_key)
+    if cursor is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_key!r} not found")
+    return cursor.to_doc()
+
+
+@router.get("/belief-revision/circuit-breaker")
+async def get_circuit_breaker_state() -> dict[str, Any]:
+    """Return a snapshot of the LLM-revision-agent circuit-breaker state.
+
+    Powers the dashboard tile that warns operators when the breaker
+    is tripped (or close to it).
+    """
+    return get_default_limiter().current_rate()
