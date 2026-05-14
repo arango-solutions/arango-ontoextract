@@ -64,6 +64,27 @@ repos:
         types_or: [ts, tsx, javascript, jsx]
         files: ^frontend/
 
+      # ---------------------------------------------------------------------
+      # BYOC parity: keep root requirements.txt in lock-step with
+      # backend/pyproject.toml [project].dependencies. The hook fires whenever
+      # pyproject.toml is staged and regenerates requirements.txt. If that
+      # changes the file, pre-commit fails with the standard "files were
+      # modified by this hook" message — the user re-stages and re-commits
+      # (same UX as ruff-format). We deliberately do NOT `git add` from the
+      # hook because pre-commit's unstaged-stash mechanism conflicts with
+      # in-hook staging when requirements.txt has unstaged changes.
+      # CI still runs `sync-requirements.sh --check` as a backstop in case
+      # the hook is bypassed with --no-verify.
+      # ---------------------------------------------------------------------
+      - id: sync-requirements
+        name: Sync requirements.txt from backend/pyproject.toml (BYOC parity)
+        # Prepend backend/.venv to PATH so the script's `python3` resolves to
+        # the project's 3.13 venv (system python3 on macOS is 3.9 → no tomllib).
+        entry: bash -c 'PATH="$PWD/backend/.venv/bin:$PATH" bash scripts/sync-requirements.sh'
+        language: system
+        pass_filenames: false
+        files: ^backend/pyproject\.toml$
+
   # =======================================================================
   # Tier B — pre-push only. Runs once per `git push`, not per commit.
   # =======================================================================
