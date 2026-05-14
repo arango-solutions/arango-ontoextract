@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import type { OntologyScorecard } from "@/types/curation";
 import { withBasePath } from "@/lib/base-path";
+import QualitySparkline from "@/components/dashboard/QualitySparkline";
 
 interface Props {
   ontologies: OntologyScorecard[];
@@ -24,10 +25,21 @@ function fmt(val: number | null, decimals = 2): string {
   return val.toFixed(decimals);
 }
 
-const COLUMNS: { key: SortKey; label: string; align?: string }[] = [
+/**
+ * Column descriptors. ``sortable: false`` columns (currently the Q.3
+ * trend sparkline) render a header cell that does not toggle the sort
+ * order — sorting on a multi-snapshot timeseries doesn't have a
+ * meaningful single-key projection.
+ */
+type ColumnDef =
+  | { key: SortKey; label: string; align?: string; sortable?: true }
+  | { key: "trend"; label: string; align?: string; sortable: false };
+
+const COLUMNS: ColumnDef[] = [
   { key: "name", label: "Name" },
   { key: "tier", label: "Tier" },
   { key: "health_score", label: "Health" },
+  { key: "trend", label: "Trend", sortable: false },
   { key: "avg_confidence", label: "Confidence" },
   { key: "avg_faithfulness", label: "Faithfulness" },
   { key: "avg_semantic_validity", label: "Sem. Validity" },
@@ -84,18 +96,25 @@ export default function OntologyScoreTable({ ontologies, selectedId, onSelect }:
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
-              {COLUMNS.map((col) => (
-                <th
-                  key={col.key}
-                  onClick={() => toggleSort(col.key)}
-                  className={`px-3 py-2 text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:text-gray-700 whitespace-nowrap ${col.align === "right" ? "text-right" : "text-left"}`}
-                >
-                  {col.label}
-                  {sortKey === col.key && (
-                    <span className="ml-1">{sortAsc ? "\u25B2" : "\u25BC"}</span>
-                  )}
-                </th>
-              ))}
+              {COLUMNS.map((col) => {
+                const sortable = col.sortable !== false;
+                return (
+                  <th
+                    key={col.key}
+                    onClick={
+                      sortable ? () => toggleSort(col.key as SortKey) : undefined
+                    }
+                    className={`px-3 py-2 text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap ${
+                      sortable ? "cursor-pointer hover:text-gray-700" : ""
+                    } ${col.align === "right" ? "text-right" : "text-left"}`}
+                  >
+                    {col.label}
+                    {sortable && sortKey === col.key && (
+                      <span className="ml-1">{sortAsc ? "\u25B2" : "\u25BC"}</span>
+                    )}
+                  </th>
+                );
+              })}
               <th className="px-3 py-2 text-xs font-medium text-gray-500 uppercase tracking-wide text-center whitespace-nowrap">
                 Actions
               </th>
@@ -128,6 +147,9 @@ export default function OntologyScoreTable({ ontologies, selectedId, onSelect }:
                   <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${healthBg(o.health_score)}`}>
                     {o.health_score ?? "-"}
                   </span>
+                </td>
+                <td className="px-3 py-2.5">
+                  <QualitySparkline ontologyId={o.ontology_id} metric="health_score" />
                 </td>
                 <td className="px-3 py-2.5 text-gray-600">{fmt(o.avg_confidence)}</td>
                 <td className="px-3 py-2.5 text-gray-600">{fmt(o.avg_faithfulness)}</td>

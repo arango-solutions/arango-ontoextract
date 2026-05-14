@@ -4,6 +4,19 @@ export interface QualityHistorySnapshot {
   _key?: string;
   ontology_id: string;
   timestamp: string;
+  /**
+   * Where the snapshot came from. Q.2 added event-tagged sources so
+   * the trend chart can distinguish "user opened the report" from
+   * "extraction completed" and "promotion happened":
+   *   - "quality_api"           — recorded on each report view
+   *   - "extraction_completion" — recorded after a successful extraction
+   *   - "promotion"             — recorded after staging→production
+   *   - "manual"                — operator/MCP triggered
+   */
+  source?: string;
+  /** When source is "extraction_completion" or "promotion", this links
+   *  the snapshot to the extraction run that caused it. */
+  run_id?: string | null;
   health_score?: number | null;
   avg_confidence?: number | null;
   avg_faithfulness?: number | null;
