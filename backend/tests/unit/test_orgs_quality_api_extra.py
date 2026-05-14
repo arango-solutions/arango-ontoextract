@@ -22,7 +22,12 @@ from app.api.orgs import (
     update_organization,
     update_user_role,
 )
-from app.api.quality import quality_for_ontology, quality_history_for_ontology
+from app.api.quality import (
+    RecallRequest,
+    quality_for_ontology,
+    quality_history_for_ontology,
+    quality_recall,
+)
 
 
 class TestOrgRoutes:
@@ -161,4 +166,63 @@ class TestQualityRoutes:
             assert mock_history.call_args.kwargs["limit"] == 5
             with pytest.raises(HTTPException) as exc:
                 await quality_history_for_ontology("onto1")
+        assert exc.value.status_code == 500
+
+    @pytest.mark.asyncio
+    async def test_quality_recall_forwards_body_and_returns_payload(self):
+        """Q.4 — happy path: API hands the parsed body to the service and
+        returns the report unchanged."""
+        body = RecallRequest(
+            ontology_id="onto1",
+            reference_content="@prefix : <http://x#> . :A a <http://www.w3.org/2002/07/owl#Class> .",
+            rdf_format="turtle",
+            match_threshold=0.9,
+            include_object_properties=False,
+        )
+        report = {"summary": {"recall": 0.5}}
+        with (
+            patch("app.api.quality.get_db", return_value=MagicMock()),
+            patch("app.api.quality.compute_recall", return_value=report) as mock_compute,
+        ):
+            result = await quality_recall(body)
+        assert result is report
+        kwargs = mock_compute.call_args.kwargs
+        assert kwargs["ontology_id"] == "onto1"
+        assert kwargs["match_threshold"] == 0.9
+        assert kwargs["include_object_properties"] is False
+        assert kwargs["rdf_format"] == "turtle"
+
+    @pytest.mark.asyncio
+    async def test_quality_recall_translates_value_error_to_400(self):
+        """A bad ``rdf_format`` (or unparseable reference) must surface as
+        400, not 500 — this is user input, not a server bug."""
+        body = RecallRequest(
+            ontology_id="onto1",
+            reference_content="this is garbage",
+            rdf_format="xml",
+        )
+        with (
+            patch("app.api.quality.get_db", return_value=MagicMock()),
+            patch(
+                "app.api.quality.compute_recall",
+                side_effect=ValueError("Failed to parse reference ontology as xml"),
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await quality_recall(body)
+        assert exc.value.status_code == 400
+        assert "Failed to parse" in str(exc.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_quality_recall_unexpected_failure_returns_500(self):
+        body = RecallRequest(
+            ontology_id="onto1",
+            reference_content="@prefix : <http://x#> .",
+        )
+        with (
+            patch("app.api.quality.get_db", return_value=MagicMock()),
+            patch("app.api.quality.compute_recall", side_effect=RuntimeError("boom")),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await quality_recall(body)
         assert exc.value.status_code == 500

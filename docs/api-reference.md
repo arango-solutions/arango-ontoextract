@@ -352,9 +352,77 @@ Upload a file for processing. The file is parsed, chunked, and embedded asynchro
 | `GET` | `/api/v1/quality/{ontology_id}` | Structural + extraction quality merge for one ontology | Yes |
 | `GET` | `/api/v1/quality/{ontology_id}/evaluation` | Qualitative strengths / weaknesses | Yes |
 | `GET` | `/api/v1/quality/{ontology_id}/class-scores` | Per-class faithfulness and semantic validity | Yes |
-| `GET` | `/api/v1/quality/{ontology_id}/history?limit=50` | Timestamped quality snapshots for trend views | Yes |
+| `GET` | `/api/v1/quality/{ontology_id}/history?limit=50` | Timestamped quality snapshots for trend views (Q.2) | Yes |
+| `POST` | `/api/v1/quality/recall` | Compare an ontology to a gold-standard OWL/TTL document (Q.4) | Yes |
 
-**Note:** `GET /api/v1/quality/summary` was removed; use `GET /api/v1/quality/dashboard` and read the `summary` field. `POST .../recall` appears in the PRD but is not implemented in the current router.
+**Note:** `GET /api/v1/quality/summary` was removed; use `GET /api/v1/quality/dashboard` and read the `summary` field.
+
+### POST /api/v1/quality/recall
+
+Compute precision / recall / F1 of an extracted ontology against a
+user-supplied reference document, using fuzzy label matching so
+superficial differences (case, plural, punctuation, camelCase vs
+snake_case) don't artificially lower recall.
+
+**Request Body:**
+
+```json
+{
+  "ontology_id": "onto_banking",
+  "reference_content": "@prefix : <http://x#> . :Person a <owl#Class> .",
+  "rdf_format": "turtle",
+  "match_threshold": 0.85,
+  "include_object_properties": true
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `ontology_id` | string | Yes | Extracted ontology to score. |
+| `reference_content` | string | Yes | Raw OWL / TTL / RDF body. Sent inline (not multipart). |
+| `rdf_format` | enum | No | `turtle` (default), `xml` (RDF/XML), `nt`, `json-ld`. |
+| `match_threshold` | float | No | 0.0–1.0; default 0.85. 1.0 = exact post-normalisation match. |
+| `include_object_properties` | bool | No | Default `true`. Set `false` for class-only comparison. |
+
+**Response (abridged):**
+
+```json
+{
+  "ontology_id": "onto_banking",
+  "match_threshold": 0.85,
+  "rdf_format": "turtle",
+  "summary": {
+    "reference_count": 3, "extracted_count": 3, "matched_count": 2,
+    "recall": 0.6667, "precision": 0.6667, "f1": 0.6667
+  },
+  "classes": {
+    "summary": {"reference_count": 3, "extracted_count": 3, "matched_count": 2},
+    "matched": [{"reference_label": "Person", "extracted_label": "Person", "similarity": 1.0, ...}],
+    "missed": [{"reference_label": "Checking Account", ...}],
+    "false_positives": [{"extracted_label": "Vehicle", ...}]
+  },
+  "object_properties": { ... }
+}
+```
+
+A `400` is returned when `reference_content` cannot be parsed under the
+chosen `rdf_format` (this is user input, not a server bug). `500` is
+returned for unexpected backend failures.
+
+### GET /api/v1/curation/throughput
+
+Q.5 — curator throughput for a window:
+
+| Query param | Type | Description |
+|-------------|------|-------------|
+| `run_id` | string | Optional — restrict to one extraction run. |
+| `ontology_id` | string | Optional — restrict via the `extraction_runs.ontology_id` join. |
+| `window_seconds` | int (60–86_400) | Trailing window. Default 3600 (1 h). |
+
+Response includes `decisions_in_window`, `decisions_per_hour`,
+`active_time_seconds`, `wall_clock_seconds`, and a `source` flag of
+`"active_time"` / `"wall_clock"` / `"none"` describing which strategy
+produced the rate.
 
 ---
 

@@ -20,6 +20,7 @@ import {
   loadQualityHistory,
   type QualityHistorySnapshot,
 } from "@/lib/qualityHistory";
+import RecallComparisonOverlay from "@/components/dashboard/RecallComparisonOverlay";
 import {
   PER_ONTOLOGY_QUALITY_DIMENSIONS,
   healthBgColor,
@@ -85,6 +86,10 @@ export default function QualityReportOverlay({
   const [history, setHistory] = useState<QualityHistorySnapshot[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  // Q.4 — gold-standard recall comparison overlay (mounted lazily so
+  // ``rdflib``-equivalent client weight is not loaded for users who
+  // never open it).
+  const [recallOpen, setRecallOpen] = useState(false);
   const ontologyId = data.ontology_id;
 
   const loadHistory = useCallback(async () => {
@@ -133,14 +138,34 @@ export default function QualityReportOverlay({
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm">
       <div className="relative bg-white rounded-2xl shadow-2xl w-[90vw] max-w-[900px] max-h-[90vh] overflow-y-auto p-8">
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute top-4 right-4 text-gray-400 hover:text-gray-700 text-2xl leading-none"
-          aria-label="Close"
-        >
-          ×
-        </button>
+        <div className="absolute top-4 right-4 flex items-center gap-2">
+          {ontologyId && (
+            <button
+              type="button"
+              onClick={() => setRecallOpen(true)}
+              className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+              data-testid="open-recall-overlay"
+              title="Compare this ontology to a reference OWL/TTL file"
+            >
+              Compare to gold-standard
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-700 text-2xl leading-none"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        {recallOpen && ontologyId && (
+          <RecallComparisonOverlay
+            ontologyId={ontologyId}
+            ontologyName={name}
+            onClose={() => setRecallOpen(false)}
+          />
+        )}
 
         <div className="space-y-8">
           {data.health_score != null && (

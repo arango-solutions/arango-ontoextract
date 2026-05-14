@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from app.db.client import get_db
 from app.services.quality_metrics import (
@@ -16,6 +17,7 @@ from app.services.quality_metrics import (
     get_qualitative_evaluation,
     get_quality_history,
 )
+from app.services.quality_recall import compute_recall
 
 log = logging.getLogger(__name__)
 
@@ -79,4 +81,70 @@ async def class_scores(ontology_id: str) -> dict[str, Any]:
         return {"ontology_id": ontology_id, "scores": scores}
     except Exception as exc:
         log.exception("Failed to get class scores for ontology %s", ontology_id)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
+class RecallRequest(BaseModel):
+    """Request body for ``POST /quality/recall`` (Q.4)."""
+
+    ontology_id: str = Field(..., description="ID of the extracted ontology to score.")
+    reference_content: str = Field(
+        ...,
+        description=(
+            "Raw OWL/TTL/RDF content to compare against. Submit the file body "
+            "as a string; this avoids the operational complexity of multipart "
+            "file uploads through the proxy and keeps MCP tooling parity easy."
+        ),
+    )
+    rdf_format: str = Field(
+        "turtle",
+        description=(
+            "rdflib format hint: ``turtle`` (default), ``xml`` (RDF/XML), "
+            "``nt``, ``json-ld``."
+        ),
+    )
+    match_threshold: float = Field(
+        0.85,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum normalised label similarity for two concepts to be "
+            "considered the same. 1.0 = exact post-normalisation match. "
+            "Default 0.85 catches plural/case/punctuation differences "
+            "without producing many false positives."
+        ),
+    )
+    include_object_properties: bool = Field(
+        True,
+        description=(
+            "Include OWL ObjectProperty recall in the report. Set to ``false`` "
+            "for class-only comparison against reference taxonomies that do "
+            "not declare relationships."
+        ),
+    )
+
+
+@router.post("/recall")
+async def quality_recall(body: RecallRequest) -> dict[str, Any]:
+    """Q.4 — compute recall (and precision / F1) of an extracted ontology
+    against a user-supplied gold-standard OWL/TTL document.
+
+    See ``app/services/quality_recall.compute_recall`` for the matching
+    algorithm and report shape.
+    """
+    try:
+        db = get_db()
+        return compute_recall(
+            db,
+            ontology_id=body.ontology_id,
+            reference_content=body.reference_content,
+            rdf_format=body.rdf_format,
+            match_threshold=body.match_threshold,
+            include_object_properties=body.include_object_properties,
+        )
+    except ValueError as exc:
+        # Bad rdf_format / parse failure / out-of-range threshold.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        log.exception("Failed to compute recall for ontology %s", body.ontology_id)
         raise HTTPException(status_code=500, detail="Internal server error") from exc
