@@ -37,7 +37,13 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
     "pytest-cov>=6.0",
-    "ruff>=0.9",
+    # Pinned to the version baked into .pre-commit-config.yaml's
+    # ruff-pre-commit rev so a fresh `pip install -e .[dev]` (used by both
+    # local dev setup and CI's `Lint Backend` job) gets the same ruff that
+    # the local pre-commit hook would run. Otherwise CI lint can pass on
+    # one ruff version while the hook fails on another. Bump in lock-step
+    # with the rev in .pre-commit-config.yaml.
+    "ruff==0.15.12",
     "mypy>=1.14",
     "types-requests>=2.32",
     # Drives .pre-commit-config.yaml (Tier A pre-commit + Tier B pre-push hooks).

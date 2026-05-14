@@ -99,6 +99,19 @@ repos:
         # Only triggers when frontend code is being pushed.
         files: ^frontend/.*\.(ts|tsx|js|jsx|mjs|cjs|json)$
 
+      # tsc --noEmit catches type errors that ESLint cannot — generic constraint
+      # violations, missing properties on union narrowings, declaration-merging
+      # bugs, etc. Caught locally before push so we do not burn a CI cycle on
+      # something the IDE already knew about. Triggers only when TS source
+      # changes; pure .js / .json edits skip it.
+      - id: tsc-noemit
+        name: TypeScript type-check (pre-push)
+        entry: bash -c 'cd frontend && npx tsc --noEmit'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        files: ^frontend/.*\.(ts|tsx)$
+
       - id: pytest-unit
         name: Pytest unit tests (pre-push)
         entry: bash -c 'cd backend && .venv/bin/pytest tests/unit/ -q'
