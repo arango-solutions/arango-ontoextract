@@ -1,0 +1,29 @@
+[
+  {
+    "_key": "ontology_dependencies",
+    "title": "Ontology Dependencies (Full DAG)",
+    "name": "Ontology Dependencies (Full DAG)",
+    "description": "Every live `owl:imports` edge across the registry plus every endpoint ontology. Powers the full dependency overview.",
+    "content": "FOR e IN imports\n  FILTER e.expired == 9223372036854775807\n  LET src = DOCUMENT(e._from)\n  LET dst = DOCUMENT(e._to)\n  RETURN {\n    from_key: src._key,\n    from_name: src.name,\n    to_key: dst._key,\n    to_name: dst.name,\n    edge_key: e._key,\n    import_iri: e.import_iri,\n    created: e.created\n  }",
+    "value": "FOR e IN imports\n  FILTER e.expired == 9223372036854775807\n  LET src = DOCUMENT(e._from)\n  LET dst = DOCUMENT(e._to)\n  RETURN {\n    from_key: src._key,\n    from_name: src.name,\n    to_key: dst._key,\n    to_name: dst.name,\n    edge_key: e._key,\n    import_iri: e.import_iri,\n    created: e.created\n  }",
+    "bindVariables": {}
+  },
+  {
+    "_key": "upstream_ontologies",
+    "title": "Upstream Ontologies (Ancestors)",
+    "name": "Upstream Ontologies (Ancestors)",
+    "description": "What does this ontology depend on? Transitive OUTBOUND traversal of `imports` from the given root, up to 10 hops.",
+    "content": "FOR v, e, p IN 1..10 OUTBOUND CONCAT('ontology_registry/', @ontology_id) GRAPH 'ontology_imports'\n  OPTIONS { uniqueVertices: 'global', bfs: true }\n  FILTER e.expired == 9223372036854775807\n  RETURN {\n    _key: v._key,\n    name: v.name,\n    tier: v.tier,\n    status: v.status,\n    depth: LENGTH(p.edges),\n    via_iri: e.import_iri\n  }",
+    "value": "FOR v, e, p IN 1..10 OUTBOUND CONCAT('ontology_registry/', @ontology_id) GRAPH 'ontology_imports'\n  OPTIONS { uniqueVertices: 'global', bfs: true }\n  FILTER e.expired == 9223372036854775807\n  RETURN {\n    _key: v._key,\n    name: v.name,\n    tier: v.tier,\n    status: v.status,\n    depth: LENGTH(p.edges),\n    via_iri: e.import_iri\n  }",
+    "bindVariables": { "ontology_id": "" }
+  },
+  {
+    "_key": "downstream_dependents",
+    "title": "Downstream Dependents",
+    "name": "Downstream Dependents",
+    "description": "Who depends on this ontology? Transitive INBOUND traversal of `imports` from the given root, up to 10 hops. Critical for impact analysis before deprecation.",
+    "content": "FOR v, e, p IN 1..10 INBOUND CONCAT('ontology_registry/', @ontology_id) GRAPH 'ontology_imports'\n  OPTIONS { uniqueVertices: 'global', bfs: true }\n  FILTER e.expired == 9223372036854775807\n  SORT LENGTH(p.edges) ASC, v.name ASC\n  RETURN {\n    _key: v._key,\n    name: v.name,\n    tier: v.tier,\n    status: v.status,\n    depth: LENGTH(p.edges)\n  }",
+    "value": "FOR v, e, p IN 1..10 INBOUND CONCAT('ontology_registry/', @ontology_id) GRAPH 'ontology_imports'\n  OPTIONS { uniqueVertices: 'global', bfs: true }\n  FILTER e.expired == 9223372036854775807\n  SORT LENGTH(p.edges) ASC, v.name ASC\n  RETURN {\n    _key: v._key,\n    name: v.name,\n    tier: v.tier,\n    status: v.status,\n    depth: LENGTH(p.edges)\n  }",
+    "bindVariables": { "ontology_id": "" }
+  }
+]

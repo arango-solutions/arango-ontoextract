@@ -425,3 +425,111 @@ class TestImportOntologyEndpoint:
         with patch("app.api.ontology.registry_repo.get_registry_entry", return_value=None):
             resp = client.get("/api/v1/ontology/import/nope/status")
         assert resp.status_code == 404
+
+
+# ── GET /imports-graph (H.3) ──
+
+
+class TestImportsGraphEndpoint:
+    """HTTP-layer tests for ``GET /api/v1/ontology/imports-graph``.
+
+    The DAG-build logic itself is covered by
+    ``test_ontology_imports_graph.py``; these tests pin down the
+    routing, query-parameter validation, and 404 translation for the
+    rooted case.
+    """
+
+    def test_full_graph_returns_nodes_and_edges(self, client, _mock_db):
+        # One live edge: A imports B.
+        _mock_db.aql.execute = MagicMock(
+            return_value=iter(
+                [
+                    {
+                        "edge_key": "e1",
+                        "from_key": "A",
+                        "to_key": "B",
+                        "import_iri": "http://example.org/B",
+                        "created": 100.0,
+                        "from_name": "Alpha",
+                        "from_status": "active",
+                        "from_tier": "domain",
+                        "to_name": "Bravo",
+                        "to_status": "active",
+                        "to_tier": "domain",
+                    },
+                ]
+            )
+        )
+
+        resp = client.get("/api/v1/ontology/imports-graph")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert {n["_key"] for n in body["nodes"]} == {"A", "B"}
+        assert len(body["edges"]) == 1
+        assert body["edges"][0]["from_key"] == "A"
+        assert body["edges"][0]["to_key"] == "B"
+        assert body["root"] is None
+        assert body["direction"] is None
+
+    def test_rooted_graph_with_direction(self, client, _mock_db):
+        mock_col = MagicMock()
+        mock_col.get.return_value = {
+            "_key": "root",
+            "name": "Root",
+            "status": "active",
+            "tier": "domain",
+        }
+        _mock_db.collection.return_value = mock_col
+        _mock_db.aql.execute = MagicMock(return_value=iter([]))
+
+        resp = client.get(
+            "/api/v1/ontology/imports-graph",
+            params={"root": "root", "direction": "outbound", "max_depth": 3},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        # Isolated root: just the root node, no edges.
+        assert len(body["nodes"]) == 1
+        assert body["nodes"][0]["_key"] == "root"
+        assert body["edges"] == []
+        assert body["root"] == "root"
+        assert body["direction"] == "outbound"
+
+    def test_rooted_graph_returns_404_when_root_missing(self, client, _mock_db):
+        mock_col = MagicMock()
+        mock_col.get.return_value = None
+        _mock_db.collection.return_value = mock_col
+
+        resp = client.get(
+            "/api/v1/ontology/imports-graph",
+            params={"root": "ghost"},
+        )
+
+        assert resp.status_code == 404
+
+    def test_invalid_direction_rejected(self, client, _mock_db):
+        resp = client.get(
+            "/api/v1/ontology/imports-graph",
+            params={"root": "root", "direction": "sideways"},
+        )
+
+        assert resp.status_code == 400
+        body = resp.json()
+        assert body["error"]["code"] == "VALIDATION_ERROR"
+        assert "direction" in body["error"]["message"].lower()
+
+    def test_max_depth_out_of_range_rejected_by_fastapi(self, client):
+        # FastAPI Query(ge=1, le=50) enforces 422 before our handler runs.
+        resp = client.get(
+            "/api/v1/ontology/imports-graph",
+            params={"root": "root", "max_depth": 0},
+        )
+        assert resp.status_code == 422
+
+        resp = client.get(
+            "/api/v1/ontology/imports-graph",
+            params={"root": "root", "max_depth": 100},
+        )
+        assert resp.status_code == 422

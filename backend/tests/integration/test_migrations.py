@@ -133,6 +133,27 @@ def test_named_graph_structure(test_db: StandardDatabase) -> None:
             assert "ontology_properties" in ed["to_vertex_collections"]
 
 
+def test_ontology_imports_named_graph(test_db: StandardDatabase) -> None:
+    """025 -- ``ontology_imports`` graph wires registry vertices to the imports edge.
+
+    The graph must (a) exist after migrations apply, (b) have exactly one
+    edge definition (``imports``), and (c) declare ``ontology_registry``
+    as both endpoints. This is the substrate for H.3 (`/imports-graph`),
+    H.7 (workspace dependency overlay), and H.9 (visualizer queries).
+    """
+    apply_all(test_db)
+
+    assert test_db.has_graph("ontology_imports")
+    graph = test_db.graph("ontology_imports")
+    edge_defs = graph.edge_definitions()
+
+    assert len(edge_defs) == 1, f"expected one edge def, got {edge_defs}"
+    ed = edge_defs[0]
+    assert ed["edge_collection"] == "imports"
+    assert ed["from_vertex_collections"] == ["ontology_registry"]
+    assert ed["to_vertex_collections"] == ["ontology_registry"]
+
+
 def test_arangosearch_view(test_db: StandardDatabase) -> None:
     """ArangoSearch view on ontology_classes exists."""
     apply_all(test_db)

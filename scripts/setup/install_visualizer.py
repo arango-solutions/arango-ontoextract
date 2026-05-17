@@ -59,6 +59,14 @@ GRAPH_CONFIGS = {
         "actions": "process_actions.json",
         "queries": "process_queries.json",
     },
+    # H.9 (Stream 1) -- registry-level `owl:imports` DAG between ontologies.
+    # Same edge collection (`imports`) and vertex collection (`ontology_registry`)
+    # registered as a named graph by migration 025_ontology_imports_graph.py.
+    "ontology_imports": {
+        "theme": "ontology_imports_theme.json",
+        "actions": "ontology_imports_actions.json",
+        "queries": "ontology_imports_queries.json",
+    },
 }
 
 
@@ -258,7 +266,9 @@ def install_themes(
 # ---------------------------------------------------------------------------
 
 
-def _load_actions(actions_file: str, graph_name: str, *, prefix_keys: bool) -> list[dict]:
+def _load_actions(
+    actions_file: str, graph_name: str, *, prefix_keys: bool
+) -> list[dict]:
     path = ACTIONS_DIR / actions_file
     actions = json.loads(path.read_text(encoding="utf-8"))
     for action in actions:
@@ -359,13 +369,15 @@ def ensure_default_viewpoint(db: StandardDatabase, graph_name: str) -> str:
         return vp_id
 
     now = _now_iso()
-    result = col.insert({
-        "graphId": graph_name,
-        "name": "Default",
-        "description": f"Default viewpoint for {graph_name}",
-        "createdAt": now,
-        "updatedAt": now,
-    })
+    result = col.insert(
+        {
+            "graphId": graph_name,
+            "name": "Default",
+            "description": f"Default viewpoint for {graph_name}",
+            "createdAt": now,
+            "updatedAt": now,
+        }
+    )
     vp_id = result["_id"]
     log.info("created viewpoint for %s: %s", graph_name, vp_id)
     return vp_id

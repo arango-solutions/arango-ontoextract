@@ -1,0 +1,48 @@
+{
+  "name": "AOE Ontology Imports DAG",
+  "graphId": "ontology_imports",
+  "isDefault": true,
+  "createdAt": null,
+  "updatedAt": null,
+  "nodeConfigMap": {
+    "ontology_registry": {
+      "background": { "color": "#EAB308", "iconName": "fa6-solid:book" },
+      "labelAttribute": "name",
+      "hoverInfoAttributes": [
+        "name",
+        "description",
+        "tier",
+        "status",
+        "class_count",
+        "uri",
+        "version"
+      ],
+      "rules": [
+        {
+          "name": "Released",
+          "condition": "status == 'released'",
+          "background": { "color": "#10B981", "iconName": "fa6-solid:rocket" }
+        },
+        {
+          "name": "Core (W3C / standard)",
+          "condition": "tier == 'core'",
+          "background": { "color": "#0EA5E9", "iconName": "fa6-solid:landmark" }
+        },
+        {
+          "name": "Deprecated",
+          "condition": "status == 'deprecated'",
+          "background": { "color": "#EF4444", "iconName": "fa6-solid:circle-xmark" }
+        }
+      ]
+    }
+  },
+  "edgeConfigMap": {
+    "imports": {
+      "lineStyle": { "color": "#7C3AED", "thickness": 1.4 },
+      "arrowStyle": { "sourceArrowShape": "none", "targetArrowShape": "triangle" },
+      "hoverInfoAttributes": ["import_iri", "created"],
+      "rules": [],
+      "labelStyle": { "color": "#1d2531" }
+    }
+  }
+}

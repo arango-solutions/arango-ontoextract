@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "description": "AOE standard ontology catalog (PRD §6.15 / Stream 1 H.5). Each entry can resolve to either a bundled file (`source.kind = \"bundled\"`, `source.path` resolves under `backend/app/data/ontologies/`) or a remote URL (`source.kind = \"url\"`, `source.url`). The catalog importer prefers bundled when present and falls back to URL fetch otherwise.",
+  "ontologies": [
+    {
+      "id": "dcterms",
+      "name": "DCMI Metadata Terms",
+      "description": "Dublin Core Metadata Initiative Terms vocabulary -- the 15 legacy Dublin Core elements plus the most commonly used DCMI Terms. Bundled minimal subset suitable for offline catalog imports.",
+      "uri": "http://purl.org/dc/terms/",
+      "version": "minimal-2026-05",
+      "tier": "core",
+      "tags": ["metadata", "bibliographic", "w3c"],
+      "class_count": 0,
+      "property_count": 18,
+      "source": {
+        "kind": "bundled",
+        "path": "dcterms_minimal.ttl",
+        "format": "turtle",
+        "upstream_url": "https://www.dublincore.org/specifications/dublin-core/dcmi-terms/dublin_core_terms.ttl"
+      }
+    },
+    {
+      "id": "foaf",
+      "name": "FOAF (Friend of a Friend)",
+      "description": "FOAF vocabulary describing people, their activities, and their relations to other people and objects. Common identity-modeling building block.",
+      "uri": "http://xmlns.com/foaf/0.1/",
+      "version": "0.99",
+      "tier": "core",
+      "tags": ["people", "social", "identity"],
+      "class_count": 16,
+      "property_count": 67,
+      "source": {
+        "kind": "url",
+        "url": "http://xmlns.com/foaf/spec/index.rdf",
+        "format": "xml"
+      }
+    },
+    {
+      "id": "skos",
+      "name": "SKOS Core",
+      "description": "Simple Knowledge Organization System -- W3C recommendation for representing thesauri, classification schemes, taxonomies, and subject heading systems.",
+      "uri": "http://www.w3.org/2004/02/skos/core#",
+      "version": "2009-08-18",
+      "tier": "core",
+      "tags": ["taxonomy", "thesaurus", "w3c"],
+      "class_count": 11,
+      "property_count": 36,
+      "source": {
+        "kind": "url",
+        "url": "http://www.w3.org/2009/08/skos-reference/skos.rdf",
+        "format": "xml"
+      }
+    },
+    {
+      "id": "prov-o",
+      "name": "PROV-O",
+      "description": "W3C PROV Ontology -- represents and exchanges provenance information on the web. Activities, agents, entities, and their relationships.",
+      "uri": "http://www.w3.org/ns/prov#",
+      "version": "2013-04-30",
+      "tier": "core",
+      "tags": ["provenance", "w3c"],
+      "class_count": 30,
+      "property_count": 51,
+      "source": {
+        "kind": "url",
+        "url": "http://www.w3.org/ns/prov-o#",
+        "format": "xml"
+      }
+    },
+    {
+      "id": "owl-time",
+      "name": "OWL-Time",
+      "description": "W3C ontology of temporal concepts -- instants, intervals, durations, temporal relationships. Useful base for any event/time-modeling ontology.",
+      "uri": "http://www.w3.org/2006/time#",
+      "version": "2017-04-19",
+      "tier": "core",
+      "tags": ["time", "temporal", "w3c"],
+      "class_count": 30,
+      "property_count": 52,
+      "source": {
+        "kind": "url",
+        "url": "https://www.w3.org/2006/time#",
+        "format": "xml"
+      }
+    },
+    {
+      "id": "schema-org-core",
+      "name": "Schema.org Core",
+      "description": "Schema.org full vocabulary -- structured data markup for web pages. Large vocabulary (~800 classes, ~1500 properties); imported as the full graph then optionally filtered by namespace.",
+      "uri": "https://schema.org/",
+      "version": "current",
+      "tier": "domain",
+      "tags": ["schema-org", "web", "structured-data"],
+      "class_count": 800,
+      "property_count": 1500,
+      "source": {
+        "kind": "url",
+        "url": "https://schema.org/version/latest/schemaorg-current-https.ttl",
+        "format": "turtle"
+      }
+    },
+    {
+      "id": "fibo-fnd-aap-agt",
+      "name": "FIBO Foundations: Agents",
+      "description": "FIBO (Financial Industry Business Ontology) Foundations module modelling agents (people, organizations, autonomous agents) within the financial industry.",
+      "uri": "https://spec.edmcouncil.org/fibo/ontology/FND/AgentsAndPeople/Agents/",
+      "version": "latest",
+      "tier": "domain",
+      "tags": ["finance", "fibo", "agents", "edmcouncil"],
+      "class_count": 25,
+      "property_count": 40,
+      "source": {
+        "kind": "url",
+        "url": "https://spec.edmcouncil.org/fibo/ontology/master/latest/FND/AgentsAndPeople/Agents.rdf",
+        "format": "xml"
+      }
+    },
+    {
+      "id": "fibo-fnd-acc",
+      "name": "FIBO Foundations: Accounting",
+      "description": "FIBO Foundations accounting equity module -- core concepts for financial accounting.",
+      "uri": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/",
+      "version": "latest",
+      "tier": "domain",
+      "tags": ["finance", "fibo", "accounting", "edmcouncil"],
+      "class_count": 18,
+      "property_count": 30,
+      "source": {
+        "kind": "url",
+        "url": "https://spec.edmcouncil.org/fibo/ontology/master/latest/FND/Accounting/AccountingEquity.rdf",
+        "format": "xml"
+      }
+    }
+  ]
+}

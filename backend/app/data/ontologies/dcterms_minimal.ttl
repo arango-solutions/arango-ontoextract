@@ -1,0 +1,118 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+
+# Minimal Dublin Core Terms vocabulary (DCMI Metadata Terms).
+#
+# This is a stripped-down version of the official DCMI vocabulary at
+# https://www.dublincore.org/specifications/dublin-core/dcmi-terms/
+# bundled for offline catalog imports. It covers the 15 legacy DCMI
+# elements plus the most common DCMI Terms (creator, contributor,
+# rights, license, modified) so a freshly bootstrapped AOE installation
+# can demonstrate the Standard Ontology Catalog (H.5) end-to-end without
+# network access.
+#
+# Replace this file with the upstream RDF/XML from purl.org/dc/terms/
+# whenever you need the full vocabulary (annotations, deprecated terms,
+# property relationships).
+
+<http://purl.org/dc/terms/> a owl:Ontology ;
+    rdfs:label "DCMI Metadata Terms (Minimal Bundle)"@en ;
+    rdfs:comment "Bundled subset of Dublin Core Terms for AOE catalog imports."@en ;
+    owl:versionInfo "minimal-2026-05" .
+
+# Core element set (the legacy DC15 elements).
+
+dcterms:title a owl:DatatypeProperty ;
+    rdfs:label "title"@en ;
+    rdfs:comment "A name given to the resource."@en ;
+    rdfs:range xsd:string .
+
+dcterms:creator a owl:DatatypeProperty ;
+    rdfs:label "creator"@en ;
+    rdfs:comment "An entity primarily responsible for making the resource."@en ;
+    rdfs:range xsd:string .
+
+dcterms:subject a owl:DatatypeProperty ;
+    rdfs:label "subject"@en ;
+    rdfs:comment "The topic of the resource."@en ;
+    rdfs:range xsd:string .
+
+dcterms:description a owl:DatatypeProperty ;
+    rdfs:label "description"@en ;
+    rdfs:comment "An account of the resource."@en ;
+    rdfs:range xsd:string .
+
+dcterms:publisher a owl:DatatypeProperty ;
+    rdfs:label "publisher"@en ;
+    rdfs:comment "An entity responsible for making the resource available."@en ;
+    rdfs:range xsd:string .
+
+dcterms:contributor a owl:DatatypeProperty ;
+    rdfs:label "contributor"@en ;
+    rdfs:comment "An entity responsible for making contributions to the resource."@en ;
+    rdfs:range xsd:string .
+
+dcterms:date a owl:DatatypeProperty ;
+    rdfs:label "date"@en ;
+    rdfs:comment "A point or period of time associated with an event in the lifecycle of the resource."@en ;
+    rdfs:range xsd:date .
+
+dcterms:type a owl:DatatypeProperty ;
+    rdfs:label "type"@en ;
+    rdfs:comment "The nature or genre of the resource."@en ;
+    rdfs:range xsd:string .
+
+dcterms:format a owl:DatatypeProperty ;
+    rdfs:label "format"@en ;
+    rdfs:comment "The file format, physical medium, or dimensions of the resource."@en ;
+    rdfs:range xsd:string .
+
+dcterms:identifier a owl:DatatypeProperty ;
+    rdfs:label "identifier"@en ;
+    rdfs:comment "An unambiguous reference to the resource within a given context."@en ;
+    rdfs:range xsd:string .
+
+dcterms:source a owl:DatatypeProperty ;
+    rdfs:label "source"@en ;
+    rdfs:comment "A related resource from which the described resource is derived."@en ;
+    rdfs:range xsd:string .
+
+dcterms:language a owl:DatatypeProperty ;
+    rdfs:label "language"@en ;
+    rdfs:comment "A language of the resource."@en ;
+    rdfs:range xsd:string .
+
+dcterms:relation a owl:DatatypeProperty ;
+    rdfs:label "relation"@en ;
+    rdfs:comment "A related resource."@en ;
+    rdfs:range xsd:string .
+
+dcterms:coverage a owl:DatatypeProperty ;
+    rdfs:label "coverage"@en ;
+    rdfs:comment "The spatial or temporal topic of the resource."@en ;
+    rdfs:range xsd:string .
+
+dcterms:rights a owl:DatatypeProperty ;
+    rdfs:label "rights"@en ;
+    rdfs:comment "Information about rights held in and over the resource."@en ;
+    rdfs:range xsd:string .
+
+# A few commonly-used additional DCMI Terms.
+
+dcterms:license a owl:DatatypeProperty ;
+    rdfs:label "license"@en ;
+    rdfs:comment "A legal document giving official permission to do something with the resource."@en ;
+    rdfs:range xsd:string .
+
+dcterms:modified a owl:DatatypeProperty ;
+    rdfs:label "modified"@en ;
+    rdfs:comment "Date on which the resource was changed."@en ;
+    rdfs:range xsd:date .
+
+dcterms:abstract a owl:DatatypeProperty ;
+    rdfs:label "abstract"@en ;
+    rdfs:comment "A summary of the resource."@en ;
+    rdfs:range xsd:string .

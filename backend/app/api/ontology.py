@@ -2793,6 +2793,132 @@ async def remove_ontology_import(ontology_id: str, target_ontology_id: str) -> d
     return {"removed": len(edges), "from": ontology_id, "to": target_ontology_id}
 
 
+@router.get("/catalog")
+async def list_standard_ontology_catalog() -> dict[str, Any]:
+    """Return the bundled standard ontology catalog (Stream 1 H.5).
+
+    The catalog is the curated list of well-known ontologies the user
+    can one-click-import. Each entry includes display metadata
+    (``name``, ``description``, ``uri``, ``tier``, ``tags``,
+    ``class_count``, ``property_count``) plus a ``source`` hint
+    indicating whether import will read a bundled file or fetch a
+    remote URL (the frontend uses this to render an offline-capable
+    badge).
+    """
+    from app.services.standard_ontology_catalog import load_catalog
+
+    entries = load_catalog()
+    return {"ontologies": entries, "count": len(entries)}
+
+
+class CatalogImportRequest(BaseModel):
+    ontology_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional override for the new registry _key. Defaults to the catalog entry id."
+        ),
+    )
+
+
+@router.post("/catalog/{catalog_id}/import", status_code=201)
+async def import_from_catalog(
+    catalog_id: str,
+    body: CatalogImportRequest | None = None,
+) -> dict[str, Any]:
+    """Import a standard ontology by catalog id (Stream 1 H.5).
+
+    Synchronous. Returns the import stats (triple count, registry key,
+    imports edges created) on success, ``404`` for unknown catalog
+    ids, ``409`` if an ontology with the chosen id already exists,
+    and ``500`` for fetch / parse failures (which carry the upstream
+    error message for debugging).
+
+    Bundled entries import instantly; URL entries depend on network
+    reachability and may take several seconds.
+    """
+    from app.services.standard_ontology_catalog import import_catalog_entry
+
+    db = get_db()
+    requested_id = body.ontology_id if body else None
+
+    try:
+        return import_catalog_entry(
+            catalog_id,
+            db=db,
+            ontology_id=requested_id,
+        )
+    except LookupError as exc:
+        raise NotFoundError(str(exc)) from exc
+    except ConflictError:
+        raise
+    except ValueError as exc:
+        # Bubbles up from import_from_file (e.g. unparseable Turtle).
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        # Catalog packaging bug -- bubbles up clearly to the operator.
+        log.exception("catalog import failed for %s", catalog_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/imports-graph")
+async def get_imports_graph(
+    root: str | None = Query(
+        None,
+        description=(
+            "Optional registry _key to anchor the traversal on. "
+            "Omit for the full registry-wide imports DAG."
+        ),
+    ),
+    direction: str = Query(
+        "both",
+        description=(
+            "When `root` is set: 'outbound' (ancestors), 'inbound' (descendants), "
+            "or 'both' (default, union). Ignored when `root` is omitted."
+        ),
+    ),
+    max_depth: int = Query(
+        10,
+        ge=1,
+        le=50,
+        description="Maximum traversal depth (clamped to 1..50). Imports DAGs are shallow.",
+    ),
+) -> dict[str, Any]:
+    """Return the live ``owl:imports`` dependency DAG (Stream 1 H.3).
+
+    Two modes:
+
+    * Without ``root``: every live import edge plus every registry row
+      that participates as either endpoint. Powers the workspace
+      ``ImportsDependencyOverlay`` global view (H.7).
+    * With ``root``: the sub-DAG reachable from that ontology in the
+      requested ``direction``. Powers per-ontology dependency previews
+      (H.6 catalog browser, H.7 "show my imports tree").
+
+    Returns ``404`` if ``root`` is given but the ontology does not
+    exist; ``400`` if ``direction`` is unrecognised.
+    """
+    from app.services.ontology_imports_graph import (
+        Direction,
+        build_imports_dag,
+    )
+
+    if direction not in ("outbound", "inbound", "both"):
+        raise ValidationError(
+            f"direction must be one of 'outbound', 'inbound', 'both' -- got {direction!r}"
+        )
+
+    db = get_db()
+    try:
+        return build_imports_dag(
+            db,
+            root=root,
+            direction=cast(Direction, direction),
+            max_depth=max_depth,
+        )
+    except ValueError as exc:
+        raise NotFoundError(str(exc)) from exc
+
+
 # ---------------------------------------------------------------------------
 # Schema extraction endpoints (PRD 6.9 — Week 20)
 # ---------------------------------------------------------------------------

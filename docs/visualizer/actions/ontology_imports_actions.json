@@ -1,0 +1,29 @@
+[
+  {
+    "_key": "imp_show_direct_dependencies",
+    "name": "Show Direct Dependencies",
+    "title": "Show Direct Dependencies",
+    "description": "Show the ontologies the selected ontology directly imports (1-hop OUTBOUND on `imports`).",
+    "graphId": "ontology_imports",
+    "queryText": "WITH ontology_registry, imports\nFOR node IN @nodes\n  FILTER IS_SAME_COLLECTION('ontology_registry', node)\n  FOR v, e IN 1..1 OUTBOUND node imports\n    FILTER e.expired == 9223372036854775807\n    LIMIT 100\n    RETURN e",
+    "bindVariables": { "nodes": [] }
+  },
+  {
+    "_key": "imp_show_direct_dependents",
+    "name": "Show Direct Dependents",
+    "title": "Show Direct Dependents",
+    "description": "Show ontologies that directly import the selected one (1-hop INBOUND on `imports`).",
+    "graphId": "ontology_imports",
+    "queryText": "WITH ontology_registry, imports\nFOR node IN @nodes\n  FILTER IS_SAME_COLLECTION('ontology_registry', node)\n  FOR v, e IN 1..1 INBOUND node imports\n    FILTER e.expired == 9223372036854775807\n    LIMIT 100\n    RETURN e",
+    "bindVariables": { "nodes": [] }
+  },
+  {
+    "_key": "imp_show_full_dependency_tree",
+    "name": "Show Full Dependency Tree",
+    "title": "Show Full Dependency Tree",
+    "description": "Expand the full transitive dependency closure (10-hop ANY) anchored on the selected ontology.",
+    "graphId": "ontology_imports",
+    "queryText": "WITH ontology_registry, imports\nFOR node IN @nodes\n  FILTER IS_SAME_COLLECTION('ontology_registry', node)\n  FOR v, e IN 1..10 ANY node GRAPH 'ontology_imports'\n    OPTIONS { uniqueEdges: 'global', bfs: true }\n    FILTER e.expired == 9223372036854775807\n    LIMIT 500\n    RETURN e",
+    "bindVariables": { "nodes": [] }
+  }
+]
