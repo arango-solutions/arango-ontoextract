@@ -818,6 +818,7 @@ function OntologyItem({
                   <EdgeRow
                     key={edge._key}
                     edgeKey={edge._key}
+                    ontologyId={ont._key}
                     displayLabel={displayLabel}
                     typeLabel={typeLabel}
                     title={`${typeLabel}: ${src} → ${tgt}`}
@@ -890,6 +891,13 @@ function ClassItem({
     <div>
       <button
         ref={rowRef}
+        // W.7: `data-sidebar-row` lets the workspace page's keydown
+        // handler enumerate every visible row in DOM order and move
+        // focus on ArrowUp / ArrowDown. The `class:` prefix
+        // distinguishes class rows from edge rows so future row
+        // kinds (properties, documents, etc.) can opt in by adding
+        // their own `kind:<oid>:<key>` value.
+        data-sidebar-row={`class:${ontologyId}:${cls._key}`}
         onClick={() => {
           if (onSelectClass) {
             onSelectClass(cls._key, ontologyId);
@@ -964,6 +972,7 @@ function ClassItem({
 
 function EdgeRow({
   edgeKey,
+  ontologyId,
   displayLabel,
   typeLabel,
   title,
@@ -972,6 +981,7 @@ function EdgeRow({
   onContextMenu: onCtx,
 }: {
   edgeKey: string;
+  ontologyId: string;
   displayLabel: string;
   typeLabel: string;
   title: string;
@@ -991,6 +1001,8 @@ function EdgeRow({
     <button
       ref={rowRef}
       key={edgeKey}
+      // W.7: see ClassItem's data-sidebar-row comment.
+      data-sidebar-row={`edge:${ontologyId}:${edgeKey}`}
       onClick={onClick}
       onContextMenu={onCtx}
       className={`w-full text-left pl-14 pr-3 py-1 text-[10px] flex items-center gap-1.5 hover:bg-gray-50 transition-colors ${

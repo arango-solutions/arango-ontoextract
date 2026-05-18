@@ -54,6 +54,7 @@ import {
   readImportDragPayload,
 } from "@/lib/importDragCheck";
 import { pushToast } from "@/lib/toast";
+import { computeNextSidebarRow } from "@/lib/sidebarKeyboardNav";
 import type { SigmaViewportApi } from "@/components/workspace/SigmaCanvas";
 import type { ClassBoxProperty } from "@/components/workspace/ClassBoxNode";
 
@@ -538,6 +539,32 @@ function WorkspacePageInner() {
         setDetailPanelOpen(false);
         return;
       }
+
+      // W.7: Arrow Up/Down navigates between sidebar rows. Only
+      // fires when focus is already on a `[data-sidebar-row]`
+      // button so it never steals plain page scroll or canvas
+      // navigation. Rows are tagged in AssetExplorer
+      // (`class:<oid>:<key>` and `edge:<oid>:<key>`); the queryAll
+      // preserves DOM order which matches the user's visual order
+      // under the collapsible ontology accordions, including only
+      // currently-rendered rows (collapsed ontologies skip
+      // themselves). The pure decision lives in
+      // `lib/sidebarKeyboardNav.ts` so the next-focus computation is
+      // unit-testable in isolation.
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        const active = document.activeElement as HTMLElement | null;
+        if (!active || !active.matches?.("[data-sidebar-row]")) return;
+        const rows = Array.from(
+          document.querySelectorAll<HTMLElement>("[data-sidebar-row]"),
+        );
+        const nextRow = computeNextSidebarRow(e.key, active, rows);
+        if (nextRow) {
+          e.preventDefault();
+          nextRow.focus();
+        }
+        return;
+      }
+
       const lens = lensKeys[e.key];
       if (lens && selectedOntologyId) {
         setActiveLens(lens);
@@ -1221,10 +1248,19 @@ function WorkspacePageInner() {
 
         {/* Center: Canvas + VCR — min-h-0 lets the flex child shrink so Sigma gets a real height */}
         <main
-          className="flex-1 flex flex-col relative min-w-0 min-h-0"
+          className="flex-1 flex flex-col relative min-w-0 min-h-0 outline-none"
           onDragOver={handleCanvasDragOver}
           onDrop={handleCanvasDrop}
           data-testid="workspace-canvas-pane"
+          // W.7: tabIndex makes the canvas pane reachable via Tab so
+          // keyboard users can cycle sidebar -> canvas without
+          // tabbing through every sidebar row. Once the canvas pane
+          // has focus, Sigma's own pointer/keyboard handlers take
+          // over (drag to pan, scroll to zoom). `outline-none` keeps
+          // the visual chrome quiet -- the focus ring on the
+          // currently-selected node already tells the user where
+          // their selection is.
+          tabIndex={0}
         >
           {/* Graph Canvas area */}
           <div className="flex-1 relative overflow-hidden min-h-0">
