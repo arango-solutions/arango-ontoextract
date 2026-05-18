@@ -40,6 +40,8 @@ from app.services.edge_confidence import (
 from app.services.ontology_projections import (
     CLASS_SUMMARY_RETURN,
     INCLUDE_SUMMARY,
+    LIVE_EDGE_COLLECTIONS,
+    LIVE_PROP_COLLECTIONS,
     normalize_include,
     summarize_edge,
 )
@@ -1696,21 +1698,14 @@ def _live_properties_by_id(db: Any, ontology_id: str) -> dict[str, dict[str, Any
 # read. The values are interpolated into the generated AQL string (one
 # ``FOR`` subquery per name), so they MUST stay a fixed set of trusted
 # identifiers -- never accept user input here.
-_LIVE_EDGE_COLLECTIONS: tuple[str, ...] = (
-    "subclass_of",
-    "rdfs_domain",
-    "rdfs_range_class",
-    "equivalent_class",
-    "has_property",
-    "related_to",
-)
-
-# Same allowlist contract as ``_LIVE_EDGE_COLLECTIONS`` -- these names are
-# inlined into AQL.
-_LIVE_PROP_COLLECTIONS: tuple[str, ...] = (
-    "ontology_object_properties",
-    "ontology_datatype_properties",
-)
+#
+# Promoted to ``app.services.ontology_projections.LIVE_EDGE_COLLECTIONS`` /
+# ``LIVE_PROP_COLLECTIONS`` so the multi-ontology effective-graph service
+# (Stream 1 H.12) shares the same source of truth without reaching into
+# this module's private constants. These aliases keep the file-local
+# references stable; updating the allow-list in one place updates both.
+_LIVE_EDGE_COLLECTIONS: tuple[str, ...] = LIVE_EDGE_COLLECTIONS
+_LIVE_PROP_COLLECTIONS: tuple[str, ...] = LIVE_PROP_COLLECTIONS
 
 # Cache the generated AQL keyed by ``(edge_cols, prop_cols)``.  The set
 # of existing collections is effectively static during a process's
@@ -2622,6 +2617,125 @@ async def list_ontology_imports(ontology_id: str) -> dict[str, Any]:
         )
     )
     return {"imports": results}
+
+
+@router.get("/{ontology_id}/effective")
+async def get_effective_ontology(
+    ontology_id: str,
+    request: Request,
+    include: str = Query(
+        "summary",
+        description=(
+            "Field projection profile. ``summary`` (default) returns the "
+            "narrow allow-list the workspace canvas consumes -- see "
+            "``app.services.ontology_projections``. ``full`` returns "
+            "every field including ``evidence[]`` for detail / export "
+            "consumers."
+        ),
+    ),
+    max_depth: int = Query(
+        10,
+        ge=1,
+        le=50,
+        description="Maximum number of imports hops to walk (clamped to 1..50).",
+    ),
+) -> Response:
+    """Compute the effective ontology view (Stream 1 H.12 + H.13).
+
+    Returns the target ontology merged with the transitive closure of its
+    ``owl:imports`` ancestors. Each class / edge / property is annotated
+    with ``source_ontology_id``, ``source_ontology_name``, and
+    ``is_imported`` so the workspace canvas (H.15) can render imported
+    entities with distinct styling and the import-aware extraction
+    prompts (H.17) can tell the LLM which concepts to reuse.
+
+    Conflicts surfaced inline as ``conflicts`` (H.13) cover:
+
+    * ``duplicate_uri`` -- same URI in two or more imported sources
+    * ``duplicate_label`` -- same label in two or more sources with
+      *different* URIs
+    * ``subclass_cycle_via_import`` -- a subclass cycle introduced by
+      merging imported axioms (cycles contained within a single source
+      are writer bugs, not merge conflicts, and are not reported here)
+
+    ETag / If-None-Match
+    --------------------
+
+    The response carries a weak ETag derived from
+    ``(ontology_id, include profile, every source's updated_at)`` so
+    repeat requests from the same client can short-circuit to ``304``
+    once the closure stabilises. The ETag invalidates the moment any
+    participating ontology mutates or an ``imports`` edge changes.
+
+    Returns ``404`` if the ontology does not exist.
+    """
+    db = get_db()
+    try:
+        from app.services.ontology_effective import compute_effective_ontology
+
+        payload = compute_effective_ontology(
+            db,
+            ontology_id=ontology_id,
+            include=include,
+            max_depth=max_depth,
+        )
+    except ValueError as exc:
+        raise NotFoundError(str(exc)) from exc
+
+    etag = str(payload.get("etag") or "")
+    if_none_match = request.headers.get("if-none-match", "").strip()
+    # Honour both the weak validator we emit (``W/"abc"``) and the
+    # strong-validator variant a paranoid intermediary might rewrite to
+    # (``"abc"``). Per RFC 7232 §2.3.2 weak comparison ignores the W/
+    # prefix when serving 304s.
+    if etag and if_none_match and _etag_matches(if_none_match, etag):
+        log.info(
+            f"get_effective_ontology 304 ont={ontology_id} include={include} etag={etag}",
+            extra={"ontology_id": ontology_id, "include": include, "etag": etag},
+        )
+        return Response(status_code=304, headers={"ETag": etag})
+
+    log.info(
+        f"get_effective_ontology 200 ont={ontology_id} include={include} "
+        f"sources={len(payload.get('sources', []))} "
+        f"classes={len(payload.get('classes', []))} "
+        f"edges={len(payload.get('edges', []))} "
+        f"conflicts={len(payload.get('conflicts', []))}",
+        extra={
+            "ontology_id": ontology_id,
+            "include": include,
+            "source_count": len(payload.get("sources", [])),
+            "class_count": len(payload.get("classes", [])),
+            "edge_count": len(payload.get("edges", [])),
+            "conflict_count": len(payload.get("conflicts", [])),
+            "etag": etag,
+        },
+    )
+
+    body = json.dumps(payload)
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={"ETag": etag} if etag else {},
+    )
+
+
+def _etag_matches(client_value: str, server_value: str) -> bool:
+    """Weak-comparison ETag match per RFC 7232 §2.3.2.
+
+    Strips the ``W/`` weak-validator prefix and any surrounding
+    whitespace before comparing the opaque tag. Supports a comma-
+    separated list of validators in ``If-None-Match`` (RFC 7232 §3.2).
+    """
+
+    def _normalise(tag: str) -> str:
+        tag = tag.strip()
+        if tag.startswith("W/"):
+            tag = tag[2:]
+        return tag.strip()
+
+    server_norm = _normalise(server_value)
+    return any(_normalise(raw) == server_norm for raw in client_value.split(","))
 
 
 @router.get("/library/{ontology_id}/deletion-impact")

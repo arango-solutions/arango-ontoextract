@@ -160,6 +160,35 @@ def summarize_edge(doc: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Live collection allow-lists.
+# ---------------------------------------------------------------------------
+#
+# The set of versioned ontology collections that hold the current-version
+# entities the canvas renders. Centralised here (rather than in
+# ``app/api/ontology.py``) so the per-ontology fetch path AND the multi-
+# ontology effective-graph service (Stream 1 H.12) agree on the same set
+# without one reaching into the other's private constants.
+#
+# These names are inlined into AQL ``FOR`` subqueries by callers, so they
+# MUST stay a fixed set of trusted identifiers -- never accept user input
+# in their place.
+
+LIVE_EDGE_COLLECTIONS: Final[tuple[str, ...]] = (
+    "subclass_of",
+    "rdfs_domain",
+    "rdfs_range_class",
+    "equivalent_class",
+    "has_property",
+    "related_to",
+)
+
+LIVE_PROP_COLLECTIONS: Final[tuple[str, ...]] = (
+    "ontology_object_properties",
+    "ontology_datatype_properties",
+)
+
+
+# ---------------------------------------------------------------------------
 # Query-parameter parsing.
 # ---------------------------------------------------------------------------
 

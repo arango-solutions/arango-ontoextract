@@ -533,3 +533,115 @@ class TestImportsGraphEndpoint:
             params={"root": "root", "max_depth": 100},
         )
         assert resp.status_code == 422
+
+
+# ── GET /{ontology_id}/effective (H.12 + H.13) ──
+
+
+class TestEffectiveOntologyEndpoint:
+    """HTTP-layer tests for ``GET /api/v1/ontology/{id}/effective``.
+
+    The merge / annotation / conflict-detection logic itself is covered
+    by ``test_ontology_effective.py``; these tests pin down the
+    HTTP-specific contract: routing, ETag emission, ``304 Not Modified``
+    on conditional requests, ``404`` translation for missing ontologies,
+    and query-parameter validation.
+    """
+
+    def _setup_self_only(self, _mock_db):
+        """Mock a registry hit with no imports edges -- minimal happy path."""
+        mock_col = MagicMock()
+        mock_col.get.return_value = {
+            "_key": "ont-self",
+            "name": "Self",
+            "tier": "user",
+            "updated_at": 42,
+        }
+        _mock_db.collection.return_value = mock_col
+        _mock_db.aql.execute = MagicMock(side_effect=lambda *a, **kw: iter([]))
+        _mock_db.collections.return_value = [
+            {"name": n}
+            for n in (
+                "ontology_registry",
+                "imports",
+                "ontology_classes",
+            )
+        ]
+
+    def test_returns_200_with_etag_for_existing_ontology(self, client, _mock_db):
+        self._setup_self_only(_mock_db)
+
+        resp = client.get("/api/v1/ontology/ont-self/effective")
+
+        assert resp.status_code == 200
+        assert resp.headers["etag"].startswith('W/"')
+        body = resp.json()
+        assert body["ontology_id"] == "ont-self"
+        assert body["ontology_name"] == "Self"
+        assert body["include"] == "summary"
+        assert len(body["sources"]) == 1
+        assert body["sources"][0]["is_self"] is True
+        assert body["classes"] == []
+        assert body["edges"] == []
+        assert body["properties"] == []
+        assert body["conflicts"] == []
+
+    def test_returns_304_when_if_none_match_matches(self, client, _mock_db):
+        self._setup_self_only(_mock_db)
+
+        first = client.get("/api/v1/ontology/ont-self/effective")
+        etag = first.headers["etag"]
+        assert etag
+
+        second = client.get(
+            "/api/v1/ontology/ont-self/effective",
+            headers={"If-None-Match": etag},
+        )
+
+        assert second.status_code == 304
+        # The 304 must echo the ETag so the client can keep the validator.
+        assert second.headers["etag"] == etag
+        # 304 must not carry a body.
+        assert second.content == b""
+
+    def test_304_weak_comparison_strips_weak_prefix(self, client, _mock_db):
+        self._setup_self_only(_mock_db)
+        first = client.get("/api/v1/ontology/ont-self/effective")
+        etag = first.headers["etag"]
+        # Strip the W/ prefix as a proxy/intermediary might.
+        stripped = etag[2:] if etag.startswith("W/") else etag
+        resp = client.get(
+            "/api/v1/ontology/ont-self/effective",
+            headers={"If-None-Match": stripped},
+        )
+        assert resp.status_code == 304
+
+    def test_returns_200_when_if_none_match_does_not_match(self, client, _mock_db):
+        self._setup_self_only(_mock_db)
+        resp = client.get(
+            "/api/v1/ontology/ont-self/effective",
+            headers={"If-None-Match": 'W/"stale-deadbeef"'},
+        )
+        assert resp.status_code == 200
+
+    def test_returns_404_when_ontology_missing(self, client, _mock_db):
+        mock_col = MagicMock()
+        mock_col.get.return_value = None
+        _mock_db.collection.return_value = mock_col
+
+        resp = client.get("/api/v1/ontology/ghost/effective")
+        assert resp.status_code == 404
+
+    def test_full_profile_changes_etag_vs_summary(self, client, _mock_db):
+        self._setup_self_only(_mock_db)
+        summary_resp = client.get("/api/v1/ontology/ont-self/effective?include=summary")
+        full_resp = client.get("/api/v1/ontology/ont-self/effective?include=full")
+        assert summary_resp.headers["etag"] != full_resp.headers["etag"]
+        assert summary_resp.json()["include"] == "summary"
+        assert full_resp.json()["include"] == "full"
+
+    def test_max_depth_out_of_range_rejected_by_fastapi(self, client):
+        resp = client.get("/api/v1/ontology/ont-self/effective?max_depth=0")
+        assert resp.status_code == 422
+        resp = client.get("/api/v1/ontology/ont-self/effective?max_depth=100")
+        assert resp.status_code == 422
