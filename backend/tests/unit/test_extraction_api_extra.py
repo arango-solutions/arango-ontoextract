@@ -89,15 +89,13 @@ class TestExtractionRoutes:
 
     @pytest.mark.asyncio
     async def test_list_runs_enriches_documents_and_per_run_stats(self):
-        """Document name + chunk count come from doc_get; per-run
+        """Stream 12 T8 -- document name + chunk count are now bulk
+        fetched via a single AQL query (not a per-run ``doc_get``)
+        and the ontology_id lookup is similarly bulk-fetched. Per-run
         ``classes_extracted`` / ``properties_extracted`` come from
-        ``run.stats`` (set by the extractor agent during the run)
-        and MUST NOT be overwritten by ontology-wide totals.
-
-        The earlier shape of this test asserted the buggy behaviour
-        where the route re-counted the live target ontology and
-        clobbered the per-run values; see the route's enrichment
-        comment for the bug rationale.
+        ``run.stats`` and MUST NOT be overwritten by ontology-wide
+        totals (see the route's enrichment comment for the bug
+        rationale).
         """
         db = MagicMock()
         db.has_collection.return_value = True
@@ -128,21 +126,18 @@ class TestExtractionRoutes:
                 "app.api.extraction.extraction_service.list_runs",
                 return_value=paginated,
             ),
-            patch(
-                "app.api.extraction.doc_get",
-                return_value={
-                    "_key": "d1",
-                    "filename": "doc.md",
-                    "chunk_count": 4,
-                },
-            ),
-            # Exactly ONE run_aql call is now expected: the
-            # ontology_registry lookup that resolves ontology_id.
-            # If a future refactor re-adds count overrides, this
-            # side_effect will run out and the test fails loudly.
+            # Stream 12 T8: doc_get is no longer called from list_runs;
+            # the patch is a tripwire -- if a future refactor re-adds a
+            # per-row doc_get, this assertion fires.
+            patch("app.api.extraction.doc_get") as mock_doc_get,
+            # Two AQL calls now: (1) bulk docs, (2) bulk registry. The
+            # iter() wrappers mimic the cursor that run_aql returns.
             patch(
                 "app.api.extraction.run_aql",
-                side_effect=[["onto1"]],
+                side_effect=[
+                    iter([{"key": "d1", "filename": "doc.md", "chunk_count": 4}]),
+                    iter([{"rid": "r1", "oid": "onto1"}]),
+                ],
             ),
         ):
             result = await list_runs(limit=10)
@@ -155,6 +150,8 @@ class TestExtractionRoutes:
         assert run["duration_ms"] == 1000
         # Ontology link still enriched.
         assert run["ontology_id"] == "onto1"
+        # T8 invariant: no per-row doc_get.
+        mock_doc_get.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_list_runs_does_not_query_legacy_ontology_properties(self):
@@ -162,10 +159,10 @@ class TestExtractionRoutes:
         ``ontology_properties`` (the empty pre-PGT-split collection),
         which always returned 0 and silently zeroed every run's
         ``properties_extracted``. The new enrichment should only
-        touch ``ontology_registry`` -- if a future change reintroduces
-        a query against ``ontology_properties`` (or any other
-        collection), this test fails because the captured AQL doesn't
-        match the expected single registry lookup.
+        touch ``documents`` (bulk) and ``ontology_registry`` (bulk).
+
+        Stream 12 T8 also enforces: exactly TWO AQL calls per page
+        (one for docs, one for registry), independent of page size.
         """
         db = MagicMock()
         db.has_collection.return_value = True
@@ -175,7 +172,7 @@ class TestExtractionRoutes:
             "data": [
                 {
                     "_key": "r1",
-                    "doc_ids": [],
+                    "doc_ids": ["d1"],
                     "stats": {
                         "errors": [],
                         "classes_extracted": 42,
@@ -192,7 +189,9 @@ class TestExtractionRoutes:
 
         def capture_aql(_db, query, bind_vars=None, **_kw):
             captured_queries.append(query)
-            return iter(["onto1"])
+            if "documents" in query:
+                return iter([])
+            return iter([{"rid": "r1", "oid": "onto1"}])
 
         with (
             patch("app.api.extraction.get_db", return_value=db),
@@ -216,9 +215,85 @@ class TestExtractionRoutes:
         assert "ontology_object_properties" not in joined
         assert "ontology_datatype_properties" not in joined
         assert "COLLECT WITH COUNT" not in joined
-        # And exactly one query: the registry lookup.
-        assert len(captured_queries) == 1
-        assert "ontology_registry" in captured_queries[0]
+        # T8: exactly two queries -- documents + ontology_registry.
+        assert len(captured_queries) == 2
+        assert any("documents" in q for q in captured_queries)
+        assert any("ontology_registry" in q for q in captured_queries)
+
+    @pytest.mark.asyncio
+    async def test_list_runs_bulk_enrichment_scales_with_page_size(self):
+        """Stream 12 T8 invariant: AQL count stays at 2 even when the
+        page has many runs spanning many documents. Pre-T8 this would
+        have been 1 (paginate) + N (per-run registry) + M (per-doc
+        doc_get) -- ~50 round-trips for a typical 25-row page.
+        """
+        db = MagicMock()
+        db.has_collection.return_value = True
+        db.collection.return_value = MagicMock()
+
+        # 5 runs, each referencing 2 documents (10 unique docs total).
+        rows: list[dict] = []
+        for i in range(5):
+            rows.append(
+                {
+                    "_key": f"r{i}",
+                    "doc_ids": [f"d{i}a", f"d{i}b"],
+                    "stats": {
+                        "errors": [],
+                        "classes_extracted": i,
+                        "properties_extracted": 2 * i,
+                    },
+                }
+            )
+        paginated = MagicMock()
+        paginated.model_dump.return_value = {
+            "data": rows,
+            "cursor": None,
+            "has_more": False,
+            "total_count": 5,
+        }
+
+        captured_queries: list[str] = []
+        captured_bind_vars: list[dict] = []
+
+        def capture_aql(_db, query, bind_vars=None, **_kw):
+            captured_queries.append(query)
+            captured_bind_vars.append(bind_vars or {})
+            if "documents" in query:
+                # Return enriched docs for every requested id.
+                return iter(
+                    [
+                        {"key": did, "filename": f"{did}.md", "chunk_count": 3}
+                        for did in bind_vars["ids"]
+                    ]
+                )
+            # ontology_registry -- map every run to its own ontology.
+            return iter([{"rid": rid, "oid": f"onto_{rid}"} for rid in bind_vars["rids"]])
+
+        with (
+            patch("app.api.extraction.get_db", return_value=db),
+            patch(
+                "app.api.extraction.extraction_service.list_runs",
+                return_value=paginated,
+            ),
+            patch("app.api.extraction.doc_get") as mock_doc_get,
+            patch("app.api.extraction.run_aql", side_effect=capture_aql),
+        ):
+            result = await list_runs(limit=25)
+
+        # The invariant.
+        assert len(captured_queries) == 2, (
+            f"T8 broken: expected 2 AQL queries (docs + registry), "
+            f"got {len(captured_queries)}: {captured_queries}"
+        )
+        mock_doc_get.assert_not_called()
+
+        # Every run got its bulk-fetched name + ontology link.
+        for i, run in enumerate(result["data"]):
+            assert run["document_name"] == f"d{i}a.md, d{i}b.md"
+            assert run["chunk_count"] == 6  # 2 docs x chunk_count=3
+            assert run["ontology_id"] == f"onto_r{i}"
+            assert run["classes_extracted"] == i
 
     @pytest.mark.asyncio
     async def test_list_runs_falls_back_to_target_ontology_id(self):
@@ -251,8 +326,9 @@ class TestExtractionRoutes:
                 return_value=paginated,
             ),
             patch("app.api.extraction.doc_get", return_value=None),
-            # Empty cursor -- no registry row exists yet.
-            patch("app.api.extraction.run_aql", side_effect=[[]]),
+            # Only the registry AQL runs (no doc_ids -> docs query
+            # skipped). Empty cursor -- no registry row exists yet.
+            patch("app.api.extraction.run_aql", side_effect=[iter([])]),
         ):
             result = await list_runs(limit=10)
         assert result["data"][0]["ontology_id"] == "target-onto"
