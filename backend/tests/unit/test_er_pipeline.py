@@ -291,3 +291,256 @@ class TestUpdateConfig:
         config = get_config()
         assert config.similarity_threshold == 0.75
         update_config({"similarity_threshold": 0.7})
+
+
+# ---------------------------------------------------------------------------
+# Stream 2 PR 1 -- accept / reject / explain by pair_id.
+#
+# These tests pin the contract the workspace MergeCandidatesOverlay
+# binds to. The decision shape (`status: accepted | already_accepted |
+# rejected | already_rejected`, `pair_id`, timestamps) is part of the
+# wire contract -- changing it will silently break the overlay.
+# ---------------------------------------------------------------------------
+
+
+def _stub_similar_to_collection(edges: dict[str, dict[str, object]]) -> tuple[MagicMock, dict]:
+    """Build a MagicMock that behaves like a ``similarTo`` collection
+    over an in-memory dict of edges keyed by pair_id. Returns (db_mock,
+    recorded_updates) so tests can assert what got patched."""
+    collection = MagicMock()
+    recorded_updates: dict[str, dict[str, object]] = {}
+
+    def _get(pair_id: str) -> dict[str, object] | None:
+        return edges.get(pair_id)
+
+    def _update(payload: dict[str, object]) -> dict[str, object]:
+        pid = str(payload["_key"])
+        recorded_updates[pid] = payload
+        if pid in edges:
+            edges[pid] = {**edges[pid], **payload}
+        return {"_key": pid}
+
+    collection.get.side_effect = _get
+    collection.update.side_effect = _update
+
+    db = MagicMock()
+    db.has_collection.return_value = True
+    db.collection.return_value = collection
+    return db, recorded_updates
+
+
+class TestAcceptCandidate:
+    def test_accept_runs_merge_and_stamps_edge(self):
+        from app.services import er as er_mod
+
+        edges = {
+            "p1": {
+                "_key": "p1",
+                "_from": "ontology_classes/src",
+                "_to": "ontology_classes/tgt",
+                "combined_score": 0.92,
+            }
+        }
+        db, updates = _stub_similar_to_collection(edges)
+
+        with patch.object(
+            er_mod,
+            "execute_merge",
+            return_value={"target_key": "tgt", "source_key": "src"},
+        ) as mock_merge:
+            result = er_mod.accept_candidate(db, pair_id="p1", strategy="most_complete")
+
+        mock_merge.assert_called_once_with(
+            db, source_key="src", target_key="tgt", strategy="most_complete"
+        )
+        assert result["pair_id"] == "p1"
+        assert result["status"] == "accepted"
+        assert isinstance(result["accepted_at"], float)
+        # similarTo edge was stamped so a second call short-circuits.
+        assert "accepted_at" in updates["p1"]
+
+    def test_accept_is_idempotent(self):
+        from app.services import er as er_mod
+
+        edges = {
+            "p1": {
+                "_key": "p1",
+                "_from": "ontology_classes/src",
+                "_to": "ontology_classes/tgt",
+                "combined_score": 0.92,
+                "accepted_at": 1000.0,
+            }
+        }
+        db, _ = _stub_similar_to_collection(edges)
+
+        with patch.object(er_mod, "execute_merge") as mock_merge:
+            result = er_mod.accept_candidate(db, pair_id="p1")
+
+        # No second merge -- the already-accepted edge was returned
+        # as-is. Crucial: re-running execute_merge on an
+        # already-expired source would crash.
+        mock_merge.assert_not_called()
+        assert result["status"] == "already_accepted"
+        assert result["accepted_at"] == 1000.0
+
+    def test_accept_after_reject_raises(self):
+        from app.services import er as er_mod
+
+        edges = {
+            "p1": {
+                "_key": "p1",
+                "_from": "ontology_classes/src",
+                "_to": "ontology_classes/tgt",
+                "rejected_at": 500.0,
+            }
+        }
+        db, _ = _stub_similar_to_collection(edges)
+
+        import pytest
+
+        with pytest.raises(ValueError, match="already rejected"):
+            er_mod.accept_candidate(db, pair_id="p1")
+
+    def test_accept_missing_pair_raises(self):
+        from app.services import er as er_mod
+
+        db, _ = _stub_similar_to_collection({})
+        import pytest
+
+        with pytest.raises(ValueError, match="not found"):
+            er_mod.accept_candidate(db, pair_id="ghost")
+
+    def test_accept_missing_collection_raises(self):
+        from app.services import er as er_mod
+
+        db = MagicMock()
+        db.has_collection.return_value = False
+        import pytest
+
+        with pytest.raises(ValueError, match="similarTo collection not found"):
+            er_mod.accept_candidate(db, pair_id="p1")
+
+
+class TestRejectCandidate:
+    def test_reject_stamps_edge(self):
+        from app.services import er as er_mod
+
+        edges = {
+            "p1": {
+                "_key": "p1",
+                "_from": "ontology_classes/src",
+                "_to": "ontology_classes/tgt",
+            }
+        }
+        db, updates = _stub_similar_to_collection(edges)
+
+        result = er_mod.reject_candidate(db, pair_id="p1")
+
+        assert result["pair_id"] == "p1"
+        assert result["status"] == "rejected"
+        assert isinstance(result["rejected_at"], float)
+        assert "rejected_at" in updates["p1"]
+
+    def test_reject_is_idempotent(self):
+        from app.services import er as er_mod
+
+        edges = {
+            "p1": {
+                "_key": "p1",
+                "_from": "ontology_classes/src",
+                "_to": "ontology_classes/tgt",
+                "rejected_at": 777.0,
+            }
+        }
+        db, updates = _stub_similar_to_collection(edges)
+
+        result = er_mod.reject_candidate(db, pair_id="p1")
+
+        assert result["status"] == "already_rejected"
+        assert result["rejected_at"] == 777.0
+        # No second stamp -- already-rejected edge returned as-is.
+        assert "p1" not in updates
+
+    def test_reject_after_accept_raises(self):
+        from app.services import er as er_mod
+
+        edges = {
+            "p1": {
+                "_key": "p1",
+                "_from": "ontology_classes/src",
+                "_to": "ontology_classes/tgt",
+                "accepted_at": 200.0,
+            }
+        }
+        db, _ = _stub_similar_to_collection(edges)
+        import pytest
+
+        with pytest.raises(ValueError, match="already accepted"):
+            er_mod.reject_candidate(db, pair_id="p1")
+
+    def test_reject_missing_pair_raises(self):
+        from app.services import er as er_mod
+
+        db, _ = _stub_similar_to_collection({})
+        import pytest
+
+        with pytest.raises(ValueError, match="not found"):
+            er_mod.reject_candidate(db, pair_id="ghost")
+
+
+class TestExplainCandidate:
+    def test_explain_by_pair_id_resolves_keys(self):
+        from app.services import er as er_mod
+
+        edges = {
+            "p1": {
+                "_key": "p1",
+                "_from": "ontology_classes/src",
+                "_to": "ontology_classes/tgt",
+            }
+        }
+        db, _ = _stub_similar_to_collection(edges)
+
+        with patch.object(
+            er_mod,
+            "explain_match",
+            return_value={"combined_score": 0.91, "field_scores": {}},
+        ) as mock_explain:
+            result = er_mod.explain_candidate(db, pair_id="p1")
+
+        mock_explain.assert_called_once_with(db, key1="src", key2="tgt")
+        assert result["pair_id"] == "p1"
+        assert result["combined_score"] == 0.91
+
+    def test_explain_missing_pair_raises(self):
+        from app.services import er as er_mod
+
+        db, _ = _stub_similar_to_collection({})
+        import pytest
+
+        with pytest.raises(ValueError, match="not found"):
+            er_mod.explain_candidate(db, pair_id="ghost")
+
+
+class TestGetCandidatesIncludeResolved:
+    def test_include_resolved_passed_through(self):
+        """Pin that the new ``include_resolved`` flag actually makes
+        it into the AQL bind vars -- otherwise the inbox would
+        re-surface decisions the user already made."""
+        from app.services import er as er_mod
+
+        db = MagicMock()
+        db.has_collection.return_value = True
+
+        captured: list[dict] = []
+
+        def fake_run_aql(_db, _query, bind_vars=None):
+            captured.append(dict(bind_vars or {}))
+            return iter([])
+
+        with patch.object(er_mod, "run_aql", side_effect=fake_run_aql):
+            er_mod.get_candidates(db, ontology_id="o1", include_resolved=True)
+            er_mod.get_candidates(db, ontology_id="o1")  # default = False
+
+        assert captured[0]["include_resolved"] is True
+        assert captured[1]["include_resolved"] is False

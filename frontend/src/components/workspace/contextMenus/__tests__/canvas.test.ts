@@ -39,6 +39,7 @@ function makeActions(
     setFeedbackLearning: jest.fn(),
     setEdgeRepair: jest.fn(),
     setRevisionsInbox: jest.fn(),
+    setMergeCandidates: jest.fn(),
     setOntologyDelete: jest.fn(),
     exportOntology: jest.fn(),
     removeImportEdge: jest.fn(),
@@ -242,6 +243,35 @@ describe("buildCanvasContextMenu", () => {
     expect(actions.setRevisionsInbox).toHaveBeenCalledWith({
       key: "ont-active",
       name: "ont-active",
+    });
+  });
+
+  // Stream 2 PR 1 -- Find Duplicates… opens the MergeCandidatesOverlay.
+  // Same per-ontology gating as Show Pending Revisions because ER has
+  // nothing to run against without an open ontology.
+  it("hides Find Duplicates… when no ontology is selected", () => {
+    const actions = makeActions({ selectedOntologyId: null });
+    const items = buildCanvasContextMenu({}, actions);
+
+    const visibleLabels = items
+      .filter((it) => !it.separator)
+      .map((it) => it.label);
+
+    expect(visibleLabels).not.toContain("Find Duplicates…");
+    expect(actions.setMergeCandidates).not.toHaveBeenCalled();
+  });
+
+  it("shows Find Duplicates… when an ontology is selected and dispatches with that key", () => {
+    const actions = makeActions({ selectedOntologyId: "ont-er-target" });
+    const items = buildCanvasContextMenu({}, actions);
+
+    const findDups = items.find((it) => it.label === "Find Duplicates…");
+    expect(findDups).toBeDefined();
+
+    findDups!.onClick!();
+    expect(actions.setMergeCandidates).toHaveBeenCalledWith({
+      key: "ont-er-target",
+      name: "ont-er-target",
     });
   });
 });

@@ -145,6 +145,20 @@ export function buildCanvasContextMenu(
         actions.setRevisionsInbox({ key: ontKey, name: ontKey });
       },
     });
+    // Stream 2: ER (entity resolution) on the open ontology.
+    // Triggers a full pipeline run + opens an overlay listing the
+    // candidate duplicate pairs. Same overlay-not-route rule (§9)
+    // and same per-ontology gating as the revisions inbox above --
+    // ER has nothing to run on if no ontology is open.
+    items.push({
+      label: "Find Duplicates…",
+      icon: "🔍",
+      onClick: () => {
+        const ontKey = actions.selectedOntologyId;
+        if (!ontKey) return;
+        actions.setMergeCandidates({ key: ontKey, name: ontKey });
+      },
+    });
   }
 
   return items;

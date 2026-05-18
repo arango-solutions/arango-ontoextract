@@ -75,6 +75,16 @@ export type RevisionsInboxArg = {
   name: string;
 } | null;
 
+/** Argument shape for ``setMergeCandidates`` (``null`` closes the overlay).
+ *  Drives the Stream 2 ``MergeCandidatesOverlay``: triggers an ER pipeline
+ *  run for the named ontology and lists merge candidate pairs for
+ *  curator decision. Same overlay-not-route rule (``ui-architecture.mdc``
+ *  rule 9). */
+export type MergeCandidatesArg = {
+  key: string;
+  name: string;
+} | null;
+
 /** Argument shape for ``setOntologyDelete`` (``null`` closes the dialog).
  *  Drives the H.4 ``OntologyDeleteDialog``: fetches a deletion-impact
  *  preview before allowing the typed-name confirmation. */
@@ -204,6 +214,11 @@ export interface WorkspaceContextMenuActions {
    *  FLAG_FOR_CURATION revisions from the belief-revision pipeline.
    *  ``null`` closes the overlay. Same overlay-not-route rule. */
   setRevisionsInbox: (arg: RevisionsInboxArg) => void;
+  /** Opens the Stream 2 ``MergeCandidatesOverlay`` for one ontology —
+   *  triggers an ER pipeline run, then lets the curator accept /
+   *  reject each duplicate candidate pair. ``null`` closes the
+   *  overlay. Same overlay-not-route rule. */
+  setMergeCandidates: (arg: MergeCandidatesArg) => void;
   exportOntology: (ontologyKey: string, format: "turtle" | "jsonld" | "csv") => void;
 
   // ── Imports (Stream 1 H.16) ───────────────────────────────────────────

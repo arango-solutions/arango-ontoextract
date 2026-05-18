@@ -14,6 +14,7 @@ import ConfirmDialog from "@/components/workspace/ConfirmDialog";
 import OntologyDeleteDialog from "@/components/workspace/OntologyDeleteDialog";
 import ManageImportsOverlay from "@/components/workspace/ManageImportsOverlay";
 import RevisionsInboxOverlay from "@/components/workspace/RevisionsInboxOverlay";
+import MergeCandidatesOverlay from "@/components/workspace/MergeCandidatesOverlay";
 import FeedbackLearningOverlay from "@/components/workspace/FeedbackLearningOverlay";
 import CanvasLensLegend from "@/components/workspace/CanvasLensLegend";
 import ToastHost from "@/components/workspace/ToastHost";
@@ -177,6 +178,15 @@ function WorkspacePageInner() {
     name: string;
   } | null>(null);
   const [revisionsInbox, setRevisionsInbox] = useState<{
+    key: string;
+    name: string;
+  } | null>(null);
+  // Stream 2 PR 1: ER merge-candidates overlay state. Opened from the
+  // canvas context menu's "Find Duplicates…" action; the overlay
+  // itself triggers the ER run and lists candidate pairs for
+  // accept/reject. Same per-ontology gating as ``revisionsInbox`` --
+  // ER has nothing to run on without an open ontology.
+  const [mergeCandidates, setMergeCandidates] = useState<{
     key: string;
     name: string;
   } | null>(null);
@@ -1169,6 +1179,7 @@ function WorkspacePageInner() {
     setFeedbackLearning,
     setEdgeRepair,
     setRevisionsInbox,
+    setMergeCandidates,
     exportOntology,
     removeImportEdge,
     retryRun,
@@ -1540,6 +1551,23 @@ function WorkspacePageInner() {
             // GAP_FILL/RETRACT) decisions show up immediately. The
             // explorer also gets a nonce bump so per-ontology badges
             // refresh.
+            refreshGraph();
+            setExplorerLibraryNonce((n) => n + 1);
+          }}
+        />
+      )}
+
+      {mergeCandidates && (
+        <MergeCandidatesOverlay
+          ontologyId={mergeCandidates.key}
+          ontologyName={mergeCandidates.name}
+          onClose={() => setMergeCandidates(null)}
+          onChanged={() => {
+            // Accepted merges expire the losing class via the temporal
+            // pattern, so the canvas needs to re-fetch to drop it.
+            // Rejected merges only soft-mark the similarTo edge so the
+            // canvas itself is unchanged -- but refreshing is cheap and
+            // keeps the behaviour symmetric with the revisions inbox.
             refreshGraph();
             setExplorerLibraryNonce((n) => n + 1);
           }}

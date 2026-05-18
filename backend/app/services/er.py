@@ -266,8 +266,16 @@ def get_candidates(
     min_score: float = 0.0,
     limit: int = 50,
     offset: int = 0,
+    include_resolved: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return merge candidate pairs with similarity scores."""
+    """Return merge candidate pairs with similarity scores.
+
+    ``include_resolved=False`` (the default) hides pairs that have been
+    accepted (``accepted_at`` set by ``accept_candidate``) or rejected
+    (``rejected_at`` set by ``reject_candidate``) so a freshly-loaded
+    inbox does not re-surface decisions the user already made. Pass
+    ``True`` for auditing / "show resolved" UIs.
+    """
     if db is None:
         db = get_db()
 
@@ -281,6 +289,7 @@ def get_candidates(
 FOR e IN similarTo
   FILTER e.ontology_id == @oid
   FILTER e.combined_score >= @min_score
+  FILTER @include_resolved OR (e.accepted_at == null AND e.rejected_at == null)
   SORT e.combined_score DESC
   LIMIT @offset, @limit
   LET source = DOCUMENT(e._from)
@@ -295,16 +304,176 @@ FOR e IN similarTo
     target_uri: target.uri,
     combined_score: e.combined_score,
     field_scores: e.field_scores,
-    topological_score: e.topological_score
+    topological_score: e.topological_score,
+    accepted_at: e.accepted_at,
+    rejected_at: e.rejected_at
   }""",
             bind_vars={
                 "oid": ontology_id,
                 "min_score": min_score,
                 "limit": limit,
                 "offset": offset,
+                "include_resolved": include_resolved,
             },
         )
     )
+
+
+def accept_candidate(
+    db: StandardDatabase | None = None,
+    *,
+    pair_id: str,
+    strategy: str = "most_complete",
+) -> dict[str, Any]:
+    """Accept a merge candidate pair by ``pair_id``.
+
+    Looks up the source / target keys from the ``similarTo`` edge,
+    delegates to :func:`execute_merge` for the actual record merge +
+    temporal expiry of the losing entity, then stamps the edge with
+    ``accepted_at`` so :func:`get_candidates` does not re-surface it.
+
+    Raises ``ValueError`` if the ``similarTo`` collection is missing
+    or the pair_id does not exist -- the API layer translates these
+    into HTTP 404.
+    """
+    if db is None:
+        db = get_db()
+
+    if not db.has_collection("similarTo"):
+        raise ValueError("similarTo collection not found")
+
+    # ``.get()`` returns ``dict | AsyncJob | BatchJob | None`` in the stubs;
+    # in our sync code path it's always a dict-or-None. Cast keeps mypy
+    # honest without runtime cost.
+    edge = cast("dict[str, Any] | None", db.collection("similarTo").get(pair_id))
+    if not edge:
+        raise ValueError(f"Candidate pair '{pair_id}' not found")
+
+    # Idempotency: if the pair was already accepted, return the existing
+    # decision instead of re-merging (which would crash because the
+    # source entity is already expired).
+    if edge.get("accepted_at"):
+        return {
+            "pair_id": pair_id,
+            "status": "already_accepted",
+            "accepted_at": edge["accepted_at"],
+        }
+    if edge.get("rejected_at"):
+        raise ValueError(
+            f"Candidate pair '{pair_id}' was already rejected at "
+            f"{edge['rejected_at']}; cannot accept after reject"
+        )
+
+    # _from / _to are full document IDs like "ontology_classes/<key>".
+    source_key = str(edge["_from"]).split("/", 1)[-1]
+    target_key = str(edge["_to"]).split("/", 1)[-1]
+
+    merge_result = execute_merge(
+        db,
+        source_key=source_key,
+        target_key=target_key,
+        strategy=strategy,
+    )
+
+    accepted_at = time.time()
+    db.collection("similarTo").update(
+        {
+            "_key": pair_id,
+            "accepted_at": accepted_at,
+        }
+    )
+
+    return {
+        "pair_id": pair_id,
+        "status": "accepted",
+        "accepted_at": accepted_at,
+        "merge_result": merge_result,
+    }
+
+
+def reject_candidate(
+    db: StandardDatabase | None = None,
+    *,
+    pair_id: str,
+) -> dict[str, Any]:
+    """Reject a merge candidate pair by ``pair_id``.
+
+    Soft-marks the ``similarTo`` edge with ``rejected_at`` so it does
+    not reappear in :func:`get_candidates`. The edge itself stays in
+    place so the rejection is auditable + reversible (set
+    ``rejected_at = None`` to undo).
+
+    Raises ``ValueError`` for missing collection / missing pair, same
+    contract as :func:`accept_candidate`.
+    """
+    if db is None:
+        db = get_db()
+
+    if not db.has_collection("similarTo"):
+        raise ValueError("similarTo collection not found")
+
+    edge = cast("dict[str, Any] | None", db.collection("similarTo").get(pair_id))
+    if not edge:
+        raise ValueError(f"Candidate pair '{pair_id}' not found")
+
+    # Idempotent: already rejected -> return existing decision; already
+    # accepted -> hard-fail because the merge already executed and
+    # "reject" would be a lie.
+    if edge.get("rejected_at"):
+        return {
+            "pair_id": pair_id,
+            "status": "already_rejected",
+            "rejected_at": edge["rejected_at"],
+        }
+    if edge.get("accepted_at"):
+        raise ValueError(
+            f"Candidate pair '{pair_id}' was already accepted at "
+            f"{edge['accepted_at']}; cannot reject after merge"
+        )
+
+    rejected_at = time.time()
+    db.collection("similarTo").update(
+        {
+            "_key": pair_id,
+            "rejected_at": rejected_at,
+        }
+    )
+
+    return {
+        "pair_id": pair_id,
+        "status": "rejected",
+        "rejected_at": rejected_at,
+    }
+
+
+def explain_candidate(
+    db: StandardDatabase | None = None,
+    *,
+    pair_id: str,
+) -> dict[str, Any]:
+    """Resolve a ``similarTo`` pair_id to its underlying keys and
+    return :func:`explain_match` for the pair.
+
+    Lets the workspace inbox row deep-link "Why this match?" without
+    the caller having to fetch the candidate first and pull the two
+    keys out of its response. Raises ``ValueError`` on missing
+    collection / missing pair (translated to HTTP 404).
+    """
+    if db is None:
+        db = get_db()
+
+    if not db.has_collection("similarTo"):
+        raise ValueError("similarTo collection not found")
+
+    edge = cast("dict[str, Any] | None", db.collection("similarTo").get(pair_id))
+    if not edge:
+        raise ValueError(f"Candidate pair '{pair_id}' not found")
+
+    source_key = str(edge["_from"]).split("/", 1)[-1]
+    target_key = str(edge["_to"]).split("/", 1)[-1]
+    result = explain_match(db, key1=source_key, key2=target_key)
+    result["pair_id"] = pair_id
+    return result
 
 
 def get_clusters(

@@ -106,6 +106,11 @@ async def list_candidates(
     min_score: float = Query(0.0, ge=0.0, le=1.0),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    include_resolved: bool = Query(
+        False,
+        description="When true, returns pairs that have already been "
+        "accepted or rejected. Default false hides resolved decisions.",
+    ),
 ) -> dict[str, Any]:
     """List merge candidate pairs with scores (paginated)."""
     run = er_svc.get_run_status(run_id)
@@ -121,8 +126,84 @@ async def list_candidates(
         min_score=min_score,
         limit=limit,
         offset=offset,
+        include_resolved=include_resolved,
     )
     return {"data": candidates, "total_count": len(candidates)}
+
+
+# ---------------------------------------------------------------------------
+# Stream 2 PR 1 -- per-pair decisions (accept / reject / explain).
+#
+# Routes are scoped by pair_id (not run_id) because the ``similarTo``
+# edge is the source of truth for a candidate and is globally unique by
+# _key. Run-id-scoped wrappers can be added later for "this UI session"
+# UX, but the underlying decision is on the pair, not the run.
+# ---------------------------------------------------------------------------
+
+
+class ERCandidateAcceptRequest(BaseModel):
+    """Optional overrides when accepting a merge candidate."""
+
+    strategy: str = Field(
+        "most_complete",
+        description="Golden-record selection strategy. Currently "
+        "supports 'most_complete' (default) and 'newest'.",
+    )
+
+
+@router.post("/candidates/{pair_id}/accept")
+async def accept_candidate(
+    pair_id: str,
+    body: ERCandidateAcceptRequest | None = None,
+) -> dict[str, Any]:
+    """Accept a merge candidate by ``pair_id``.
+
+    Looks up the source/target from the underlying ``similarTo`` edge,
+    runs the merge, and marks the edge as accepted so the inbox does
+    not re-surface it. Idempotent: a second accept returns
+    ``status: "already_accepted"`` without re-merging.
+    """
+    strategy = body.strategy if body else "most_complete"
+    try:
+        return er_svc.accept_candidate(pair_id=pair_id, strategy=strategy)
+    except ValueError as exc:
+        # ValueError = pair not found, collection missing, or
+        # already-rejected (cannot accept-after-reject) -- all 404 / 409
+        # shaped errors that the workspace overlay can render as a
+        # toast. We distinguish via the error message so the UI can
+        # disambiguate if it wants to.
+        message = str(exc)
+        status = 404 if "not found" in message.lower() else 409
+        raise HTTPException(status_code=status, detail=message) from exc
+
+
+@router.post("/candidates/{pair_id}/reject")
+async def reject_candidate(pair_id: str) -> dict[str, Any]:
+    """Reject a merge candidate by ``pair_id``.
+
+    Soft-marks the ``similarTo`` edge with ``rejected_at`` so it does
+    not re-surface in the inbox. Idempotent. Rejection of an
+    already-accepted pair is a 409 (the merge already happened).
+    """
+    try:
+        return er_svc.reject_candidate(pair_id=pair_id)
+    except ValueError as exc:
+        message = str(exc)
+        status = 404 if "not found" in message.lower() else 409
+        raise HTTPException(status_code=status, detail=message) from exc
+
+
+@router.get("/candidates/{pair_id}/explain")
+async def explain_candidate(pair_id: str) -> dict[str, Any]:
+    """Field-by-field similarity breakdown for a candidate ``pair_id``.
+
+    Convenience wrapper -- equivalent to looking up the pair's source
+    and target keys, then calling :func:`POST /explain` with them.
+    """
+    try:
+        return er_svc.explain_candidate(pair_id=pair_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/runs/{run_id}/clusters")

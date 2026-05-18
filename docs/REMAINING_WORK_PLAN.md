@@ -217,7 +217,7 @@ See `docs/adr/006-pgt-aligned-property-collections.md` for full design rationale
 
 ### Stream 2: Entity Resolution Integration
 **PRD:** §6.7 FR-7.1–7.11
-**Duration:** 1.5 weeks
+**Duration:** 1.5 weeks (rescoped — see plan-vs-reality audit below)
 **Priority:** P1 — key differentiator for ontology quality
 **Dependencies:** None (can run in parallel with Stream 1)
 **Team Size:** 1 backend + 1 frontend developer
@@ -227,21 +227,47 @@ See `docs/adr/006-pgt-aligned-property-collections.md` for full design rationale
 - Configure blocking, scoring, clustering, and merge workflows for ontology concepts
 - Surface merge candidates in the curation UI with explanations
 
+#### Plan-vs-reality audit (v0.4.0-dev)
+
+When Stream 2 was re-opened in v0.4.0-dev we discovered the plan tasks
+ER.1–ER.9 had drifted significantly from the codebase. Most of the
+backend was already shipped — hand-rolled inside `app/services/er.py`
+rather than via the `arango-entity-resolution` library that is listed
+in `pyproject.toml` but never actually imported. The frontend
+`MergeCandidates` / `MergeExecutor` components on the deprecated
+`/entity-resolution` route were built against an aspirational API
+(`/api/v1/er/candidates`, `/api/v1/er/candidates/{pair_id}/accept`)
+that the backend never implemented. The actual shipped REST surface
+is run-id-scoped: `/api/v1/er/runs/{run_id}/candidates`.
+
+Stream 2 is therefore split into two PRs:
+
+- **PR 1 — Workspace ER overlay (DONE)** — fresh `MergeCandidatesOverlay`
+  in the workspace, bound to the real backend, with new per-pair
+  accept / reject / explain endpoints.
+- **PR 2 — Library refactor (PENDING)** — replace the hand-rolled
+  blocking / clustering / golden-records inside `services/er.py` with
+  calls into `arango-entity-resolution`. Zero user-visible change;
+  unlocks the library's better blocking strategies and vector indexes
+  for future ER work.
+
 #### Tasks
 
 | # | Task | Type | Estimate | Description |
 |---|------|------|----------|-------------|
-| ER.1 | Install and configure `arango-entity-resolution` | Backend | 3h | Add library dependency. Create `ERPipelineConfig` for ontology matching: vector blocking on class label/description embeddings, BM25 on labels, weighted field similarity (Jaro-Winkler on label, Levenshtein on description). |
-| ER.2 | Replace ER agent stub | Backend | 6h | `er_agent_node` calls `ConfigurableERPipeline` with the ontology config. Writes similarity edges to `similarTo` collection. Stores merge candidates in pipeline state. |
-| ER.3 | Topological similarity scoring | Backend | 4h | AOE-specific scoring layer: compare graph neighborhoods (shared properties via `has_property`, shared parents via `subclass_of`). Add as additional dimension to `final_score`. |
-| ER.4 | WCC clustering | Backend | 3h | Configure `WCCClusteringService` with auto backend selection. Group similar entities into clusters. |
-| ER.5 | Merge execution service | Backend | 4h | Wire `GoldenRecordService` for merge execution. Field-level strategy: `most_complete_with_quality`. Merged entity gets combined properties; losing entity expires with temporal versioning. |
-| ER.6 | ER run API endpoints | Backend | 3h | `POST /er/run` (trigger ER on an ontology), `GET /er/runs/{id}` (status), `GET /er/runs/{id}/candidates` (pairs with scores), `GET /er/runs/{id}/clusters` (WCC clusters). |
-| ER.7 | Merge candidate UI | Frontend | 6h | Merge candidates panel in curation UI: show candidate pairs with similarity scores, field-by-field comparison, `explain_match` evidence, accept/reject/skip actions. |
-| ER.8 | Cross-tier resolution | Backend | 4h | `resolve_entity_cross_collection` matches local concepts against domain ontology. Suggests `owl:equivalentClass` or `rdfs:subClassOf` links. |
-| ER.9 | ER MCP tools integration | Backend | 3h | Proxy ER-specific MCP tool calls to the `arango-entity-resolution` MCP server. |
+| ER.1 | Install and configure `arango-entity-resolution` | Backend | **PARTIAL (v0.4.0-dev)** | Library is in `backend/pyproject.toml` as `arango-entity-resolution>=0.1`, but `services/er.py` never imports it — every primitive (blocking, scoring, clustering, golden-record) is hand-rolled inline. Replacing the hand-rolled code with library calls is **PR 2**. |
+| ER.2 | Replace ER agent stub | Backend | **DONE hand-rolled (v0.4.0-dev)** | `app/extraction/agents/er_agent.py::er_agent_node` is a real LangGraph node: pulls existing classes for the open ontology, scores each extracted class against them via `score_existing_class_vs_extracted`, populates `merge_candidates` on the pipeline state, and delegates cross-tier edge creation to `app/services/cross_tier.py::create_cross_tier_edges`. Uses hand-rolled scoring instead of the library — bundled into PR 2. |
+| ER.3 | Topological similarity scoring | Backend | **DONE (v0.4.0-dev)** | `app/services/er_topology.py` implements a weighted-Jaccard score across shared properties, parents, children, and overall neighborhood. Wired into both `explain_match` and `_execute_scoring` (combined-score component). Batch variant `compute_batch_topological_similarity` caches per-class neighborhoods so the n×n pipeline does O(n) DB reads instead of O(n²). |
+| ER.4 | WCC clustering | Backend | **DONE hand-rolled (v0.4.0-dev)** | Union-Find clustering inside `_execute_clustering` -- not the library's `WCCClusteringService`. PR 2 will swap to the library for auto backend selection + the optional graph-DB-side execution path on large ontologies. |
+| ER.5 | Merge execution service | Backend | **DONE hand-rolled (v0.4.0-dev)** | `execute_merge` calls `_create_golden_record` (strategies: `most_complete`, `newest`), then `update_class` + `expire_entity` for temporal-correct retire-on-merge. Also stamps `golden_records` collection when present. PR 2 will route through the library's `GoldenRecordService` so the `most_complete_with_quality` strategy and field-level provenance come for free. |
+| ER.6 | ER run API endpoints | Backend | **DONE (v0.4.0-dev)** | Shipped under `/api/v1/er/`: `POST /run`, `GET /runs/{id}`, `GET /runs/{id}/candidates`, `GET /runs/{id}/clusters`, `POST /explain`, `POST /merge`, `POST /cross-tier`, `GET/PUT /config`. PR 1 added three more per-pair routes: `POST /candidates/{pair_id}/accept`, `POST /candidates/{pair_id}/reject`, `GET /candidates/{pair_id}/explain` — the workspace overlay binds to these. `GET /runs/{id}/candidates` now accepts `?include_resolved=true` so prior decisions can be audited. |
+| ER.7 | Merge candidate UI | Frontend | **DONE in workspace (v0.4.0-dev, PR 1)** | `frontend/src/components/workspace/MergeCandidatesOverlay.tsx` ships an overlay-not-route per `ui-architecture.mdc` rule 9. Triggers `POST /api/v1/er/run` on mount, fetches candidates from `GET /runs/{id}/candidates`, lets the curator inline-accept / inline-reject / expand-explain each pair. Optimistic local removal on decision; toast feedback for success and failures (no `window.confirm`). Opened from the canvas right-click context menu (`Find Duplicates…`) when an ontology is loaded -- same per-ontology gating as `Show Pending Revisions`. The legacy `/entity-resolution` page and its `MergeCandidates` / `MergeExecutor` components remain on the deprecated path -- do not extend; they target an API shape that was never implemented. |
+| ER.8 | Cross-tier resolution | Backend | **DONE hand-rolled (v0.4.0-dev)** | `get_cross_tier_candidates` walks every (local, domain) class pair and combines `jaro_winkler(label)` + `token_overlap(description)`. The agent-side companion `create_cross_tier_edges` (in `app/services/cross_tier.py`) materialises `extends_domain` edges for EXTENSION-classified entities. Library swap is part of PR 2. |
+| ER.9 | ER MCP tools integration | Backend | **DONE (v0.4.0-dev)** | Three tools registered in `app/mcp/tools/er.py`: `run_entity_resolution` (triggers pipeline), `explain_entity_match` (field-by-field breakdown), `get_entity_clusters` (WCC member lists). All delegate to `services/er.py`. Once PR 2 lands, the same tools transparently use the library implementations. |
 
-**Exit Criteria:** ER agent produces real merge candidates. Candidates visible in curation UI with scores and explanations. Merge execution preserves temporal history.
+**Exit Criteria:**
+- **PR 1 (MET):** Workspace canvas right-click → "Find Duplicates…" runs ER for the open ontology and lists candidates in an overlay; per-pair accept/reject persists via the new `/candidates/{pair_id}/{accept,reject}` endpoints; explain expansion shows field-level scores; tests pass at 1707 backend + 591 frontend.
+- **PR 2 (PENDING):** `services/er.py` routes blocking / clustering / golden-record execution through `arango-entity-resolution` instead of hand-rolled code, with no user-visible behaviour change. Same test counts must still pass.
 
 ---
 
