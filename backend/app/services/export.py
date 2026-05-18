@@ -75,6 +75,12 @@ def _build_rdf_graph(ontology_id: str) -> Graph:
     g.add((ont_node, RDF.type, OWL.Ontology))
     g.add((ont_node, RDFS.label, Literal(ontology_label)))
 
+    # H.10 -- emit `owl:imports` triples for every live import edge.
+    # Done BEFORE classes/properties so the import header sits at the
+    # top of the Turtle serialization (consistent with how every
+    # standards body publishes their ontology files).
+    _add_imports_to_graph(db, g, ont_node, ontology_id)
+
     classes = list_classes(db, ontology_id=ontology_id, include_expired=False)
     for cls in classes:
         cls_uri = URIRef(cls["uri"])
@@ -114,6 +120,65 @@ def _build_rdf_graph(ontology_id: str) -> Graph:
         },
     )
     return g
+
+
+def _add_imports_to_graph(
+    db: Any,
+    g: Graph,
+    ont_node: URIRef,
+    ontology_id: str,
+) -> None:
+    """Emit one ``owl:imports`` triple per live ``imports`` edge (Stream 1 H.10).
+
+    The target URI comes from the target ontology's ``ontology_registry``
+    entry. If the target entry has no ``uri`` (older entries can predate
+    the URI requirement), we fall back to ``import_iri`` recorded on the
+    edge by ``sync_owl_imports_edges``; if neither is present the edge
+    is silently skipped rather than emitting a broken triple. The
+    skipped count is logged so operators can audit a stale registry
+    after the fact.
+    """
+    if not db.has_collection("imports"):
+        return
+
+    rows = list(
+        db.aql.execute(
+            """
+            FOR e IN imports
+              FILTER e._from == @from_id
+              FILTER e.expired == @never
+              LET target = DOCUMENT(e._to)
+              RETURN {
+                target_uri: target.uri,
+                import_iri: e.import_iri
+              }
+            """,
+            bind_vars={
+                "from_id": f"ontology_registry/{ontology_id}",
+                "never": NEVER_EXPIRES,
+            },
+        )
+    )
+
+    emitted = 0
+    skipped = 0
+    for row in rows:
+        target_uri = row.get("target_uri") or row.get("import_iri")
+        if not target_uri:
+            skipped += 1
+            continue
+        g.add((ont_node, OWL.imports, URIRef(str(target_uri))))
+        emitted += 1
+
+    if emitted or skipped:
+        log.info(
+            "emitted owl:imports triples",
+            extra={
+                "ontology_id": ontology_id,
+                "imports_emitted": emitted,
+                "imports_skipped": skipped,
+            },
+        )
 
 
 def _add_edges_to_graph(db: Any, g: Graph, ontology_id: str) -> None:

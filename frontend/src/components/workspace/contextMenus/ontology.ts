@@ -3,7 +3,8 @@
  *
  * Right-click on an ontology row in the asset explorer. Mirrors
  * ``ui-architecture.mdc`` §7 ("Ontology"): Open in Canvas · View Info ·
- * Edit Name & Description · Release · Manage Imports · View Quality Report ·
+ * Edit Name & Description · Release · Manage Imports ·
+ * View Dependency Graph · View Quality Report ·
  * View Feedback Learning · Export (Turtle / JSON-LD / CSV) · Delete.
  *
  * Notes:
@@ -76,6 +77,15 @@ export function buildOntologyContextMenu(
         if (!ontKey) return;
         const n = String(data.name ?? data.label ?? ontKey).trim();
         actions.setManageImports({ key: ontKey, name: n });
+      },
+    },
+    {
+      label: "View Dependency Graph…",
+      icon: "🔗",
+      onClick: () => {
+        if (!ontKey) return;
+        const n = String(data.name ?? data.label ?? ontKey).trim();
+        actions.setDependencyOverlay({ key: ontKey, name: n || ontKey });
       },
     },
     {

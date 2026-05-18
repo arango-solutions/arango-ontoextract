@@ -181,6 +181,184 @@ class TestExportOntology:
         assert len(g) >= 2  # ontology type + label
 
 
+class TestExportOwlImports:
+    """H.10 -- live `imports` edges must surface as `owl:imports` triples in exports.
+
+    The exporter mocks the ``imports`` AQL query directly (via a dispatcher
+    on ``db.aql.execute``) so we don't pull in the full bridge stack.
+    """
+
+    @staticmethod
+    def _db_with_imports(rows: list[dict[str, str | None]]) -> MagicMock:
+        """Mock DB whose ``imports`` query returns ``rows`` and whose
+        other edge queries (subclass_of, equivalent_class) return empty.
+        """
+        db = MagicMock()
+        db.has_collection.return_value = True
+
+        def _execute(query: str, bind_vars: dict[str, object] | None = None):
+            if "FOR e IN imports" in query:
+                return iter(list(rows))
+            return iter([])
+
+        db.aql.execute.side_effect = _execute
+        return db
+
+    @patch("app.services.export.get_db")
+    @patch("app.services.export.list_properties", return_value=[])
+    @patch("app.services.export.list_classes", return_value=[])
+    @patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY)
+    def test_imports_emitted_as_owl_imports(self, mock_reg, mock_cls, mock_props, mock_get_db):
+        mock_get_db.return_value = self._db_with_imports(
+            [
+                {"target_uri": "http://xmlns.com/foaf/0.1/", "import_iri": None},
+                {
+                    "target_uri": "http://purl.org/dc/terms/",
+                    "import_iri": "http://purl.org/dc/terms/",
+                },
+            ]
+        )
+
+        from app.services.export import export_ontology
+
+        ttl = export_ontology("test_ont")
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+
+        ont_uri = URIRef("http://example.org/test")
+        imports = {str(o) for o in g.objects(ont_uri, OWL.imports)}
+        assert imports == {
+            "http://xmlns.com/foaf/0.1/",
+            "http://purl.org/dc/terms/",
+        }
+
+    @patch("app.services.export.get_db")
+    @patch("app.services.export.list_properties", return_value=[])
+    @patch("app.services.export.list_classes", return_value=[])
+    @patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY)
+    def test_imports_fallback_to_import_iri_when_target_uri_missing(
+        self, mock_reg, mock_cls, mock_props, mock_get_db
+    ):
+        """Older registry rows can lack `uri`; the edge's own `import_iri`
+        is used as a safety net before silently skipping."""
+        mock_get_db.return_value = self._db_with_imports(
+            [
+                {"target_uri": None, "import_iri": "http://example.org/legacy"},
+            ]
+        )
+
+        from app.services.export import export_ontology
+
+        ttl = export_ontology("test_ont")
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+
+        ont_uri = URIRef("http://example.org/test")
+        imports = list(g.objects(ont_uri, OWL.imports))
+        assert imports == [URIRef("http://example.org/legacy")]
+
+    @patch("app.services.export.get_db")
+    @patch("app.services.export.list_properties", return_value=[])
+    @patch("app.services.export.list_classes", return_value=[])
+    @patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY)
+    def test_imports_skipped_when_no_uri_at_all(self, mock_reg, mock_cls, mock_props, mock_get_db):
+        """If both target.uri and import_iri are missing, drop the edge
+        rather than emit a malformed triple."""
+        mock_get_db.return_value = self._db_with_imports([{"target_uri": None, "import_iri": None}])
+
+        from app.services.export import export_ontology
+
+        ttl = export_ontology("test_ont")
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+
+        ont_uri = URIRef("http://example.org/test")
+        assert list(g.objects(ont_uri, OWL.imports)) == []
+
+    @patch("app.services.export.get_db")
+    @patch("app.services.export.list_properties", return_value=[])
+    @patch("app.services.export.list_classes", return_value=[])
+    @patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY)
+    def test_no_imports_emits_no_owl_imports_triples(
+        self, mock_reg, mock_cls, mock_props, mock_get_db
+    ):
+        mock_get_db.return_value = self._db_with_imports([])
+
+        from app.services.export import export_ontology
+
+        ttl = export_ontology("test_ont")
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+
+        ont_uri = URIRef("http://example.org/test")
+        assert list(g.objects(ont_uri, OWL.imports)) == []
+
+    @patch("app.services.export.get_db")
+    @patch("app.services.export.list_properties", return_value=[])
+    @patch("app.services.export.list_classes", return_value=[])
+    @patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY)
+    def test_imports_query_filters_by_source_and_temporal_expiry(
+        self, mock_reg, mock_cls, mock_props, mock_get_db
+    ):
+        """Verify the AQL filters on both `_from = ontology_registry/{id}`
+        and `expired == NEVER_EXPIRES`. A regression here would either
+        leak imports from other ontologies or surface soft-deleted edges.
+        """
+        captured: list[tuple[str, dict[str, object]]] = []
+
+        db = MagicMock()
+        db.has_collection.return_value = True
+
+        def _execute(query: str, bind_vars: dict[str, object] | None = None):
+            captured.append((query, bind_vars or {}))
+            return iter([])
+
+        db.aql.execute.side_effect = _execute
+        mock_get_db.return_value = db
+
+        from app.services.export import export_ontology
+
+        export_ontology("test_ont")
+
+        imports_calls = [(q, b) for q, b in captured if "FOR e IN imports" in q]
+        assert len(imports_calls) == 1, "imports must be queried exactly once"
+        query, bind_vars = imports_calls[0]
+        assert "e.expired == @never" in query
+        assert "e._from == @from_id" in query
+        assert bind_vars["from_id"] == "ontology_registry/test_ont"
+        # NEVER_EXPIRES sentinel must be bound -- value is sys.maxsize.
+        import sys
+
+        assert bind_vars["never"] == sys.maxsize
+
+    @patch("app.services.export.get_db")
+    @patch("app.services.export.list_properties", return_value=[])
+    @patch("app.services.export.list_classes", return_value=[])
+    @patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY)
+    def test_imports_skipped_when_collection_missing(
+        self, mock_reg, mock_cls, mock_props, mock_get_db
+    ):
+        """Defensive: a fresh test DB without the `imports` collection
+        should export cleanly rather than crash with `collection not
+        found`. Mirrors the H.2 defensive guards.
+        """
+        db = MagicMock()
+        db.has_collection.side_effect = lambda name: name != "imports"
+        db.aql.execute.return_value = iter([])
+        mock_get_db.return_value = db
+
+        from app.services.export import export_ontology
+
+        ttl = export_ontology("test_ont")
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+
+        ont_uri = URIRef("http://example.org/test")
+        assert list(g.objects(ont_uri, OWL.imports)) == []
+        # AQL must not have been called for imports.
+        assert all("FOR e IN imports" not in str(call.args) for call in db.aql.execute.mock_calls)
+
+
 class TestExportJsonld:
     @patch("app.services.export.get_db")
     @patch("app.services.export.list_properties", return_value=_MOCK_PROPERTIES)

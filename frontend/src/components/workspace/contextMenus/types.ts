@@ -55,6 +55,14 @@ export type ManageImportsArg = {
   name: string;
 } | null;
 
+/** Argument shape for ``setDependencyOverlay`` (``null`` closes the overlay).
+ *  Drives the H.7 ``ImportsDependencyOverlay`` -- DAG visualisation of
+ *  ``owl:imports`` ancestors + dependents anchored at one ontology. */
+export type DependencyOverlayArg = {
+  key: string;
+  name: string;
+} | null;
+
 /** Argument shape for ``setEdgeRepair`` (``null`` closes the overlay). */
 export type EdgeRepairArg = {
   key: string;
@@ -174,7 +182,17 @@ export interface WorkspaceContextMenuActions {
   setRenameOntology: (arg: RenameOntologyArg) => void;
   setReleaseOntology: (arg: ReleaseOntologyArg) => void;
   setShowCreateOntology: (show: boolean) => void;
+  /** Opens the H.6 ``CatalogBrowserOverlay`` — one-click import of
+   *  standard ontologies from the bundled catalog. Overlay, not a
+   *  route, per ``ui-architecture.mdc`` rule 9. */
+  setShowCatalogBrowser: (show: boolean) => void;
   setManageImports: (arg: ManageImportsArg) => void;
+  /** Opens the H.7 ``ImportsDependencyOverlay`` — DAG canvas of the
+   *  ``owl:imports`` ancestors and dependents of one ontology, sourced
+   *  from ``GET /api/v1/ontology/imports-graph``. Click-to-navigate
+   *  re-roots the graph and (when the user accepts the navigation hint)
+   *  switches the workspace selection. ``null`` closes the overlay. */
+  setDependencyOverlay: (arg: DependencyOverlayArg) => void;
   setFeedbackLearning: (arg: FeedbackLearningArg) => void;
   /** Opens the ``EdgeRepairOverlay`` for one ontology -- preview +
    *  apply for orphan ``ontology_object_properties`` (R3 violations).

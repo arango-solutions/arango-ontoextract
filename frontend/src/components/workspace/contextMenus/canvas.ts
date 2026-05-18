@@ -12,6 +12,7 @@
  *   Fit All Nodes
  *   Center View
  *   New Ontology…
+ *   Browse Standard Catalog…
  *   Review Feedback Learning
  *
  * Crucially: a lens change must NEVER relayout (§14). Layout changes always
@@ -118,6 +119,11 @@ export function buildCanvasContextMenu(
       label: "New Ontology…",
       icon: "➕",
       onClick: () => actions.setShowCreateOntology(true),
+    },
+    {
+      label: "Browse Standard Catalog…",
+      icon: "📚",
+      onClick: () => actions.setShowCatalogBrowser(true),
     },
     {
       label: "Review Feedback Learning",

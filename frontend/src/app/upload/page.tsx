@@ -51,6 +51,12 @@ export default function UploadPage() {
   const [extractingDocs, setExtractingDocs] = useState<Set<string>>(new Set());
   const [ontologyOptions, setOntologyOptions] = useState<OntologyOption[]>([]);
   const [targetOntologyId, setTargetOntologyId] = useState<string>("");
+  // H.8 -- multi-select of base ontologies whose URIs become `owl:imports`
+  // triples on the new extracted ontology. Separate from `targetOntologyId`
+  // (which means "merge into an EXISTING ontology") because base ontologies
+  // are the foundational vocabularies (FOAF, Dublin Core, etc.) the new
+  // ontology builds on, not the place results get written to.
+  const [baseOntologyIds, setBaseOntologyIds] = useState<string[]>([]);
   const [docOntologies, setDocOntologies] = useState<Record<string, { _key: string; name: string }[]>>({});
   const [mode, setMode] = useState<"extract" | "import">("extract");
   const [importState, setImportState] = useState<
@@ -106,11 +112,19 @@ export default function UploadPage() {
   const triggerExtraction = async (
     docId: string,
     ontologyId?: string,
+    baseIds?: string[],
   ): Promise<string | null> => {
     try {
       const payload: Record<string, unknown> = { document_id: docId };
       if (ontologyId) {
         payload.target_ontology_id = ontologyId;
+      }
+      // H.8 -- exclude the chosen target from base ids; "import yourself"
+      // would be rejected by the backend cycle/self check and just
+      // pollutes the request.
+      const filteredBases = (baseIds ?? []).filter((b) => b && b !== ontologyId);
+      if (filteredBases.length > 0) {
+        payload.base_ontology_ids = filteredBases;
       }
       const res = await fetch(backendUrl("/api/v1/extraction/run"), {
         method: "POST",
@@ -209,6 +223,7 @@ export default function UploadPage() {
     const runId = await triggerExtraction(
       docId,
       targetOntologyId || undefined,
+      baseOntologyIds,
     );
     setExtractingDocs((prev) => {
       const next = new Set(prev);
@@ -283,6 +298,7 @@ export default function UploadPage() {
       const runId = await triggerExtraction(
         data.doc_id,
         targetOntologyId || undefined,
+        baseOntologyIds,
       );
       setExtractionRunId(runId);
       setUploadState("success");
@@ -471,6 +487,46 @@ export default function UploadPage() {
               : "A new ontology will be created from the extraction results."}
           </p>
         </div>
+
+        {/* H.8 -- Base ontologies (owl:imports) selector.
+            Kept separate from the target so the user can pick "create new"
+            AND still declare imports on it. Hidden when the library is
+            empty so we don't ship a chooser with no choices. */}
+        {ontologyOptions.length > 0 && (
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+            <label
+              htmlFor="base-ontologies"
+              className="block text-sm font-medium text-gray-700 mb-2"
+            >
+              Base Ontologies <span className="font-normal text-gray-400">(owl:imports)</span>
+            </label>
+            <select
+              id="base-ontologies"
+              multiple
+              value={baseOntologyIds}
+              onChange={(e) =>
+                setBaseOntologyIds(
+                  Array.from(e.target.selectedOptions, (o) => o.value),
+                )
+              }
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              size={Math.min(6, Math.max(3, ontologyOptions.length))}
+            >
+              {ontologyOptions
+                .filter((o) => o._key !== targetOntologyId)
+                .map((o) => (
+                  <option key={o._key} value={o._key}>
+                    {o.name} ({o.class_count} classes, {o.tier})
+                  </option>
+                ))}
+            </select>
+            <p className="mt-1.5 text-xs text-gray-400">
+              {baseOntologyIds.length === 0
+                ? "Optional. Hold ⌘/Ctrl to select multiple. Each selected ontology becomes an owl:imports triple on the extracted ontology."
+                : `${baseOntologyIds.length} base ontolog${baseOntologyIds.length === 1 ? "y" : "ies"} selected.`}
+            </p>
+          </div>
+        )}
 
         {/* Drop zone */}
         <div

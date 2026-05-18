@@ -534,6 +534,17 @@ export default function LibraryPage() {
                     >
                       Open in Workspace
                     </a>
+                    {/* H.7 deep-link: ``overlay=dependencies`` query param
+                     *  tells the workspace page to auto-open the imports
+                     *  dependency overlay anchored at this ontology. */}
+                    <a
+                      href={withBasePath(
+                        `/workspace?ontologyId=${selectedOntology._key}&overlay=dependencies`,
+                      )}
+                      className="flex-1 text-center text-xs px-3 py-2 bg-white border border-indigo-200 hover:bg-indigo-50 text-indigo-700 rounded-lg transition-colors font-medium"
+                    >
+                      Dependencies
+                    </a>
                     <a
                       href={withBasePath(`/ontology/edit?ontologyId=${selectedOntology._key}`)}
                       className="flex-1 text-center text-xs px-3 py-2 border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-lg transition-colors font-medium"

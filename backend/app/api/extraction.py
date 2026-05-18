@@ -67,6 +67,11 @@ async def start_extraction(
     doc_ids = _resolve_doc_ids(body)
     db = get_db()
 
+    # `domain_ontology_ids` feeds the Tier 2 LLM context. Historically it
+    # absorbed `base_ontology_ids` too, so user-declared bases also showed
+    # up in the prompt; keep that for backwards compat AND pass bases
+    # through separately so the H.8 post-success hook can record
+    # `owl:imports` edges from the new ontology to each base.
     ontology_ids: list[str] = []
     if body.target_ontology_id:
         ontology_ids.append(body.target_ontology_id)
@@ -79,6 +84,7 @@ async def start_extraction(
         config_overrides=body.config,
         domain_ontology_ids=ontology_ids or None,
         target_ontology_id=body.target_ontology_id,
+        base_ontology_ids=body.base_ontology_ids,
     )
     background_tasks.add_task(
         extraction_service.execute_run,
@@ -87,6 +93,7 @@ async def start_extraction(
         config_overrides=body.config,
         domain_ontology_ids=ontology_ids or None,
         target_ontology_id=body.target_ontology_id,
+        base_ontology_ids=body.base_ontology_ids,
     )
     return StartRunResponse(
         run_id=run_record["_key"],

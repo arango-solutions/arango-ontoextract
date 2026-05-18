@@ -28,7 +28,9 @@ function makeActions(): WorkspaceContextMenuActions {
     setRenameOntology: jest.fn(),
     setReleaseOntology: jest.fn(),
     setShowCreateOntology: jest.fn(),
+    setShowCatalogBrowser: jest.fn(),
     setManageImports: jest.fn(),
+    setDependencyOverlay: jest.fn(),
     setFeedbackLearning: jest.fn(),
     setEdgeRepair: jest.fn(),
     setRevisionsInbox: jest.fn(),
@@ -70,6 +72,7 @@ describe("buildOntologyContextMenu", () => {
       "Edit name & description",
       "Release",
       "Manage Imports",
+      "View Dependency Graph…",
       "View Quality Report",
       "View Feedback Learning",
       "Repair Orphan Properties…",
@@ -77,6 +80,39 @@ describe("buildOntologyContextMenu", () => {
       "Export",
       "Delete",
     ]);
+  });
+
+  it("View Dependency Graph… seeds the dependency overlay with key + name", () => {
+    const actions = makeActions();
+    const items = buildOntologyContextMenu(
+      { _key: "ont-1", name: "WTW Ontology" },
+      actions,
+    );
+
+    items.find((it) => it.label === "View Dependency Graph…")!.onClick!();
+    expect(actions.setDependencyOverlay).toHaveBeenCalledWith({
+      key: "ont-1",
+      name: "WTW Ontology",
+    });
+  });
+
+  it("View Dependency Graph… is a no-op when the ontology has no key", () => {
+    const actions = makeActions();
+    const items = buildOntologyContextMenu({ name: "Floating" }, actions);
+
+    items.find((it) => it.label === "View Dependency Graph…")!.onClick!();
+    expect(actions.setDependencyOverlay).not.toHaveBeenCalled();
+  });
+
+  it("View Dependency Graph… falls back to the key when name + label are missing", () => {
+    const actions = makeActions();
+    const items = buildOntologyContextMenu({ _key: "ont-bare" }, actions);
+
+    items.find((it) => it.label === "View Dependency Graph…")!.onClick!();
+    expect(actions.setDependencyOverlay).toHaveBeenCalledWith({
+      key: "ont-bare",
+      name: "ont-bare",
+    });
   });
 
   it("Repair Orphan Properties seeds the edge-repair overlay with key + name", () => {

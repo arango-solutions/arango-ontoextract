@@ -8,6 +8,8 @@ import AssetExplorer from "@/components/workspace/AssetExplorer";
 import OntologyRenameDialog from "@/components/workspace/OntologyRenameDialog";
 import OntologyReleaseDialog from "@/components/workspace/OntologyReleaseDialog";
 import CreateOntologyDialog from "@/components/workspace/CreateOntologyDialog";
+import CatalogBrowserOverlay from "@/components/workspace/CatalogBrowserOverlay";
+import ImportsDependencyOverlay from "@/components/workspace/ImportsDependencyOverlay";
 import ConfirmDialog from "@/components/workspace/ConfirmDialog";
 import OntologyDeleteDialog from "@/components/workspace/OntologyDeleteDialog";
 import ManageImportsOverlay from "@/components/workspace/ManageImportsOverlay";
@@ -148,6 +150,11 @@ function WorkspacePageInner() {
     currentReleaseVersion?: string | null;
   } | null>(null);
   const [showCreateOntology, setShowCreateOntology] = useState(false);
+  const [showCatalogBrowser, setShowCatalogBrowser] = useState(false);
+  const [dependencyOverlay, setDependencyOverlay] = useState<{
+    key: string;
+    name: string;
+  } | null>(null);
   const [manageImports, setManageImports] = useState<{
     key: string;
     name: string;
@@ -306,6 +313,14 @@ function WorkspacePageInner() {
     const ontologyParam = searchParams.get("ontologyId");
     if (ontologyParam && !selectedOntologyId) {
       setSelectedOntologyId(ontologyParam);
+    }
+    // H.7 deep-link: ``/workspace?ontologyId=X&overlay=dependencies``
+    // auto-opens the imports dependency overlay. Used by the library
+    // aside ("Dependencies" link) so users go straight from the
+    // legacy library page into the workspace overlay.
+    const overlayParam = searchParams.get("overlay");
+    if (overlayParam === "dependencies" && ontologyParam) {
+      setDependencyOverlay({ key: ontologyParam, name: ontologyParam });
     }
   }, [searchParams, selectedOntologyId]);
 
@@ -896,7 +911,9 @@ function WorkspacePageInner() {
     setRenameOntology,
     setReleaseOntology,
     setShowCreateOntology,
+    setShowCatalogBrowser,
     setManageImports,
+    setDependencyOverlay,
     setFeedbackLearning,
     setEdgeRepair,
     setRevisionsInbox,
@@ -958,6 +975,7 @@ function WorkspacePageInner() {
             onSelectClass={handleSelectClassFromSidebar}
             selectedEdgeKey={selectedEdgeKey}
             onSelectEdge={handleSelectEdgeFromSidebar}
+            onOpenCatalogBrowser={() => setShowCatalogBrowser(true)}
           />
         </aside>
 
@@ -1193,6 +1211,28 @@ function WorkspacePageInner() {
           handleSelectOntology(id);
         }}
       />
+
+      {showCatalogBrowser && (
+        <CatalogBrowserOverlay
+          onClose={() => setShowCatalogBrowser(false)}
+          onImported={(newOntologyId) => {
+            setExplorerLibraryNonce((n) => n + 1);
+            handleSelectOntology(newOntologyId);
+          }}
+        />
+      )}
+
+      {dependencyOverlay && (
+        <ImportsDependencyOverlay
+          ontologyId={dependencyOverlay.key}
+          ontologyName={dependencyOverlay.name}
+          onClose={() => setDependencyOverlay(null)}
+          onNavigate={(id, name) => {
+            setDependencyOverlay(null);
+            handleSelectOntology(id, name);
+          }}
+        />
+      )}
 
       {manageImports && (
         <ManageImportsOverlay

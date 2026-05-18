@@ -33,7 +33,9 @@ function makeActions(
     setRenameOntology: jest.fn(),
     setReleaseOntology: jest.fn(),
     setShowCreateOntology: jest.fn(),
+    setShowCatalogBrowser: jest.fn(),
     setManageImports: jest.fn(),
+    setDependencyOverlay: jest.fn(),
     setFeedbackLearning: jest.fn(),
     setEdgeRepair: jest.fn(),
     setRevisionsInbox: jest.fn(),
@@ -75,6 +77,7 @@ describe("buildCanvasContextMenu", () => {
       "Fit All Nodes",
       "Center View",
       "New Ontology…",
+      "Browse Standard Catalog…",
       "Review Feedback Learning",
     ]);
   });
@@ -95,6 +98,7 @@ describe("buildCanvasContextMenu", () => {
       "Fit All Nodes",
       "Center View",
       "New Ontology…",
+      "Browse Standard Catalog…",
       "Review Feedback Learning",
     ]);
   });
@@ -194,6 +198,14 @@ describe("buildCanvasContextMenu", () => {
 
     items.find((it) => it.label === "New Ontology…")!.onClick!();
     expect(actions.setShowCreateOntology).toHaveBeenCalledWith(true);
+  });
+
+  it("Browse Standard Catalog… opens the catalog browser overlay", () => {
+    const actions = makeActions();
+    const items = buildCanvasContextMenu({}, actions);
+
+    items.find((it) => it.label === "Browse Standard Catalog…")!.onClick!();
+    expect(actions.setShowCatalogBrowser).toHaveBeenCalledWith(true);
   });
 
   it("Review Feedback Learning opens the overlay with no specific ontology", () => {

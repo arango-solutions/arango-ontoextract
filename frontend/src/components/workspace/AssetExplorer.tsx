@@ -53,6 +53,11 @@ interface AssetExplorerProps {
   selectedEdgeKey?: string | null;
   /** Fired when an edge/relation row is clicked in the sidebar. */
   onSelectEdge?: (edgeKey: string, ontologyId: string) => void;
+  /** Opens the H.6 standard-ontology catalog browser. Surfaced as a
+   *  discoverability hint in the "Ontologies" section empty state and
+   *  as a header "+" action so users can find one-click imports without
+   *  having to right-click on empty canvas first. */
+  onOpenCatalogBrowser?: () => void;
 }
 
 type SectionId = "documents" | "ontologies" | "runs";
@@ -115,6 +120,7 @@ export default function AssetExplorer({
   onSelectClass,
   selectedEdgeKey,
   onSelectEdge,
+  onOpenCatalogBrowser,
 }: AssetExplorerProps) {
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Record<SectionId, boolean>>({
@@ -352,6 +358,15 @@ export default function AssetExplorer({
           count={filteredOnt.length}
           expanded={expanded.ontologies}
           onToggle={() => toggleSection("ontologies")}
+          headerAction={
+            onOpenCatalogBrowser
+              ? {
+                  title: "Browse standard ontology catalog",
+                  icon: "📚",
+                  onClick: onOpenCatalogBrowser,
+                }
+              : undefined
+          }
         >
           {ontLoading && <LoadingRow />}
           {ontError && (
@@ -361,7 +376,18 @@ export default function AssetExplorer({
             />
           )}
           {!ontLoading && !ontError && filteredOnt.length === 0 && (
-            <EmptyRow label="No ontologies" />
+            <div className="px-3 py-3 text-xs text-gray-400 italic flex flex-col gap-1">
+              <span>No ontologies.</span>
+              {onOpenCatalogBrowser && (
+                <button
+                  type="button"
+                  onClick={onOpenCatalogBrowser}
+                  className="text-indigo-600 hover:text-indigo-800 not-italic font-medium text-left"
+                >
+                  📚 Browse standard catalog…
+                </button>
+              )}
+            </div>
           )}
           {filteredOnt.map((ont) => (
             <OntologyItem
@@ -430,6 +456,7 @@ function Section({
   expanded,
   onToggle,
   children,
+  headerAction,
 }: {
   id: string;
   icon: string;
@@ -438,22 +465,41 @@ function Section({
   expanded: boolean;
   onToggle: () => void;
   children: React.ReactNode;
+  /** Optional small button rendered after the count in the section header.
+   *  Stops click propagation so it never accidentally toggles the section. */
+  headerAction?: { title: string; icon: string; onClick: () => void };
 }) {
   return (
     <div data-testid={`section-${id}`}>
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide hover:bg-gray-50 transition-colors"
-      >
-        <span className="text-[10px] text-gray-400 w-3 text-center">
-          {expanded ? "▼" : "▶"}
-        </span>
-        <span>{icon}</span>
-        <span>{label}</span>
-        <span className="ml-auto text-gray-400 font-normal normal-case">
-          {count}
-        </span>
-      </button>
+      <div className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide hover:bg-gray-50 transition-colors">
+        <button
+          onClick={onToggle}
+          className="flex items-center gap-2 flex-1 text-left"
+        >
+          <span className="text-[10px] text-gray-400 w-3 text-center">
+            {expanded ? "▼" : "▶"}
+          </span>
+          <span>{icon}</span>
+          <span>{label}</span>
+          <span className="ml-auto text-gray-400 font-normal normal-case">
+            {count}
+          </span>
+        </button>
+        {headerAction && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              headerAction.onClick();
+            }}
+            title={headerAction.title}
+            aria-label={headerAction.title}
+            className="ml-1 text-gray-400 hover:text-indigo-600 text-sm leading-none px-1 py-0.5 rounded hover:bg-indigo-50"
+          >
+            {headerAction.icon}
+          </button>
+        )}
+      </div>
       {expanded && <div>{children}</div>}
     </div>
   );

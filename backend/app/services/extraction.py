@@ -57,6 +57,7 @@ def create_run_record(
     config_overrides: dict[str, Any] | None = None,
     domain_ontology_ids: list[str] | None = None,
     target_ontology_id: str | None = None,
+    base_ontology_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Create an extraction run record (synchronous).
 
@@ -102,6 +103,13 @@ def create_run_record(
         run_record["domain_ontology_ids"] = domain_ontology_ids
     if target_ontology_id:
         run_record["target_ontology_id"] = target_ontology_id
+    # H.8 -- separate from `domain_ontology_ids` (which feeds Tier 2
+    # context) because these become `owl:imports` edges from the new
+    # ontology post-success. Persist on the run record so retries and
+    # post-restart resumes pick them up the same way the existing
+    # `domain_ontology_ids` does.
+    if base_ontology_ids:
+        run_record["base_ontology_ids"] = base_ontology_ids
 
     if config_overrides:
         run_record["stats"].update(config_overrides)
@@ -145,6 +153,7 @@ async def execute_run(
     event_callback: Any | None = None,
     domain_ontology_ids: list[str] | None = None,
     target_ontology_id: str | None = None,
+    base_ontology_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Execute the extraction pipeline for an existing run record.
 
@@ -174,6 +183,9 @@ async def execute_run(
 
     if domain_ontology_ids is None:
         domain_ontology_ids = run_record.get("domain_ontology_ids")
+
+    if base_ontology_ids is None:
+        base_ontology_ids = run_record.get("base_ontology_ids")
 
     domain_context = ""
     if domain_ontology_ids:
@@ -306,6 +318,31 @@ async def execute_run(
                         validity_scores=final_state.get("validity_scores"),
                     )
                 _create_produced_by_edge(db, ontology_id=ontology_id, run_id=run_id)
+
+                # H.8 -- record `owl:imports` edges from this new
+                # ontology to every base ontology declared on the
+                # extraction request. Done post-success on purpose so a
+                # failed extraction doesn't leave orphan edges pointing
+                # to an unregistered ontology. Wrapped because import
+                # recording is not allowed to abort the run.
+                if base_ontology_ids:
+                    try:
+                        _record_base_ontology_imports(
+                            db,
+                            ontology_id=ontology_id,
+                            base_ontology_ids=base_ontology_ids,
+                            run_id=run_id,
+                        )
+                    except Exception:
+                        log.warning(
+                            "base ontology imports recording failed",
+                            exc_info=True,
+                            extra={
+                                "run_id": run_id,
+                                "ontology_id": ontology_id,
+                            },
+                        )
+
                 try:
                     from app.services.ontology_graphs import ensure_ontology_graph
 
@@ -1416,6 +1453,147 @@ def _update_existing_ontology(
     except Exception:
         log.warning("failed to update existing ontology %s", ontology_id, exc_info=True)
         return None
+
+
+def _record_base_ontology_imports(
+    db: StandardDatabase,
+    *,
+    ontology_id: str,
+    base_ontology_ids: list[str],
+    run_id: str,
+) -> dict[str, list[str]]:
+    """Record ``owl:imports`` edges from the newly-registered ontology to
+    every base ontology declared on the extraction request (Stream 1 H.8).
+
+    Mirrors the validation that ``add_ontology_import`` performs (target
+    must exist, no self-import, no duplicate, no cycle) but is
+    batch-friendly: a bad base id only skips that one edge rather than
+    failing the whole run. The skipped categories are returned so the
+    extraction logs (and any future UI surface) can show the user exactly
+    which bases were honoured.
+
+    Skipped categories:
+
+    * ``missing`` -- base ontology id is not in the registry.
+    * ``self`` -- the new ontology equals a base id (UI quirk; ignore).
+    * ``duplicate`` -- a live ``imports`` edge to that base already
+      exists. The pre-extraction registry entry has no edges so this
+      only fires when the user retries an extraction after manually
+      adding the same import.
+    * ``cycle`` -- adding the edge would create a cycle through the
+      named graph (matches ``add_ontology_import``'s 10-hop check).
+    """
+    summary: dict[str, list[str]] = {
+        "created": [],
+        "missing": [],
+        "self": [],
+        "duplicate": [],
+        "cycle": [],
+    }
+
+    if not base_ontology_ids:
+        return summary
+
+    if not db.has_collection("imports"):
+        log.warning(
+            "imports collection missing; skipping base ontology recording",
+            extra={"run_id": run_id, "ontology_id": ontology_id},
+        )
+        for bid in base_ontology_ids:
+            summary["missing"].append(bid)
+        return summary
+
+    from app.db import ontology_repo, registry_repo
+
+    from_id = f"ontology_registry/{ontology_id}"
+
+    for base_id in base_ontology_ids:
+        if base_id == ontology_id:
+            summary["self"].append(base_id)
+            continue
+
+        target = registry_repo.get_registry_entry(base_id, db=db)
+        if target is None:
+            summary["missing"].append(base_id)
+            log.warning(
+                "base ontology not in registry, skipping",
+                extra={"run_id": run_id, "ontology_id": ontology_id, "base_id": base_id},
+            )
+            continue
+
+        to_id = f"ontology_registry/{base_id}"
+
+        existing = list(
+            run_aql(
+                db,
+                "FOR e IN imports "
+                "FILTER e._from == @f AND e._to == @t AND e.expired == @never "
+                "RETURN e._key",
+                bind_vars={"f": from_id, "t": to_id, "never": NEVER_EXPIRES},
+            )
+        )
+        if existing:
+            summary["duplicate"].append(base_id)
+            continue
+
+        # Cycle check: would the base (transitively) already import us?
+        # Mirrors add_ontology_import's check so behaviour matches.
+        cycle_check = list(
+            run_aql(
+                db,
+                """
+                FOR v IN 1..10 OUTBOUND @target_id imports
+                  FILTER v._key == @source_key
+                  LIMIT 1
+                  RETURN true
+                """,
+                bind_vars={"target_id": to_id, "source_key": ontology_id},
+            )
+        )
+        if cycle_check:
+            summary["cycle"].append(base_id)
+            log.warning(
+                "skipping base import that would create a cycle",
+                extra={
+                    "run_id": run_id,
+                    "ontology_id": ontology_id,
+                    "base_id": base_id,
+                },
+            )
+            continue
+
+        try:
+            ontology_repo.create_edge(
+                db=db,
+                edge_collection="imports",
+                from_id=from_id,
+                to_id=to_id,
+                data={"import_iri": target.get("uri", "")},
+            )
+            summary["created"].append(base_id)
+        except Exception:
+            # Defensive: a write failure for one base must not abort the
+            # rest of the recording or the surrounding extraction.
+            log.warning(
+                "failed to create base import edge",
+                exc_info=True,
+                extra={
+                    "run_id": run_id,
+                    "ontology_id": ontology_id,
+                    "base_id": base_id,
+                },
+            )
+            summary["missing"].append(base_id)
+
+    log.info(
+        "recorded base ontology imports",
+        extra={
+            "run_id": run_id,
+            "ontology_id": ontology_id,
+            "summary": {k: len(v) for k, v in summary.items()},
+        },
+    )
+    return summary
 
 
 def _auto_register_ontology(
