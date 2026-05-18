@@ -320,3 +320,24 @@ class TestExtractionRoutes:
         assert results == {"classes": []}
         assert retry.new_run_id == "r2"
         assert cost == {"usd": 1.23}
+
+    @pytest.mark.asyncio
+    async def test_get_run_cost_passes_refresh_flag(self):
+        """Stream 12 T7 -- ``?refresh=true`` must be threaded through
+        to the service so the cache can be bypassed on demand."""
+        db = MagicMock()
+        mock_cost = MagicMock(return_value={"quality_from_cache": False})
+        with (
+            patch("app.api.extraction.get_db", return_value=db),
+            patch("app.api.extraction.extraction_service.get_run_cost", mock_cost),
+        ):
+            cached = await get_run_cost("r1")
+            refreshed = await get_run_cost("r1", refresh=True)
+
+        assert cached == {"quality_from_cache": False}
+        assert refreshed == {"quality_from_cache": False}
+
+        # Default call -> refresh=False
+        assert mock_cost.call_args_list[0].kwargs["refresh"] is False
+        # Explicit -> refresh=True
+        assert mock_cost.call_args_list[1].kwargs["refresh"] is True

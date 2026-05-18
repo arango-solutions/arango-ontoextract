@@ -293,7 +293,14 @@ async def retry_run(run_id: str) -> RetryResponse:
 
 
 @router.get("/runs/{run_id}/cost")
-async def get_run_cost(run_id: str) -> dict[str, Any]:
-    """Get LLM cost breakdown: tokens by model, estimated cost."""
+async def get_run_cost(run_id: str, refresh: bool = False) -> dict[str, Any]:
+    """Get LLM cost breakdown: tokens by model, estimated cost.
+
+    Pass ``?refresh=true`` to bypass the cached quality snapshot
+    (Stream 12 T7) and recompute the run's ontology quality metrics.
+    Without it, repeat hits return the cached numbers and the
+    ``quality_computed_at`` field tells the caller how stale the
+    snapshot is.
+    """
     db = get_db()
-    return extraction_service.get_run_cost(db, run_id=run_id)
+    return extraction_service.get_run_cost(db, run_id=run_id, refresh=refresh)

@@ -98,6 +98,23 @@ export interface RunCostResponse {
   model_breakdown?: ModelCost[];
   avg_confidence?: number | null;
   completeness_pct?: number | null;
+  /**
+   * Stream 12 T7 -- epoch seconds (float) at which the cached
+   * quality snapshot was last computed. `null` when no quality is
+   * available (no ontology id, or the compute path errored). The
+   * UI can use this to render a "snapshot from N min ago" hint and
+   * an "Refresh" affordance that calls the endpoint with
+   * `?refresh=true`.
+   */
+  quality_computed_at?: number | null;
+  /**
+   * Stream 12 T7 -- `true` when the response was served from the
+   * `extraction_runs.stats.cached_quality` snapshot; `false` when
+   * we recomputed (first call after extraction completion, or an
+   * explicit `?refresh=true`). Mostly useful for telemetry, tests,
+   * and on-call grep.
+   */
+  quality_from_cache?: boolean;
   belief_revision?: BeliefRevisionSummary | null;
 }
 

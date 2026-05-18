@@ -636,11 +636,33 @@ def get_run_cost(
     *,
     run_id: str,
     include_quality_metrics: bool = True,
+    refresh: bool = False,
 ) -> dict[str, Any]:
     """Get token usage and estimated cost for a run.
 
     Also includes quality indicators (avg_confidence, completeness_pct)
     when the run has an associated ontology.
+
+    Caching (Stream 12 T7)
+    ----------------------
+    The quality fields (``avg_confidence`` + ``completeness_pct``) used
+    to be recomputed via ``compute_ontology_quality`` on every call,
+    which walked the entire ontology -- ~9s on the WTW demo. Quality
+    on the run-cost endpoint is conceptually a point-in-time view (the
+    run is already complete; the cost numbers above are immutable), so
+    we now cache the computed quality on the run document under
+    ``stats.cached_quality`` and short-circuit on subsequent calls. The
+    cache carries ``computed_at`` (epoch ms) plus the
+    ``ontology_id`` it was computed against so a future ontology-id
+    flip on the run document invalidates automatically. Callers that
+    *need* fresh numbers (the user just landed an approve/reject and
+    wants to see the new value) pass ``refresh=True`` -- exposed as
+    ``?refresh=true`` on the route -- to bypass the cache and rewrite
+    the stored snapshot.
+
+    The response always includes ``quality_computed_at`` so the frontend
+    (and any external consumer) can render a "(snapshot from N min ago)"
+    hint without a second call.
     """
     if db is None:
         db = get_db()
@@ -667,6 +689,9 @@ def get_run_cost(
 
     avg_confidence: float | None = None
     completeness_pct: float | None = None
+    quality_computed_at: float | None = None
+    quality_from_cache = False
+
     ontology_id = run.get("ontology_id") or run.get("target_ontology_id")
     if not ontology_id and db.has_collection("ontology_registry"):
         matches = list(
@@ -696,14 +721,64 @@ def get_run_cost(
                 ontology_id = matches[0]
 
     if include_quality_metrics and ontology_id:
-        try:
-            from app.services.quality_metrics import compute_ontology_quality
+        cached = stats.get("cached_quality") or {}
+        cache_is_fresh = (
+            not refresh
+            and isinstance(cached, dict)
+            and cached.get("ontology_id") == ontology_id
+            and "avg_confidence" in cached
+            and "completeness" in cached
+        )
 
-            oq = compute_ontology_quality(db, ontology_id, include_estimated_cost=False)
-            avg_confidence = oq.get("avg_confidence")
-            completeness_pct = oq.get("completeness")
-        except Exception:
-            log.debug("quality metrics unavailable for run %s", run_id, exc_info=True)
+        if cache_is_fresh:
+            avg_confidence = cached.get("avg_confidence")
+            completeness_pct = cached.get("completeness")
+            quality_computed_at = cached.get("computed_at")
+            quality_from_cache = True
+        else:
+            try:
+                from app.services.quality_metrics import compute_ontology_quality
+
+                t0 = time.time()
+                oq = compute_ontology_quality(db, ontology_id, include_estimated_cost=False)
+                compute_ms = int((time.time() - t0) * 1000)
+                avg_confidence = oq.get("avg_confidence")
+                completeness_pct = oq.get("completeness")
+                quality_computed_at = time.time()
+
+                # Best-effort cache write -- the cache is a perf hack,
+                # not a source of truth, so a failure here MUST NOT
+                # poison the response. The next call will simply
+                # recompute and try again.
+                snapshot = {
+                    "ontology_id": ontology_id,
+                    "avg_confidence": avg_confidence,
+                    "completeness": completeness_pct,
+                    "computed_at": quality_computed_at,
+                    "compute_ms": compute_ms,
+                }
+                try:
+                    col = _get_collection(db, "extraction_runs")
+                    next_stats = dict(stats)
+                    next_stats["cached_quality"] = snapshot
+                    col.update({"_key": run_id, "stats": next_stats})
+                    log.info(
+                        "run_cost quality cache populated",
+                        extra={
+                            "run_id": run_id,
+                            "ontology_id": ontology_id,
+                            "compute_ms": compute_ms,
+                            "refresh": refresh,
+                        },
+                    )
+                except Exception:
+                    log.warning(
+                        "failed to persist cached_quality on run %s",
+                        run_id,
+                        exc_info=True,
+                    )
+            except Exception:
+                log.debug("quality metrics unavailable for run %s", run_id, exc_info=True)
 
     return {
         "run_id": run_id,
@@ -721,6 +796,12 @@ def get_run_cost(
         "output_cost_per_million_tokens": rates["output"],
         "avg_confidence": avg_confidence,
         "completeness_pct": completeness_pct,
+        # Stream 12 T7: snapshot timestamp so the UI can render a
+        # "snapshot from N min ago" hint without an extra round trip.
+        # ``quality_from_cache`` lets ops grep the logs / tests assert
+        # the fast path actually fired.
+        "quality_computed_at": quality_computed_at,
+        "quality_from_cache": quality_from_cache,
         # IBR.12: belief-revision summary surfaced for the Pipeline
         # Monitor's IBR tiles. ``None`` means the agent never ran on
         # this run (legacy run pre-IBR, or a crash before the IBR

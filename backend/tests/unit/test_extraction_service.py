@@ -2302,11 +2302,230 @@ class TestGetRunCost:
 
         assert result["avg_confidence"] == 0.75
         assert result["completeness_pct"] == 0.8
+        assert result["quality_from_cache"] is False
+        assert result["quality_computed_at"] is not None
         mock_compute_ontology_quality.assert_called_once_with(
             mock_db,
             "onto_from_aql",
             include_estimated_cost=False,
         )
+
+
+class TestGetRunCostQualityCache:
+    """Stream 12 T7 -- cache the expensive ``compute_ontology_quality``
+    call on the run document so repeat hits to ``GET /runs/{id}/cost``
+    don't re-walk the whole ontology.
+    """
+
+    def _run_doc(
+        self,
+        cached_quality: dict | None = None,
+        ontology_id: str = "onto_cached",
+    ) -> dict:
+        stats: dict = {
+            "token_usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+            },
+            "classes_extracted": 2,
+            "properties_extracted": 5,
+            "pass_agreement_rate": 0.9,
+        }
+        if cached_quality is not None:
+            stats["cached_quality"] = cached_quality
+        return {
+            "_key": "run_c",
+            "status": "completed",
+            "model": "gpt-4o-mini",
+            "ontology_id": ontology_id,
+            "started_at": 100.0,
+            "completed_at": 110.0,
+            "stats": stats,
+        }
+
+    @patch("app.services.extraction.run_aql", return_value=[])
+    @patch("app.services.extraction.doc_get")
+    @patch("app.services.extraction._get_collection")
+    @patch("app.services.extraction.get_db")
+    def test_cache_miss_populates_snapshot(self, mock_get_db, mock_get_col, mock_doc_get, mock_aql):
+        """First call after extraction: compute, write back, return."""
+        from app.services.extraction import get_run_cost
+
+        mock_db = MagicMock()
+        mock_db.has_collection.return_value = False
+        mock_get_db.return_value = mock_db
+        mock_doc_get.return_value = self._run_doc(cached_quality=None)
+
+        runs_col = MagicMock()
+        mock_get_col.return_value = runs_col
+
+        with patch(
+            "app.services.quality_metrics.compute_ontology_quality",
+            return_value={"avg_confidence": 0.66, "completeness": 0.5},
+        ) as mock_compute:
+            result = get_run_cost(mock_db, run_id="run_c")
+
+        assert mock_compute.call_count == 1
+        assert result["avg_confidence"] == 0.66
+        assert result["completeness_pct"] == 0.5
+        assert result["quality_from_cache"] is False
+        assert result["quality_computed_at"] is not None
+
+        # The expensive compute should now be cached on the run doc.
+        runs_col.update.assert_called_once()
+        update_arg = runs_col.update.call_args[0][0]
+        assert update_arg["_key"] == "run_c"
+        cached = update_arg["stats"]["cached_quality"]
+        assert cached["ontology_id"] == "onto_cached"
+        assert cached["avg_confidence"] == 0.66
+        assert cached["completeness"] == 0.5
+        assert cached["computed_at"] is not None
+        assert isinstance(cached["compute_ms"], int)
+
+    @patch("app.services.extraction.run_aql", return_value=[])
+    @patch("app.services.extraction.doc_get")
+    @patch("app.services.extraction._get_collection")
+    @patch("app.services.extraction.get_db")
+    def test_cache_hit_skips_compute(self, mock_get_db, mock_get_col, mock_doc_get, mock_aql):
+        """Subsequent call: serve from cache, skip the AQL walk."""
+        from app.services.extraction import get_run_cost
+
+        mock_db = MagicMock()
+        mock_db.has_collection.return_value = False
+        mock_get_db.return_value = mock_db
+        cached_at = 1_700_000_000.0
+        mock_doc_get.return_value = self._run_doc(
+            cached_quality={
+                "ontology_id": "onto_cached",
+                "avg_confidence": 0.42,
+                "completeness": 0.99,
+                "computed_at": cached_at,
+                "compute_ms": 4321,
+            },
+        )
+
+        runs_col = MagicMock()
+        mock_get_col.return_value = runs_col
+
+        with patch(
+            "app.services.quality_metrics.compute_ontology_quality",
+        ) as mock_compute:
+            result = get_run_cost(mock_db, run_id="run_c")
+
+        mock_compute.assert_not_called()
+        assert result["avg_confidence"] == 0.42
+        assert result["completeness_pct"] == 0.99
+        assert result["quality_from_cache"] is True
+        assert result["quality_computed_at"] == cached_at
+        # No write on a cache hit -- the snapshot is unchanged.
+        runs_col.update.assert_not_called()
+
+    @patch("app.services.extraction.run_aql", return_value=[])
+    @patch("app.services.extraction.doc_get")
+    @patch("app.services.extraction._get_collection")
+    @patch("app.services.extraction.get_db")
+    def test_refresh_true_bypasses_cache(self, mock_get_db, mock_get_col, mock_doc_get, mock_aql):
+        """``?refresh=true`` must always recompute, even when cached."""
+        from app.services.extraction import get_run_cost
+
+        mock_db = MagicMock()
+        mock_db.has_collection.return_value = False
+        mock_get_db.return_value = mock_db
+        mock_doc_get.return_value = self._run_doc(
+            cached_quality={
+                "ontology_id": "onto_cached",
+                "avg_confidence": 0.42,
+                "completeness": 0.99,
+                "computed_at": 1_700_000_000.0,
+                "compute_ms": 4321,
+            },
+        )
+
+        runs_col = MagicMock()
+        mock_get_col.return_value = runs_col
+
+        with patch(
+            "app.services.quality_metrics.compute_ontology_quality",
+            return_value={"avg_confidence": 0.88, "completeness": 0.91},
+        ) as mock_compute:
+            result = get_run_cost(mock_db, run_id="run_c", refresh=True)
+
+        assert mock_compute.call_count == 1
+        assert result["avg_confidence"] == 0.88
+        assert result["completeness_pct"] == 0.91
+        assert result["quality_from_cache"] is False
+        # A refresh writes the new snapshot.
+        runs_col.update.assert_called_once()
+
+    @patch("app.services.extraction.run_aql", return_value=[])
+    @patch("app.services.extraction.doc_get")
+    @patch("app.services.extraction._get_collection")
+    @patch("app.services.extraction.get_db")
+    def test_cache_for_different_ontology_invalidates(
+        self, mock_get_db, mock_get_col, mock_doc_get, mock_aql
+    ):
+        """If the run's ontology_id changed since the cache was written,
+        the snapshot is stale -- recompute and overwrite."""
+        from app.services.extraction import get_run_cost
+
+        mock_db = MagicMock()
+        mock_db.has_collection.return_value = False
+        mock_get_db.return_value = mock_db
+        mock_doc_get.return_value = self._run_doc(
+            ontology_id="onto_now",
+            cached_quality={
+                "ontology_id": "onto_then",
+                "avg_confidence": 0.1,
+                "completeness": 0.1,
+                "computed_at": 1.0,
+                "compute_ms": 10,
+            },
+        )
+
+        runs_col = MagicMock()
+        mock_get_col.return_value = runs_col
+
+        with patch(
+            "app.services.quality_metrics.compute_ontology_quality",
+            return_value={"avg_confidence": 0.5, "completeness": 0.5},
+        ) as mock_compute:
+            result = get_run_cost(mock_db, run_id="run_c")
+
+        mock_compute.assert_called_once()
+        assert result["avg_confidence"] == 0.5
+        assert result["quality_from_cache"] is False
+        runs_col.update.assert_called_once()
+
+    @patch("app.services.extraction.run_aql", return_value=[])
+    @patch("app.services.extraction.doc_get")
+    @patch("app.services.extraction._get_collection")
+    @patch("app.services.extraction.get_db")
+    def test_cache_write_failure_does_not_poison_response(
+        self, mock_get_db, mock_get_col, mock_doc_get, mock_aql
+    ):
+        """A failed cache write must NOT propagate -- the cache is a
+        perf hack, the user still gets their numbers."""
+        from app.services.extraction import get_run_cost
+
+        mock_db = MagicMock()
+        mock_db.has_collection.return_value = False
+        mock_get_db.return_value = mock_db
+        mock_doc_get.return_value = self._run_doc(cached_quality=None)
+
+        runs_col = MagicMock()
+        runs_col.update.side_effect = RuntimeError("simulated arango outage")
+        mock_get_col.return_value = runs_col
+
+        with patch(
+            "app.services.quality_metrics.compute_ontology_quality",
+            return_value={"avg_confidence": 0.77, "completeness": 0.55},
+        ):
+            result = get_run_cost(mock_db, run_id="run_c")
+
+        assert result["avg_confidence"] == 0.77
+        assert result["completeness_pct"] == 0.55
+        assert result["quality_from_cache"] is False
 
 
 # ---------------------------------------------------------------------------
