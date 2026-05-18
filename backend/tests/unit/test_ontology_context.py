@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.services.ontology_context import (
+    EFFECTIVE_CONTEXT_HEADER,
     get_domain_ontology_for_org,
     serialize_domain_context,
+    serialize_effective_ontology_context,
     serialize_multi_domain_context,
     set_domain_ontology_for_org,
 )
@@ -240,4 +242,244 @@ class TestSerializeMultiDomainContext:
     def test_empty_ontology_ids(self):
         db = MagicMock()
         result = serialize_multi_domain_context(db, ontology_ids=[])
+        assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# H.17: serialize_effective_ontology_context
+# ---------------------------------------------------------------------------
+
+
+def _effective_payload(
+    *,
+    ontology_id: str = "wtw",
+    ontology_name: str = "WTW Ontology",
+    classes: list[dict] | None = None,
+    edges: list[dict] | None = None,
+    sources: list[dict] | None = None,
+):
+    """Build the dict shape that ``compute_effective_ontology`` returns.
+
+    The serializer reads ``ontology_id``, ``ontology_name``, ``classes``,
+    ``edges``, and ``sources``; ``conflicts`` / ``etag`` / ``truncated``
+    are passed through unread so we leave them out of the fixture to
+    keep the test signal-to-noise high.
+    """
+    return {
+        "ontology_id": ontology_id,
+        "ontology_name": ontology_name,
+        "classes": classes or [],
+        "edges": edges or [],
+        "sources": sources
+        or [{"_key": ontology_id, "name": ontology_name, "is_self": True, "depth": 0}],
+        "conflicts": [],
+        "etag": "etag-test",
+        "truncated": False,
+    }
+
+
+def _mock_effective_db():
+    """Minimal ``has_collection``-aware mock; the serializer does not
+    issue AQL itself (it goes through ``compute_effective_ontology``
+    which we patch), so we don't need to script query results."""
+    db = MagicMock()
+    db.has_collection.return_value = True
+    return db
+
+
+class TestSerializeEffectiveOntologyContext:
+    """H.17 import-aware extraction context.
+
+    The serializer is the single point of LLM-facing serialization for
+    the effective ontology, so each branch of the output format gets a
+    dedicated test:
+
+      * empty target with no imports -> empty string (don't waste tokens)
+      * non-empty self, no imports   -> own section + footer, no "Imported"
+      * non-empty self, with imports -> own + per-source imported sections
+      * tree nesting under subclass_of edges
+      * source name fallback to ``_key`` when the registry row lacks ``name``
+      * URI-not-found in registry -> empty string (no crash)
+    """
+
+    def _patched(self, payload):
+        return patch(
+            "app.services.ontology_effective.compute_effective_ontology",
+            return_value=payload,
+        )
+
+    def test_empty_target_with_no_imports_returns_empty(self):
+        # Greenfield ontology with nothing in it. We expect "" so the
+        # prompt stays unchanged for first-run extractions.
+        with self._patched(_effective_payload(classes=[])):
+            db = _mock_effective_db()
+            result = serialize_effective_ontology_context(db, ontology_id="wtw")
+        assert result == ""
+
+    def test_owned_only_renders_self_section_and_footer(self):
+        # ``compute_effective_ontology`` annotates each class with
+        # ``source_ontology_id`` -- when it equals the target, the class
+        # belongs to "Your ontology (<name>)".
+        payload = _effective_payload(
+            classes=[
+                {
+                    "_id": "ontology_classes/wtw_person",
+                    "_key": "wtw_person",
+                    "label": "Person",
+                    "uri": "http://example.org/wtw#Person",
+                    "source_ontology_id": "wtw",
+                    "source_ontology_name": "WTW Ontology",
+                    "is_imported": False,
+                },
+            ],
+        )
+        with self._patched(payload):
+            db = _mock_effective_db()
+            result = serialize_effective_ontology_context(db, ontology_id="wtw")
+
+        assert EFFECTIVE_CONTEXT_HEADER in result
+        assert "Your ontology (WTW Ontology):" in result
+        assert "- Person [http://example.org/wtw#Person]" in result
+        # No imports -> no "Imported from" section.
+        assert "Imported from" not in result
+        # Footer guidelines always present so the LLM has the reuse rules.
+        assert "Guidelines:" in result
+        assert "REUSE its URI" in result
+
+    def test_imports_render_per_source_section_with_depth(self):
+        # Target imports FOAF (depth 1). Each class carries its source
+        # annotation; the renderer groups by ``source_ontology_id``.
+        payload = _effective_payload(
+            classes=[
+                {
+                    "_id": "ontology_classes/wtw_person",
+                    "_key": "wtw_person",
+                    "label": "WTW Person",
+                    "uri": "http://example.org/wtw#Person",
+                    "source_ontology_id": "wtw",
+                    "source_ontology_name": "WTW Ontology",
+                    "is_imported": False,
+                },
+                {
+                    "_id": "ontology_classes/foaf_agent",
+                    "_key": "foaf_agent",
+                    "label": "Agent",
+                    "uri": "http://xmlns.com/foaf/0.1/Agent",
+                    "source_ontology_id": "foaf",
+                    "source_ontology_name": "FOAF",
+                    "is_imported": True,
+                },
+            ],
+            sources=[
+                {"_key": "wtw", "name": "WTW Ontology", "is_self": True, "depth": 0},
+                {"_key": "foaf", "name": "FOAF", "is_self": False, "depth": 1},
+            ],
+        )
+        with self._patched(payload):
+            db = _mock_effective_db()
+            result = serialize_effective_ontology_context(db, ontology_id="wtw")
+
+        # Self always renders first (depth 0) -- pinning order matters
+        # because the LLM tends to weight earlier sections more.
+        self_idx = result.index("Your ontology (WTW Ontology):")
+        imported_idx = result.index("Imported from FOAF (depth 1):")
+        assert self_idx < imported_idx
+        assert "- WTW Person [http://example.org/wtw#Person]" in result
+        assert "- Agent [http://xmlns.com/foaf/0.1/Agent]" in result
+
+    def test_subclass_edges_produce_nested_tree(self):
+        # Person rdfs:subClassOf Agent (both in self). The renderer must
+        # nest Agent's children -- two-space indent per depth.
+        payload = _effective_payload(
+            classes=[
+                {
+                    "_id": "ontology_classes/agent",
+                    "_key": "agent",
+                    "label": "Agent",
+                    "uri": "ex:Agent",
+                    "source_ontology_id": "wtw",
+                    "source_ontology_name": "WTW",
+                    "is_imported": False,
+                },
+                {
+                    "_id": "ontology_classes/person",
+                    "_key": "person",
+                    "label": "Person",
+                    "uri": "ex:Person",
+                    "source_ontology_id": "wtw",
+                    "source_ontology_name": "WTW",
+                    "is_imported": False,
+                },
+            ],
+            edges=[
+                {
+                    "_from": "ontology_classes/person",
+                    "_to": "ontology_classes/agent",
+                    "edge_type": "subclass_of",
+                    "source_ontology_id": "wtw",
+                },
+            ],
+        )
+        with self._patched(payload):
+            db = _mock_effective_db()
+            result = serialize_effective_ontology_context(db, ontology_id="wtw")
+
+        # Agent is root (no incoming subclass_of as child); Person nested.
+        assert "- Agent [ex:Agent]" in result
+        assert "  - Person [ex:Person]" in result
+        # Person should NOT appear as a root (no leading "- Person" at
+        # zero indent) -- catches a regression where children leak to
+        # the root list.
+        for line in result.splitlines():
+            if line.startswith("- Person"):
+                pytest.fail(f"Person should be nested under Agent, got root line: {line!r}")
+
+    def test_falls_back_to_source_key_when_name_missing(self):
+        # Defensive: registry rows historically lacked ``name`` for some
+        # ontologies. The header must still read "Imported from <key>"
+        # rather than "Imported from None".
+        payload = _effective_payload(
+            classes=[
+                {
+                    "_id": "ontology_classes/wtw_x",
+                    "_key": "wtw_x",
+                    "label": "X",
+                    "uri": "ex:X",
+                    "source_ontology_id": "wtw",
+                    "source_ontology_name": "WTW",
+                    "is_imported": False,
+                },
+                {
+                    "_id": "ontology_classes/foo_y",
+                    "_key": "foo_y",
+                    "label": "Y",
+                    "uri": "ex:Y",
+                    "source_ontology_id": "foo",
+                    "source_ontology_name": None,
+                    "is_imported": True,
+                },
+            ],
+            sources=[
+                {"_key": "wtw", "name": "WTW", "is_self": True, "depth": 0},
+                {"_key": "foo", "name": None, "is_self": False, "depth": 1},
+            ],
+        )
+        with self._patched(payload):
+            db = _mock_effective_db()
+            result = serialize_effective_ontology_context(db, ontology_id="wtw")
+
+        assert "Imported from foo (depth 1):" in result
+        assert "Imported from None" not in result
+
+    def test_unknown_target_returns_empty(self):
+        # ``compute_effective_ontology`` raises ``ValueError`` when the
+        # registry has no row for the target. The serializer swallows it
+        # so the extraction prompt is unchanged rather than poisoned
+        # with an exception message.
+        with patch(
+            "app.services.ontology_effective.compute_effective_ontology",
+            side_effect=ValueError("ontology not found"),
+        ):
+            db = _mock_effective_db()
+            result = serialize_effective_ontology_context(db, ontology_id="ghost")
         assert result == ""

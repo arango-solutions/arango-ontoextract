@@ -215,6 +215,241 @@ def serialize_multi_domain_context(
 
 
 # ---------------------------------------------------------------------------
+# H.17: import-aware extraction context
+# ---------------------------------------------------------------------------
+
+
+# Marker substring the extractor / tests / ops grep for to confirm the H.17
+# header was actually injected into the prompt. Changing this string is a
+# semver-style break: dashboards and prompt-leak audits look for it.
+EFFECTIVE_CONTEXT_HEADER = "Existing ontology context (reuse these classes; do not duplicate):"
+
+
+def serialize_effective_ontology_context(
+    db: StandardDatabase | None = None,
+    *,
+    ontology_id: str,
+    max_depth: int = 10,
+) -> str:
+    """Serialize the *effective* ontology (own + transitive imports) as
+    LLM prompt context for import-aware extraction (Stream 1 H.17).
+
+    The output is grouped by source ontology so the LLM can tell which
+    classes it can extend (own) versus which it should only reference
+    (imported). The footer spells out the reuse rules explicitly because
+    LLM extractors otherwise default to minting fresh URIs even when
+    a perfectly good URI exists in the imported closure.
+
+    Format::
+
+        Existing ontology context (reuse these classes; do not duplicate):
+
+        Your ontology (<self_name>):
+        - Class [<self_namespace#Class>]
+          - SubClass [<self_namespace#SubClass>]
+        ...
+
+        Imported from <SourceName> (depth <N>):
+        - ImportedClass [<imported_uri>]
+          - ImportedSub [<imported_uri>]
+        ...
+
+        Guidelines:
+        - When the text describes a class above, REUSE its URI.
+        - To specialize: set ``parent_uri`` to the existing URI and use
+          classification: "extension".
+        - To declare equivalence: use the existing URI directly with
+          classification: "existing".
+        - DO NOT mint new URIs for concepts already present above.
+
+    Parameters
+    ----------
+    db:
+        ArangoDB handle. Defaults to ``get_db()`` so the call site
+        matches ``serialize_domain_context``; tests inject a ``MagicMock``.
+    ontology_id:
+        Registry ``_key`` of the *target* (the ontology being extracted
+        into).
+    max_depth:
+        Forwarded to ``compute_effective_ontology`` (clamped to 1..50).
+
+    Returns
+    -------
+    str
+        Multi-section text, or ``""`` when the target has no classes
+        AND no imports. An empty result is intentional: dropping an
+        empty header into the prompt would just waste tokens.
+    """
+    if db is None:
+        db = get_db()
+
+    # Local import to break a backward-compatible cycle: ontology_effective
+    # is a higher-level service that depends on db utilities; importing
+    # it here at the module top would force every consumer of the
+    # smaller serialize_domain_context to pay its import cost too.
+    from app.services.ontology_effective import compute_effective_ontology
+
+    try:
+        effective = compute_effective_ontology(
+            db,
+            ontology_id=ontology_id,
+            include="summary",
+            max_depth=max_depth,
+        )
+    except ValueError:
+        # ``ontology_id`` not in registry -- treat as "no context". The
+        # extraction service catches this same case via its own log
+        # message; we surface it as ``""`` so the prompt is unchanged
+        # rather than poisoning the run with an inline error string.
+        return ""
+
+    classes = list(effective.get("classes") or [])
+    edges = list(effective.get("edges") or [])
+    sources = list(effective.get("sources") or [])
+
+    if not classes:
+        # Empty target ontology with no imported classes either -- the
+        # extraction is doing greenfield work, the prompt should not
+        # advertise an empty hierarchy.
+        return ""
+
+    self_name = effective.get("ontology_name") or ontology_id
+
+    # Build per-source ``_id -> class`` maps so the renderer can walk
+    # each source's tree independently. ``_id`` is the canonical join
+    # key on subclass_of edges (``_from`` / ``_to``).
+    by_source: dict[str, dict[str, dict[str, Any]]] = {}
+    for cls in classes:
+        oid = str(cls.get("source_ontology_id") or ontology_id)
+        cid = str(cls.get("_id") or "")
+        if not cid:
+            continue
+        by_source.setdefault(oid, {})[cid] = cls
+
+    # Parent map per source -- only subclass_of edges where BOTH ends
+    # belong to the same source. Cross-source subclass relationships
+    # are flagged as conflicts by H.13; ignoring them here keeps the
+    # tree rendering unambiguous (the imported-from header naming the
+    # source IS the cross-source relationship, structurally).
+    children_by_source: dict[str, dict[str, list[str]]] = {}
+    child_ids_by_source: dict[str, set[str]] = {}
+    for edge in edges:
+        if edge.get("edge_type") != "subclass_of":
+            continue
+        child_id = str(edge.get("_from") or "")
+        parent_id = str(edge.get("_to") or "")
+        if not child_id or not parent_id:
+            continue
+        # Place the edge under the parent's source -- the parent is the
+        # node we walk DOWN from, so children render correctly.
+        for oid, cmap in by_source.items():
+            if parent_id in cmap and child_id in cmap:
+                children_by_source.setdefault(oid, {}).setdefault(parent_id, []).append(child_id)
+                child_ids_by_source.setdefault(oid, set()).add(child_id)
+                break
+
+    # Group ``Imported from ...`` sections by source ``_key``. We
+    # explicitly normalise None -> ``_key`` here (rather than at the
+    # render site) so every downstream lookup gets a non-None string
+    # back and the ``.lower()`` sort key cannot blow up.
+    source_names: dict[str, str] = {}
+    for s in sources:
+        key = str(s.get("_key") or "")
+        if not key:
+            continue
+        source_names[key] = str(s.get("name") or key)
+    source_depths = {str(s.get("_key") or ""): int(s.get("depth") or 0) for s in sources}
+
+    # Self always renders first (depth 0), then imports in BFS-depth
+    # order so the most-related ontology shows up first.
+    ordered_oids: list[str] = []
+    if ontology_id in by_source:
+        ordered_oids.append(ontology_id)
+
+    def _sort_key(o: str) -> tuple[int, str]:
+        # Explicit helper rather than an inline lambda so mypy can see
+        # the (str) -> (int, str) signature directly. ``source_names``
+        # is dict[str, str] by construction above, but mypy was tripping
+        # on the inferred return of .get inside a lambda body.
+        name = source_names.get(o) or o
+        return (source_depths.get(o, 99), name.lower())
+
+    imported_oids = sorted(
+        (oid for oid in by_source if oid != ontology_id),
+        key=_sort_key,
+    )
+    ordered_oids.extend(imported_oids)
+
+    lines: list[str] = [EFFECTIVE_CONTEXT_HEADER, ""]
+
+    for oid in ordered_oids:
+        cmap = by_source[oid]
+        if oid == ontology_id:
+            lines.append(f"Your ontology ({self_name}):")
+        else:
+            src_name = source_names.get(oid) or oid
+            depth = source_depths.get(oid, 1)
+            lines.append(f"Imported from {src_name} (depth {depth}):")
+
+        children = children_by_source.get(oid, {})
+        child_ids = child_ids_by_source.get(oid, set())
+        root_ids = sorted(
+            (cid for cid in cmap if cid not in child_ids),
+            key=lambda c: cmap[c].get("label") or cmap[c].get("uri") or c,
+        )
+
+        # Bind cmap / children by default-arg capture so the closure
+        # is independent of the surrounding loop variable (mypy is happy
+        # with the explicit dict[str, ...] types).
+        def _render(
+            cid: str,
+            depth: int,
+            cmap: dict[str, dict[str, Any]] = cmap,
+            children: dict[str, list[str]] = children,
+        ) -> None:
+            cls = cmap[cid]
+            label = cls.get("label") or cls.get("uri") or cid
+            uri = cls.get("uri")
+            uri_suffix = f" [{uri}]" if uri else ""
+            indent = "  " * depth
+            lines.append(f"{indent}- {label}{uri_suffix}")
+            for child in sorted(
+                children.get(cid, []),
+                key=lambda c: cmap[c].get("label") or cmap[c].get("uri") or c,
+            ):
+                _render(child, depth + 1)
+
+        for root in root_ids:
+            _render(root, 0)
+
+        lines.append("")
+
+    lines.extend(
+        [
+            "Guidelines:",
+            (
+                "- When the text describes a class above, REUSE its URI rather "
+                "than minting a new one."
+            ),
+            (
+                "- To specialize an existing class: set parent_uri to its URI "
+                'and use classification: "extension".'
+            ),
+            (
+                "- To declare semantic equivalence: use the existing URI "
+                'directly with classification: "existing".'
+            ),
+            (
+                "- DO NOT mint new URIs for concepts already present above; "
+                "the conflict detector will flag duplicates."
+            ),
+        ]
+    )
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 

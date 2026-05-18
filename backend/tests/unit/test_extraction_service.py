@@ -1266,6 +1266,213 @@ class TestExecuteRunDomainContext:
         _, kwargs = mock_run_pipeline.call_args
         assert kwargs["domain_context"] == ""
 
+    # ----------------------------------------------------------------
+    # H.17: import-aware extraction context
+    # ----------------------------------------------------------------
+
+    @patch("app.services.extraction._load_document_chunks", return_value=[])
+    @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
+    @patch("app.services.extraction.doc_get")
+    @patch("app.services.extraction._get_collection")
+    @patch("app.services.extraction.get_db")
+    @pytest.mark.asyncio
+    async def test_h17_prepends_effective_context_when_target_set(
+        self,
+        mock_get_db,
+        mock_get_col,
+        mock_doc_get,
+        mock_run_pipeline,
+        mock_load_chunks,
+    ):
+        """When ``target_ontology_id`` is set, the effective-graph
+        serializer's output must be prepended to ``domain_context`` so
+        the LLM sees both the org's selected domain context (Tier 2)
+        AND the target ontology's own + imported classes (H.17)."""
+        from app.services.extraction import execute_run
+
+        mock_db = MagicMock()
+        mock_col = MagicMock()
+        run_record = {
+            "_key": "run_h17",
+            "doc_ids": ["doc_1"],
+            "target_ontology_id": "wtw",
+            "domain_ontology_ids": ["dom1"],
+            "status": "running",
+            "stats": {
+                "passes": 1,
+                "consistency_threshold": 0.7,
+                "token_usage": {},
+                "errors": [],
+                "step_logs": [],
+            },
+        }
+        mock_get_db.return_value = mock_db
+        mock_get_col.return_value = mock_col
+        mock_doc_get.side_effect = [run_record, run_record]
+        mock_run_pipeline.return_value = {
+            "consistency_result": None,
+            "errors": [],
+            "step_logs": [],
+            "token_usage": {},
+            "extraction_passes": [],
+        }
+
+        with (
+            patch(
+                "app.services.ontology_context.serialize_multi_domain_context",
+                return_value="DOMAIN CONTEXT TEXT",
+            ),
+            patch(
+                "app.services.ontology_context.serialize_effective_ontology_context",
+                return_value="EFFECTIVE CONTEXT TEXT\n",
+            ),
+        ):
+            await execute_run(
+                run_id="run_h17",
+                document_ids=["doc_1"],
+                target_ontology_id="wtw",
+                domain_ontology_ids=["dom1"],
+                event_callback=MagicMock(),
+            )
+
+        _, kwargs = mock_run_pipeline.call_args
+        passed = kwargs["domain_context"]
+        # Effective context MUST come first so the LLM weights it more
+        # heavily; the existing Tier 2 domain context is appended.
+        assert passed.startswith("EFFECTIVE CONTEXT TEXT")
+        assert "DOMAIN CONTEXT TEXT" in passed
+        assert passed.index("EFFECTIVE CONTEXT TEXT") < passed.index("DOMAIN CONTEXT TEXT")
+
+    @patch("app.services.extraction._load_document_chunks", return_value=[])
+    @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
+    @patch("app.services.extraction.doc_get")
+    @patch("app.services.extraction._get_collection")
+    @patch("app.services.extraction.get_db")
+    @pytest.mark.asyncio
+    async def test_h17_skips_effective_context_when_target_missing(
+        self,
+        mock_get_db,
+        mock_get_col,
+        mock_doc_get,
+        mock_run_pipeline,
+        mock_load_chunks,
+    ):
+        """No ``target_ontology_id`` (greenfield / catalog-only run) -> the
+        serializer is never invoked, the domain_context is just the
+        Tier 2 text."""
+        from app.services.extraction import execute_run
+
+        mock_db = MagicMock()
+        mock_col = MagicMock()
+        run_record = {
+            "_key": "run_no_target",
+            "doc_ids": ["doc_1"],
+            "domain_ontology_ids": ["dom1"],
+            "status": "running",
+            "stats": {
+                "passes": 1,
+                "consistency_threshold": 0.7,
+                "token_usage": {},
+                "errors": [],
+                "step_logs": [],
+            },
+        }
+        mock_get_db.return_value = mock_db
+        mock_get_col.return_value = mock_col
+        mock_doc_get.side_effect = [run_record, run_record]
+        mock_run_pipeline.return_value = {
+            "consistency_result": None,
+            "errors": [],
+            "step_logs": [],
+            "token_usage": {},
+            "extraction_passes": [],
+        }
+
+        effective_serializer = MagicMock()
+        with (
+            patch(
+                "app.services.ontology_context.serialize_multi_domain_context",
+                return_value="DOMAIN CONTEXT TEXT",
+            ),
+            patch(
+                "app.services.ontology_context.serialize_effective_ontology_context",
+                effective_serializer,
+            ),
+        ):
+            await execute_run(
+                run_id="run_no_target",
+                document_ids=["doc_1"],
+                domain_ontology_ids=["dom1"],
+                event_callback=MagicMock(),
+            )
+
+        effective_serializer.assert_not_called()
+        _, kwargs = mock_run_pipeline.call_args
+        assert kwargs["domain_context"] == "DOMAIN CONTEXT TEXT"
+
+    @patch("app.services.extraction._load_document_chunks", return_value=[])
+    @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
+    @patch("app.services.extraction.doc_get")
+    @patch("app.services.extraction._get_collection")
+    @patch("app.services.extraction.get_db")
+    @pytest.mark.asyncio
+    async def test_h17_serializer_failure_does_not_break_run(
+        self,
+        mock_get_db,
+        mock_get_col,
+        mock_doc_get,
+        mock_run_pipeline,
+        mock_load_chunks,
+    ):
+        """A transient DB failure inside the closure walk MUST NOT take
+        the extraction down. The run continues with the pre-H.17
+        domain context. Same fail-soft contract as
+        ``test_domain_context_failure_falls_back``."""
+        from app.services.extraction import execute_run
+
+        mock_db = MagicMock()
+        mock_col = MagicMock()
+        run_record = {
+            "_key": "run_h17_fail",
+            "doc_ids": ["doc_1"],
+            "target_ontology_id": "wtw",
+            "status": "running",
+            "stats": {
+                "passes": 1,
+                "consistency_threshold": 0.7,
+                "token_usage": {},
+                "errors": [],
+                "step_logs": [],
+            },
+        }
+        mock_get_db.return_value = mock_db
+        mock_get_col.return_value = mock_col
+        mock_doc_get.side_effect = [run_record, run_record]
+        mock_run_pipeline.return_value = {
+            "consistency_result": None,
+            "errors": [],
+            "step_logs": [],
+            "token_usage": {},
+            "extraction_passes": [],
+        }
+
+        with patch(
+            "app.services.ontology_context.serialize_effective_ontology_context",
+            side_effect=RuntimeError("closure walk exploded"),
+        ):
+            await execute_run(
+                run_id="run_h17_fail",
+                document_ids=["doc_1"],
+                target_ontology_id="wtw",
+                event_callback=MagicMock(),
+            )
+
+        _, kwargs = mock_run_pipeline.call_args
+        # No effective context (serializer failed) and no domain ids
+        # provided -> empty string. The pipeline still ran.
+        assert kwargs["domain_context"] == ""
+        mock_run_pipeline.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # retry_run

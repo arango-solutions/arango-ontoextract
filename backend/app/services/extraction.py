@@ -211,6 +211,44 @@ async def execute_run(
                 extra={"run_id": run_id},
             )
 
+    # Stream 1 H.17: prepend the *effective* (own + imports closure) view
+    # of the target ontology so the LLM knows which classes already
+    # exist (and where they came from) and can reuse them via
+    # rdfs:subClassOf / owl:equivalentClass instead of minting duplicate
+    # URIs that the H.13 conflict detector will later flag. The function
+    # returns ``""`` for fresh-and-importless targets so greenfield runs
+    # are unchanged; failures are non-fatal -- we log and continue so an
+    # extraction can still complete even if the closure walk hits a
+    # transient DB error.
+    if target_ontology_id:
+        try:
+            from app.services.ontology_context import serialize_effective_ontology_context
+
+            effective_context = serialize_effective_ontology_context(
+                db,
+                ontology_id=target_ontology_id,
+            )
+        except Exception:
+            log.warning(
+                "failed to serialize effective ontology context",
+                exc_info=True,
+                extra={"run_id": run_id, "target_ontology_id": target_ontology_id},
+            )
+            effective_context = ""
+
+        if effective_context:
+            domain_context = (
+                effective_context + "\n" + domain_context if domain_context else effective_context
+            )
+            log.info(
+                "prepended effective ontology context",
+                extra={
+                    "run_id": run_id,
+                    "target_ontology_id": target_ontology_id,
+                    "effective_context_length": len(effective_context),
+                },
+            )
+
     chunks: list[dict[str, Any]] = []
     for did in doc_ids:
         chunks.extend(_load_document_chunks(db, did))
