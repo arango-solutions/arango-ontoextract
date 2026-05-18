@@ -96,6 +96,16 @@ export function buildClassContextMenu(
     const openLabel = sourceOntologyName
       ? `Open Source Ontology (${sourceOntologyName})`
       : "Open Source Ontology";
+    // Stream 1 H.16: "Remove Import" removes the entire ``imports``
+    // edge to the source ontology — taking ALL imported entities off
+    // the canvas at once, not just this one class. The label names the
+    // source so the user knows the blast radius. We act immediately +
+    // emit an undo toast (per ``ui-architecture.mdc`` §18) rather than
+    // gating on a confirm dialog; the side-effect is reversible at
+    // any time via Manage Imports if the user dismisses the toast.
+    const removeLabel = sourceOntologyName
+      ? `Remove Import (${sourceOntologyName})`
+      : "Remove Import";
     return [
       viewDetails,
       { label: "separator0", separator: true },
@@ -114,6 +124,20 @@ export function buildClassContextMenu(
         onClick: () => {
           if (sourceOntologyId) {
             actions.handleSelectOntology(sourceOntologyId);
+          }
+        },
+      },
+      {
+        label: removeLabel,
+        icon: "🗑️",
+        danger: true,
+        disabled: !sourceOntologyId,
+        onClick: () => {
+          if (sourceOntologyId) {
+            void actions.removeImportEdge(
+              sourceOntologyId,
+              sourceOntologyName ?? sourceOntologyId,
+            );
           }
         },
       },

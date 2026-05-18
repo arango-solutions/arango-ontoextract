@@ -51,6 +51,7 @@ function makeActions(): WorkspaceContextMenuActions {
     setRevisionsInbox: jest.fn(),
     setOntologyDelete: jest.fn(),
     exportOntology: jest.fn(),
+    removeImportEdge: jest.fn(),
     retryRun: jest.fn(),
     pipelineRunId: null,
     activeLens: "semantic",
@@ -218,7 +219,7 @@ describe("buildClassContextMenu", () => {
   // surfaces "Open Source Ontology" so the user can jump to the owning
   // ontology and act there.
   describe("imported classes (Stream 1 H.15)", () => {
-    it("drops Approve/Reject/Delete and adds 'Open Source Ontology'", () => {
+    it("drops Approve/Reject/Delete and adds Open Source Ontology + Remove Import", () => {
       const actions = makeActions();
       const items = buildClassContextMenu(
         {
@@ -240,10 +241,12 @@ describe("buildClassContextMenu", () => {
         "View Version History",
         "View Provenance",
         "Open Source Ontology (FOAF)",
+        "Remove Import (FOAF)",
       ]);
-      // Mutating verbs must not even appear — leaving them disabled would
-      // imply "fix me here once you do X", which is not the intent. The
-      // correct mental model is "go to the source ontology".
+      // Mutating verbs against the imported class itself must not even
+      // appear — "Remove Import" operates on the parent imports edge,
+      // not on the entity. Leaving Approve/Reject/Delete in would imply
+      // "fix me here once you do X", which is not the intent.
       expect(visibleLabels).not.toContain("Approve");
       expect(visibleLabels).not.toContain("Reject");
       expect(visibleLabels).not.toContain("Delete");
@@ -287,6 +290,65 @@ describe("buildClassContextMenu", () => {
         .map((it) => it.label);
       expect(visibleLabels).toContain("Open Source Ontology");
       expect(visibleLabels).not.toContain("Open Source Ontology (FOAF)");
+    });
+
+    it("Remove Import is danger-styled and fires removeImportEdge with source id + name (H.16)", () => {
+      const actions = makeActions();
+      const items = buildClassContextMenu(
+        {
+          _key: "C1",
+          label: "Person",
+          is_imported: true,
+          source_ontology_id: "foaf",
+          source_ontology_name: "FOAF",
+        },
+        actions,
+      );
+
+      const remove = items.find((it) =>
+        typeof it.label === "string" && it.label.startsWith("Remove Import"),
+      )!;
+      expect(remove.danger).toBe(true);
+      expect(remove.disabled).toBeFalsy();
+      remove.onClick!();
+      expect(actions.removeImportEdge).toHaveBeenCalledWith("foaf", "FOAF");
+    });
+
+    it("Remove Import falls back to source id when source name is missing (H.16)", () => {
+      const actions = makeActions();
+      const items = buildClassContextMenu(
+        {
+          _key: "C1",
+          label: "Person",
+          is_imported: true,
+          source_ontology_id: "foaf",
+        },
+        actions,
+      );
+
+      const remove = items.find((it) =>
+        typeof it.label === "string" && it.label.startsWith("Remove Import"),
+      )!;
+      expect(remove.label).toBe("Remove Import");
+      remove.onClick!();
+      // Name falls back to the source id so the toast still has
+      // something to render (the page-level handler then passes that
+      // forward into the toast copy).
+      expect(actions.removeImportEdge).toHaveBeenCalledWith("foaf", "foaf");
+    });
+
+    it("Remove Import is disabled when source_ontology_id is missing (H.16)", () => {
+      const actions = makeActions();
+      const items = buildClassContextMenu(
+        { _key: "C1", label: "Person", is_imported: true },
+        actions,
+      );
+      const remove = items.find((it) =>
+        typeof it.label === "string" && it.label.startsWith("Remove Import"),
+      )!;
+      expect(remove.disabled).toBe(true);
+      remove.onClick!();
+      expect(actions.removeImportEdge).not.toHaveBeenCalled();
     });
 
     it("disables 'Open Source Ontology' when source_ontology_id is missing", () => {

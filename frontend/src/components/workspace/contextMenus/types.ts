@@ -206,6 +206,19 @@ export interface WorkspaceContextMenuActions {
   setRevisionsInbox: (arg: RevisionsInboxArg) => void;
   exportOntology: (ontologyKey: string, format: "turtle" | "jsonld" | "csv") => void;
 
+  // ── Imports (Stream 1 H.16) ───────────────────────────────────────────
+  /** Soft-delete the ``imports`` edge from the currently-open ontology to
+   *  ``importedOntologyId`` and refresh the canvas. Used by the "Remove
+   *  Import (<source name>)" entries on imported class / edge context
+   *  menus. The page-level implementation shows an undo / failure toast
+   *  via the global toast surface and bumps the explorer's library
+   *  reload nonce so the imports-graph DAG (H.7) re-reads. ``import-
+   *  edOntologyName`` is forwarded so toast copy can name the source. */
+  removeImportEdge: (
+    importedOntologyId: string,
+    importedOntologyName: string,
+  ) => void | Promise<void>;
+
   // ── Pipeline ──────────────────────────────────────────────────────────
   retryRun: (runKey: string) => void;
   pipelineRunId: string | null;

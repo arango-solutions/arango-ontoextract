@@ -35,6 +35,7 @@ function makeActions(): WorkspaceContextMenuActions {
     setEdgeRepair: jest.fn(),
     setRevisionsInbox: jest.fn(),
     exportOntology: jest.fn(),
+    removeImportEdge: jest.fn(),
     retryRun: jest.fn(),
     pipelineRunId: null,
     activeLens: "semantic",

@@ -16,6 +16,7 @@ import ManageImportsOverlay from "@/components/workspace/ManageImportsOverlay";
 import RevisionsInboxOverlay from "@/components/workspace/RevisionsInboxOverlay";
 import FeedbackLearningOverlay from "@/components/workspace/FeedbackLearningOverlay";
 import CanvasLensLegend from "@/components/workspace/CanvasLensLegend";
+import ToastHost from "@/components/workspace/ToastHost";
 import EmptyCanvasState from "@/components/workspace/EmptyCanvasState";
 import FloatingDetailPanel from "@/components/workspace/FloatingDetailPanel";
 import ContextMenu, { type ContextMenuItem } from "@/components/workspace/ContextMenu";
@@ -46,7 +47,13 @@ import type {
   OntologyProperty,
   OntologyEdge,
   EffectiveOntologyResponse,
+  EffectiveSource,
 } from "@/types/curation";
+import {
+  checkImportDragCandidate,
+  readImportDragPayload,
+} from "@/lib/importDragCheck";
+import { pushToast } from "@/lib/toast";
 import type { SigmaViewportApi } from "@/components/workspace/SigmaCanvas";
 import type { ClassBoxProperty } from "@/components/workspace/ClassBoxNode";
 
@@ -193,6 +200,12 @@ function WorkspacePageInner() {
   const [classes, setClasses] = useState<OntologyClass[]>([]);
   const [properties, setProperties] = useState<OntologyProperty[]>([]);
   const [edges, setEdges] = useState<OntologyEdge[]>([]);
+  // Stream 1 H.16: effective-graph sources for the open ontology (self
+  // + transitive imports closure). Drives the drag-and-drop import
+  // pre-check ("Already imported" rejection without a round-trip).
+  // Cleared when the user closes the canvas; refreshed every time
+  // ``fetchGraphData`` resolves a fresh ``/effective`` payload.
+  const [effectiveSources, setEffectiveSources] = useState<EffectiveSource[]>([]);
   const [graphLoading, setGraphLoading] = useState(false);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [timelineVisibleKeys, setTimelineVisibleKeys] = useState<Set<string> | null>(null);
@@ -399,6 +412,7 @@ function WorkspacePageInner() {
       );
       setClasses(effectiveRes.classes ?? []);
       setEdges(effectiveRes.edges ?? []);
+      setEffectiveSources(effectiveRes.sources ?? []);
       setProperties([]);
     } catch (err) {
       setGraphError(
@@ -416,6 +430,7 @@ function WorkspacePageInner() {
       setClasses([]);
       setProperties([]);
       setEdges([]);
+      setEffectiveSources([]);
       setGraphError(null);
       setOntologyTier(null);
       return;
@@ -703,6 +718,176 @@ function WorkspacePageInner() {
     fetchGraphData(selectedOntologyId);
   }, [selectedOntologyId, fetchGraphData]);
 
+  /**
+   * Stream 1 H.16: remove a single ``imports`` edge from the open
+   * ontology and refresh the canvas. Used by both the undo affordance
+   * on the "Imported …" success toast (so the user can revert a misclick
+   * inside the toast lifetime) and by the per-entity "Remove Import"
+   * context-menu entry on imported classes / edges. The backend
+   * soft-deletes via temporal expiry, so a future "undo the undo" path
+   * is technically possible — out of scope here, tracked as a follow-up
+   * to the global undo-toast system.
+   */
+  const removeImportEdge = useCallback(
+    async (importedOntologyId: string, importedOntologyName: string) => {
+      if (!selectedOntologyId) return;
+      try {
+        await api.del(
+          `/api/v1/ontology/${encodeURIComponent(selectedOntologyId)}/imports/${encodeURIComponent(importedOntologyId)}`,
+        );
+        invalidateOntology(selectedOntologyId);
+        fetchGraphData(selectedOntologyId);
+        // Bump the explorer's library nonce so the imports-graph DAG
+        // overlay (H.7) and any other library-driven UI re-reads.
+        setExplorerLibraryNonce((n) => n + 1);
+        pushToast({
+          message: `Removed import "${importedOntologyName}".`,
+          kind: "success",
+          durationMs: 4000,
+        });
+      } catch (err) {
+        const message =
+          err instanceof ApiError
+            ? err.body.message
+            : err instanceof Error
+              ? err.message
+              : "Failed to remove import";
+        pushToast({
+          message: `Could not remove "${importedOntologyName}": ${message}`,
+          kind: "error",
+        });
+      }
+    },
+    [selectedOntologyId, fetchGraphData],
+  );
+
+  /**
+   * Stream 1 H.16: add a new ``imports`` edge from the open ontology to
+   * ``draggedOntologyId`` (the row the user dragged from the explorer).
+   * The pre-check (``checkImportDragCandidate``) catches self-imports
+   * and duplicates without a round-trip; cycle detection lives on the
+   * backend (10-hop OUTBOUND BFS) and surfaces here as a 400.
+   *
+   * Success path emits an undo-toast that calls ``removeImportEdge`` —
+   * matches ``ui-architecture.mdc`` §18 ("Reversible destructive:
+   * undo-over-confirm is the default"; adding an import is the inverse
+   * direction but the user-revert pattern is the same: act immediately,
+   * give the user a one-click rollback before they have to dig into
+   * Manage Imports).
+   */
+  const addImportEdge = useCallback(
+    async (draggedOntologyId: string, draggedOntologyName: string) => {
+      const precheck = checkImportDragCandidate({
+        currentOntologyId: selectedOntologyId,
+        draggedOntologyId,
+        draggedOntologyName,
+        effectiveSources,
+      });
+      if (!precheck.ok) {
+        pushToast({
+          message: precheck.message,
+          kind: "warning",
+          durationMs: 4000,
+        });
+        return;
+      }
+      if (!selectedOntologyId) return; // narrowed by pre-check; defensive.
+      try {
+        await api.post(
+          `/api/v1/ontology/${encodeURIComponent(selectedOntologyId)}/imports`,
+          { target_ontology_id: draggedOntologyId },
+        );
+        invalidateOntology(selectedOntologyId);
+        fetchGraphData(selectedOntologyId);
+        setExplorerLibraryNonce((n) => n + 1);
+        // Capture identifiers in the closure so the undo button still
+        // works after the user has moved on to another ontology.
+        const undoTargetId = draggedOntologyId;
+        const undoTargetName = draggedOntologyName;
+        const undoSourceId = selectedOntologyId;
+        const undoSourceName = ontologyName ?? selectedOntologyId;
+        pushToast({
+          message: `Imported "${draggedOntologyName}" into ${undoSourceName}.`,
+          kind: "success",
+          durationMs: 8000,
+          action: {
+            label: "Undo",
+            onClick: async () => {
+              try {
+                await api.del(
+                  `/api/v1/ontology/${encodeURIComponent(undoSourceId)}/imports/${encodeURIComponent(undoTargetId)}`,
+                );
+                invalidateOntology(undoSourceId);
+                if (selectedOntologyId === undoSourceId) {
+                  fetchGraphData(undoSourceId);
+                }
+                setExplorerLibraryNonce((n) => n + 1);
+                pushToast({
+                  message: `Undid import of "${undoTargetName}".`,
+                  kind: "info",
+                  durationMs: 3500,
+                });
+              } catch (err) {
+                const message =
+                  err instanceof ApiError
+                    ? err.body.message
+                    : err instanceof Error
+                      ? err.message
+                      : "Failed to undo import";
+                pushToast({ message, kind: "error" });
+              }
+            },
+          },
+        });
+      } catch (err) {
+        const message =
+          err instanceof ApiError
+            ? err.body.message
+            : err instanceof Error
+              ? err.message
+              : "Failed to add import";
+        pushToast({
+          message: `Could not import "${draggedOntologyName}": ${message}`,
+          kind: "error",
+        });
+      }
+    },
+    [
+      selectedOntologyId,
+      effectiveSources,
+      fetchGraphData,
+      ontologyName,
+    ],
+  );
+
+  /**
+   * H.16 canvas drop handler. Bound to the ``<main>`` canvas wrapper so
+   * any drop on the canvas pane (Sigma or box-arrow) registers — the
+   * "drop anywhere" UX agreed in the H.16 design.
+   *
+   * We always ``preventDefault`` on ``dragover`` so the cursor advertises
+   * a drop is possible (without that the browser refuses to fire
+   * ``drop``). The ``drop`` handler reads the payload via
+   * ``readImportDragPayload`` — returns ``null`` for any drag that did
+   * not come from an ontology row (e.g. a browser-native file drag),
+   * so unrelated drags fall through without a toast.
+   */
+  const handleCanvasDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes("application/x-aoe-ontology")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  }, []);
+
+  const handleCanvasDrop = useCallback(
+    (e: React.DragEvent) => {
+      const payload = readImportDragPayload(e.dataTransfer);
+      if (!payload) return;
+      e.preventDefault();
+      void addImportEdge(payload.ontologyId, payload.ontologyName);
+    },
+    [addImportEdge],
+  );
+
   const approveClass = useCallback(async (key: string) => {
     if (!selectedOntologyId) return;
     setClasses((prev) =>
@@ -958,6 +1143,7 @@ function WorkspacePageInner() {
     setEdgeRepair,
     setRevisionsInbox,
     exportOntology,
+    removeImportEdge,
     retryRun,
     pipelineRunId,
     activeLens,
@@ -989,6 +1175,11 @@ function WorkspacePageInner() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-[#12121f]">
+      {/* Toast host — bottom-centre overlay, mounted once at the page
+          root so any module (drag-and-drop import, future undo-toast
+          migrations) can ``pushToast`` without threading context. */}
+      <ToastHost />
+
       {/* Top Bar: minimal toolbar */}
       <LensToolbar
         activeLens={activeLens}
@@ -1029,7 +1220,12 @@ function WorkspacePageInner() {
         />
 
         {/* Center: Canvas + VCR — min-h-0 lets the flex child shrink so Sigma gets a real height */}
-        <main className="flex-1 flex flex-col relative min-w-0 min-h-0">
+        <main
+          className="flex-1 flex flex-col relative min-w-0 min-h-0"
+          onDragOver={handleCanvasDragOver}
+          onDrop={handleCanvasDrop}
+          data-testid="workspace-canvas-pane"
+        >
           {/* Graph Canvas area */}
           <div className="flex-1 relative overflow-hidden min-h-0">
             {pipelineRunId && !graphLoading ? (

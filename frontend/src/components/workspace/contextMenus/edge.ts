@@ -93,6 +93,13 @@ export function buildEdgeContextMenu(
     const openLabel = sourceOntologyName
       ? `Open Source Ontology (${sourceOntologyName})`
       : "Open Source Ontology";
+    // Stream 1 H.16: same blast-radius semantics as the class menu —
+    // "Remove Import" drops the entire imports edge to the source
+    // ontology, not just this one edge. Labelled with the source so the
+    // user understands the scope.
+    const removeLabel = sourceOntologyName
+      ? `Remove Import (${sourceOntologyName})`
+      : "Remove Import";
     return [
       viewDetails,
       { label: "separator0", separator: true },
@@ -106,6 +113,20 @@ export function buildEdgeContextMenu(
         onClick: () => {
           if (sourceOntologyId) {
             actions.handleSelectOntology(sourceOntologyId);
+          }
+        },
+      },
+      {
+        label: removeLabel,
+        icon: "🗑️",
+        danger: true,
+        disabled: !sourceOntologyId,
+        onClick: () => {
+          if (sourceOntologyId) {
+            void actions.removeImportEdge(
+              sourceOntologyId,
+              sourceOntologyName ?? sourceOntologyId,
+            );
           }
         },
       },

@@ -38,6 +38,7 @@ function makeActions(
     setRevisionsInbox: jest.fn(),
     setOntologyDelete: jest.fn(),
     exportOntology: jest.fn(),
+    removeImportEdge: jest.fn(),
     retryRun: jest.fn(),
     pipelineRunId: null,
     activeLens: "semantic",

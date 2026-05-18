@@ -49,6 +49,7 @@ function makeActions(): WorkspaceContextMenuActions {
     setRevisionsInbox: jest.fn(),
     setOntologyDelete: jest.fn(),
     exportOntology: jest.fn(),
+    removeImportEdge: jest.fn(),
     retryRun: jest.fn(),
     pipelineRunId: null,
     activeLens: "semantic",
@@ -203,7 +204,7 @@ describe("buildEdgeContextMenu", () => {
   // curated here. Same treatment as imported classes — drop the mutating
   // section, surface "Open Source Ontology".
   describe("imported edges (Stream 1 H.15)", () => {
-    it("drops Approve/Reject/Delete and adds 'Open Source Ontology'", () => {
+    it("drops Approve/Reject/Delete and adds Open Source Ontology + Remove Import", () => {
       const actions = makeActions();
       const items = buildEdgeContextMenu(
         {
@@ -225,10 +226,35 @@ describe("buildEdgeContextMenu", () => {
         "View Version History",
         "View Provenance",
         "Open Source Ontology (RDFS Core)",
+        "Remove Import (RDFS Core)",
       ]);
       expect(visibleLabels).not.toContain("Approve edge");
       expect(visibleLabels).not.toContain("Reject edge");
       expect(visibleLabels).not.toContain("Delete");
+    });
+
+    it("Remove Import is danger-styled and fires removeImportEdge (H.16)", () => {
+      const actions = makeActions();
+      const items = buildEdgeContextMenu(
+        {
+          _key: "E1",
+          label: "subClassOf",
+          is_imported: true,
+          source_ontology_id: "rdfs-core",
+          source_ontology_name: "RDFS Core",
+        },
+        actions,
+      );
+      const remove = items.find((it) =>
+        typeof it.label === "string" && it.label.startsWith("Remove Import"),
+      )!;
+      expect(remove.danger).toBe(true);
+      expect(remove.disabled).toBeFalsy();
+      remove.onClick!();
+      expect(actions.removeImportEdge).toHaveBeenCalledWith(
+        "rdfs-core",
+        "RDFS Core",
+      );
     });
 
     it("Open Source Ontology deep-links via handleSelectOntology", () => {

@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { api, ApiError, type PaginatedResponse } from "@/lib/api-client";
 import { fetchOntologyData } from "@/lib/ontologyDataCache";
+import { writeImportDragPayload } from "@/lib/importDragCheck";
 import type { OntologyRegistryEntry } from "@/types/curation";
 import type { ExtractionRun } from "@/types/pipeline";
 
@@ -708,6 +709,19 @@ function OntologyItem({
         onContextMenu={(e) => {
           e.preventDefault();
           onContextMenu(e, "ontology", ont);
+        }}
+        // Stream 1 H.16: drag any ontology row onto the canvas of an
+        // already-open ontology to create an ``owl:imports`` edge.
+        // ``writeImportDragPayload`` is the single source of truth for
+        // the MIME type + JSON shape; ``page.tsx``'s drop handler reads
+        // back through ``readImportDragPayload``, so a field rename
+        // surfaces at compile time on both sides.
+        draggable
+        onDragStart={(e) => {
+          writeImportDragPayload(e.dataTransfer, {
+            ontologyId: ont._key,
+            ontologyName: displayName,
+          });
         }}
         className={`w-full text-left pl-5 pr-3 py-1.5 text-xs flex items-center gap-1.5 transition-colors group
           ${isSelected ? "bg-blue-50 text-blue-800" : "hover:bg-gray-50"}
