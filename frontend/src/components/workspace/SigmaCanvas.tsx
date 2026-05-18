@@ -34,6 +34,10 @@ import {
   confidenceNodeColor,
   normalizeConfidence01,
 } from "@/components/workspace/confidenceLensPalette";
+import {
+  IMPORTED_NODE_BORDER,
+  dimColorForImported,
+} from "@/components/workspace/importedEntityStyle";
 import type { LensType } from "@/components/workspace/LensToolbar";
 
 /* ── Color palettes ──────────────────────────────────── */
@@ -54,7 +58,15 @@ function statusBorderForClass(cls: OntologyClass): string {
 /** Neutral outline so semantic/confidence/diff/source lenses are not dominated by curation. */
 const NEUTRAL_NODE_BORDER = "#475569";
 
+/**
+ * Stream 1 H.15: classes annotated as imported via the effective-graph
+ * endpoint render with a slate border + dimmed fill, regardless of the
+ * active lens. Visual constants and colour math live in
+ * ``importedEntityStyle.ts`` so the box-arrow canvas and the legend agree
+ * on the exact same encoding.
+ */
 function borderColorForLens(lens: LensType, cls: OntologyClass): string {
+  if (cls.is_imported) return IMPORTED_NODE_BORDER;
   if (lens === "curation") return statusBorderForClass(cls);
   return NEUTRAL_NODE_BORDER;
 }
@@ -309,7 +321,7 @@ function buildTopologyGraph(classes: OntologyClass[], edges: OntologyEdge[]): Gr
       size: 18,
       baseSize: 18,
       color: "#64748b",
-      borderColor: NEUTRAL_NODE_BORDER,
+      borderColor: cls.is_imported ? IMPORTED_NODE_BORDER : NEUTRAL_NODE_BORDER,
       type: "bordered",
       x: pos.x,
       y: pos.y,
@@ -317,6 +329,15 @@ function buildTopologyGraph(classes: OntologyClass[], edges: OntologyEdge[]): Gr
       status: cls.status,
       uri: cls.uri,
       description: cls.description,
+      // Effective-graph annotation fields (Stream 1 H.12 / H.15). The
+      // lens painter reads ``isImported`` to dim the fill and pin the
+      // border to the imported colour, regardless of which lens is
+      // active; ``sourceOntologyId`` / ``sourceOntologyName`` are
+      // forwarded to the right-click handler so the "Open Source
+      // Ontology" menu item knows where to deep-link.
+      isImported: cls.is_imported === true,
+      sourceOntologyId: cls.source_ontology_id ?? null,
+      sourceOntologyName: cls.source_ontology_name ?? null,
     });
   }
 
@@ -357,14 +378,18 @@ function buildTopologyGraph(classes: OntologyClass[], edges: OntologyEdge[]): Gr
 
     const displayLabel = edge.label || edgeType.replace(/_/g, " ");
 
+    const baseEdgeColor = EDGE_COLORS[edgeType] ?? "#94a3b8";
     graph.addEdgeWithKey(edge._key, source, target, {
       label: displayLabel,
       baseLabel: displayLabel,
-      color: EDGE_COLORS[edgeType] ?? "#94a3b8",
+      color: edge.is_imported ? dimColorForImported(baseEdgeColor) : baseEdgeColor,
       size: edgeType === "subclass_of" ? 2.5 : 2,
       type: "curvedArrow",
       edgeKey: edge._key,
       edgeType,
+      isImported: edge.is_imported === true,
+      sourceOntologyId: edge.source_ontology_id ?? null,
+      sourceOntologyName: edge.source_ontology_name ?? null,
     });
   }
 
@@ -424,10 +449,18 @@ function paintLensOnGraph(
     const sized = lensNodeSize(baseSize, cls, lens);
     g.setNodeAttribute(node, "size", sized);
     g.setNodeAttribute(node, "label", displayNodeLabel(cls, lens));
+    // Imported entities (Stream 1 H.15): dim the lens colour towards
+    // slate so the lens identity stays legible while the "not owned by
+    // this ontology" signal dominates. Border is also pinned to the
+    // imported colour regardless of curation lens. The painter is the
+    // single place we ever touch ``color`` / ``borderColor`` after the
+    // initial build, so doing the override here covers every lens
+    // change without bespoke per-lens branches.
+    const rawColor = lensNodeColor(cls, lens, visibleNodeKeys, ontologyTier);
     g.setNodeAttribute(
       node,
       "color",
-      lensNodeColor(cls, lens, visibleNodeKeys, ontologyTier),
+      cls.is_imported ? dimColorForImported(rawColor) : rawColor,
     );
     g.setNodeAttribute(node, "borderColor", borderColorForLens(lens, cls));
     g.setNodeAttribute(node, "status", cls.status);
@@ -459,7 +492,11 @@ function paintLensOnGraph(
       return;
     }
     const ev = lensEdgeVisual(domainEdge, et, lens);
-    g.setEdgeAttribute(eid, "color", ev.color);
+    g.setEdgeAttribute(
+      eid,
+      "color",
+      domainEdge.is_imported ? dimColorForImported(ev.color) : ev.color,
+    );
     g.setEdgeAttribute(eid, "size", ev.size);
     g.setEdgeAttribute(
       eid,
@@ -743,6 +780,13 @@ export default function SigmaCanvas({
         confidence: attrs.confidence,
         status: attrs.status,
         uri: attrs.uri,
+        // Effective-graph annotation (Stream 1 H.12 / H.15). The class
+        // context menu builder reads ``is_imported`` to switch to the
+        // read-only + "Open Source Ontology" inventory; the source
+        // fields drive the deep-link target.
+        is_imported: attrs.isImported === true,
+        source_ontology_id: attrs.sourceOntologyId ?? null,
+        source_ontology_name: attrs.sourceOntologyName ?? null,
       });
     });
 
@@ -756,6 +800,9 @@ export default function SigmaCanvas({
         edgeType: attrs.edgeType,
         label: attrs.label,
         status: full?.status,
+        is_imported: attrs.isImported === true,
+        source_ontology_id: attrs.sourceOntologyId ?? null,
+        source_ontology_name: attrs.sourceOntologyName ?? null,
       });
     });
 

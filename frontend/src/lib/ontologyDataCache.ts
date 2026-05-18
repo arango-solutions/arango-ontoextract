@@ -58,7 +58,7 @@
  * call sites.
  */
 
-type Kind = "classes" | "edges" | "properties";
+type Kind = "classes" | "edges" | "properties" | "effective";
 type Profile = "summary" | "full";
 
 interface CacheEntry<T> {

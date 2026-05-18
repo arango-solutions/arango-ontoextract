@@ -101,4 +101,51 @@ describe("ClassBoxNode", () => {
     expect(screen.getByTestId("handle-target")).toBeInTheDocument();
     expect(screen.getByTestId("handle-source")).toBeInTheDocument();
   });
+
+  describe("imported classes (Stream 1 H.15)", () => {
+    it("renders a solid border + no imported pill when isImported is omitted", () => {
+      const { container } = renderNode({ label: "Owned" });
+      const box = container.firstChild?.firstChild as HTMLElement;
+
+      expect(box.style.borderStyle).toBe("solid");
+      expect(box.dataset.imported).toBeUndefined();
+      expect(box.className).not.toContain("opacity-75");
+      // The pill is the only element with the "imported" aria-label;
+      // when absent neither the wrapper nor any child should reference it.
+      expect(screen.queryByLabelText(/imported from/i)).not.toBeInTheDocument();
+      expect(box.title).toBe("");
+    });
+
+    it("renders a dashed border + dim opacity + imported pill when isImported is true", () => {
+      const { container } = renderNode({
+        label: "Vehicle",
+        isImported: true,
+        sourceOntologyName: "FOAF",
+      });
+      const box = container.firstChild?.firstChild as HTMLElement;
+
+      expect(box.style.borderStyle).toBe("dashed");
+      expect(box.dataset.imported).toBe("true");
+      expect(box.className).toContain("opacity-75");
+      // Header pill announces the imported state. Both the box wrapper and
+      // the pill carry the same tooltip text so hover discovery works at
+      // either target. The pill is the *only* element labelled "Imported
+      // from …" — we target it by aria-label to avoid collisions with
+      // class names that happen to contain the word "imported".
+      const pill = screen.getByLabelText("Imported from FOAF");
+      expect(pill).toBeInTheDocument();
+      expect(pill.textContent?.toLowerCase()).toBe("imported");
+      expect(pill.getAttribute("title")).toBe("Imported from FOAF");
+      expect(box.title).toBe("Imported from FOAF");
+    });
+
+    it("falls back to a generic source label when sourceOntologyName is missing", () => {
+      const { container } = renderNode({
+        label: "Vehicle",
+        isImported: true,
+      });
+      const box = container.firstChild?.firstChild as HTMLElement;
+      expect(box.title).toBe("Imported from another ontology");
+    });
+  });
 });

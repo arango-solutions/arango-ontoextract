@@ -198,4 +198,91 @@ describe("buildEdgeContextMenu", () => {
     expect(deleteItem.danger).toBe(true);
     expect(deleteItem.onClick).toBeUndefined();
   });
+
+  // Stream 1 H.15: edges that came from an imported ontology cannot be
+  // curated here. Same treatment as imported classes — drop the mutating
+  // section, surface "Open Source Ontology".
+  describe("imported edges (Stream 1 H.15)", () => {
+    it("drops Approve/Reject/Delete and adds 'Open Source Ontology'", () => {
+      const actions = makeActions();
+      const items = buildEdgeContextMenu(
+        {
+          _key: "E1",
+          label: "subClassOf",
+          is_imported: true,
+          source_ontology_id: "rdfs-core",
+          source_ontology_name: "RDFS Core",
+        },
+        actions,
+      );
+
+      const visibleLabels = items
+        .filter((it) => !it.separator)
+        .map((it) => it.label);
+
+      expect(visibleLabels).toEqual([
+        "subClassOf",
+        "View Version History",
+        "View Provenance",
+        "Open Source Ontology (RDFS Core)",
+      ]);
+      expect(visibleLabels).not.toContain("Approve edge");
+      expect(visibleLabels).not.toContain("Reject edge");
+      expect(visibleLabels).not.toContain("Delete");
+    });
+
+    it("Open Source Ontology deep-links via handleSelectOntology", () => {
+      const actions = makeActions();
+      const items = buildEdgeContextMenu(
+        {
+          _key: "E1",
+          label: "subClassOf",
+          is_imported: true,
+          source_ontology_id: "rdfs-core",
+          source_ontology_name: "RDFS Core",
+        },
+        actions,
+      );
+
+      const open = items.find((it) =>
+        typeof it.label === "string" && it.label.startsWith("Open Source Ontology"),
+      )!;
+      expect(open.disabled).toBeFalsy();
+      open.onClick!();
+      expect(actions.handleSelectOntology).toHaveBeenCalledWith("rdfs-core");
+    });
+
+    it("disables 'Open Source Ontology' when source_ontology_id is missing", () => {
+      const actions = makeActions();
+      const items = buildEdgeContextMenu(
+        { _key: "E1", label: "subClassOf", is_imported: true },
+        actions,
+      );
+      const open = items.find((it) =>
+        typeof it.label === "string" && it.label.startsWith("Open Source Ontology"),
+      )!;
+      expect(open.disabled).toBe(true);
+      open.onClick!();
+      expect(actions.handleSelectOntology).not.toHaveBeenCalled();
+    });
+
+    it("treats is_imported: false as a regular edge (full mutating menu)", () => {
+      const actions = makeActions();
+      const items = buildEdgeContextMenu(
+        { _key: "E1", label: "knows", is_imported: false },
+        actions,
+      );
+      const visibleLabels = items
+        .filter((it) => !it.separator)
+        .map((it) => it.label);
+      expect(visibleLabels).toEqual([
+        "knows",
+        "Approve edge",
+        "Reject edge",
+        "View Version History",
+        "View Provenance",
+        "Delete",
+      ]);
+    });
+  });
 });

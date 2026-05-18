@@ -22,6 +22,17 @@ export interface ClassBoxNodeData {
   borderColor: string;
   properties: ClassBoxProperty[];
   isSelected: boolean;
+  /**
+   * Effective-graph annotation (Stream 1 H.12 / H.15). When ``true`` the
+   * class is owned by an imported ontology and the box renders with a
+   * dashed border + reduced opacity + a small "imported" hint in the
+   * header so the user sees they cannot edit it here.
+   */
+  isImported?: boolean;
+  /** Display name of the source ontology — drives the tooltip on imported
+   *  classes ("Imported from <name>"). Falls back to the source ontology
+   *  id when the name is missing. */
+  sourceOntologyName?: string | null;
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -31,18 +42,37 @@ const STATUS_DOT: Record<string, string> = {
 };
 
 function ClassBoxNode({ data }: NodeProps<ClassBoxNodeData>) {
-  const { label, headerColor, borderColor, properties, isSelected, status } = data;
+  const {
+    label,
+    headerColor,
+    borderColor,
+    properties,
+    isSelected,
+    status,
+    isImported,
+    sourceOntologyName,
+  } = data;
 
   const maxVisible = 12;
   const visibleProps = properties.slice(0, maxVisible);
   const overflow = properties.length - maxVisible;
 
+  const importedTitle = isImported
+    ? `Imported from ${sourceOntologyName ?? "another ontology"}`
+    : undefined;
+
   return (
     <div
       className={`rounded-lg shadow-md min-w-[180px] max-w-[260px] overflow-hidden transition-shadow ${
         isSelected ? "ring-2 ring-indigo-400 shadow-indigo-400/30" : ""
-      }`}
-      style={{ borderWidth: 2, borderStyle: "solid", borderColor }}
+      } ${isImported ? "opacity-75" : ""}`}
+      style={{
+        borderWidth: 2,
+        borderStyle: isImported ? "dashed" : "solid",
+        borderColor,
+      }}
+      title={importedTitle}
+      data-imported={isImported ? "true" : undefined}
     >
       <Handle type="target" position={Position.Top} className="!bg-gray-400 !w-2 !h-2" />
 
@@ -60,6 +90,15 @@ function ClassBoxNode({ data }: NodeProps<ClassBoxNodeData>) {
         <span className="text-xs font-semibold text-white truncate drop-shadow-sm">
           {label}
         </span>
+        {isImported && (
+          <span
+            className="ml-auto text-[9px] uppercase tracking-wide text-white/90 flex-shrink-0"
+            title={importedTitle}
+            aria-label={importedTitle}
+          >
+            imported
+          </span>
+        )}
       </div>
 
       {/* Properties */}

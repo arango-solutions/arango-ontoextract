@@ -45,4 +45,77 @@ describe("CanvasLensLegend", () => {
     expect(el).toHaveTextContent(/slider below the canvas/i);
     expect(el).toHaveTextContent(/composes with the time slider/i);
   });
+
+  describe("imported swatch (Stream 1 H.15)", () => {
+    // The legend has to spell out what the dashed border + dimmed fill on
+    // imported entities means (workspace rule §12, "every encoding is legible
+    // in-UI"). In the common case — an ontology with no imports — the row is
+    // suppressed so the legend stays compact (rule §20 mitigation: copy that
+    // never appears can't be discovered).
+    it("omits the imported-swatch row when no imports are on the canvas", () => {
+      render(
+        <CanvasLensLegend activeLens="semantic" timelineActive={false} />,
+      );
+      expect(
+        screen.queryByTestId("canvas-lens-legend-imported"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("omits the imported-swatch row when hasImported is explicitly false", () => {
+      render(
+        <CanvasLensLegend
+          activeLens="semantic"
+          timelineActive={false}
+          hasImported={false}
+        />,
+      );
+      expect(
+        screen.queryByTestId("canvas-lens-legend-imported"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("surfaces the imported-swatch row when hasImported is true", () => {
+      render(
+        <CanvasLensLegend
+          activeLens="semantic"
+          timelineActive={false}
+          hasImported
+        />,
+      );
+      const row = screen.getByTestId("canvas-lens-legend-imported");
+      expect(row).toBeInTheDocument();
+      expect(row).toHaveTextContent(/dashed border/i);
+      expect(row).toHaveTextContent(/dimmed fill/i);
+      // Discoverability: tell the user the imported entity has actions
+      // (right-click → "Open Source Ontology"), since left-click only
+      // selects.
+      expect(row).toHaveTextContent(/right-click/i);
+    });
+
+    it("renders the imported-swatch row across every lens, not just semantic", () => {
+      // The encoding is lens-independent — the dashed border is the same
+      // signal whether the user is in confidence, curation, diff, or source
+      // mode. Verifying every lens guarantees the row is wired through the
+      // shared rendering path rather than an accidental semantic-only branch.
+      for (const lens of [
+        "semantic",
+        "confidence",
+        "curation",
+        "diff",
+        "source",
+      ] as const) {
+        const { unmount } = render(
+          <CanvasLensLegend
+            activeLens={lens}
+            timelineActive={false}
+            hasImported
+          />,
+        );
+        expect(
+          screen.getByTestId("canvas-lens-legend-imported"),
+        ).toBeInTheDocument();
+        unmount();
+      }
+    });
+  });
 });

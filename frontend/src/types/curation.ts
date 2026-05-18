@@ -24,6 +24,17 @@ export interface OntologyClass {
   expired: string | null;
   /** Domain vs local tier — used by workspace "Source type" lens when present */
   tier?: string;
+  /**
+   * Effective-ontology annotation (Stream 1 H.12). Set when the class was
+   * fetched via ``GET /api/v1/ontology/{id}/effective`` and originates in an
+   * ontology *other than* the currently-open one. The canvas (H.15) renders
+   * imported classes with a dashed border + dimmed fill; the class context
+   * menu replaces destructive actions with "Open Source Ontology". When
+   * absent (legacy per-ontology fetch path), the class is treated as owned.
+   */
+  source_ontology_id?: string;
+  source_ontology_name?: string;
+  is_imported?: boolean;
 }
 
 export interface OntologyProperty {
@@ -50,6 +61,62 @@ export interface OntologyEdge {
   status?: CurationStatus;
   created?: string;
   expired?: string | null;
+  /** Effective-ontology annotation (Stream 1 H.12). See ``OntologyClass`` notes. */
+  source_ontology_id?: string;
+  source_ontology_name?: string;
+  is_imported?: boolean;
+}
+
+/**
+ * Effective-ontology participating source — one entry per ontology in the
+ * transitive ``owl:imports`` closure of the target ontology. ``_key`` is the
+ * registry key. ``is_self`` is true for the target ontology row. ``depth`` is
+ * the BFS distance via ``imports`` edges (0 for self). Returned by ``GET
+ * /api/v1/ontology/{id}/effective`` (Stream 1 H.12).
+ */
+export interface EffectiveSource {
+  _key: string;
+  name: string;
+  tier?: string | null;
+  status?: string | null;
+  is_self: boolean;
+  depth: number;
+}
+
+export type EffectiveConflictKind =
+  | "duplicate_uri"
+  | "duplicate_label"
+  | "subclass_cycle_via_import";
+
+export interface EffectiveConflict {
+  kind: EffectiveConflictKind;
+  key: string;
+  sources: {
+    ontology_id: string;
+    ontology_name: string;
+    entity_key: string;
+  }[];
+  message: string;
+}
+
+/**
+ * Wire shape of ``GET /api/v1/ontology/{id}/effective``. Each entity in
+ * ``classes`` / ``edges`` / ``properties`` carries the standard summary
+ * projection plus the optional ``source_ontology_id`` / ``source_ontology_name``
+ * / ``is_imported`` annotation. ``conflicts`` surface merge-induced ambiguities
+ * (Stream 1 H.13); ``etag`` powers ``If-None-Match`` revalidation.
+ */
+export interface EffectiveOntologyResponse {
+  ontology_id: string;
+  ontology_name: string;
+  include: "summary" | "full";
+  sources: EffectiveSource[];
+  classes: OntologyClass[];
+  edges: OntologyEdge[];
+  properties: OntologyProperty[];
+  conflicts: EffectiveConflict[];
+  etag: string;
+  truncated: boolean;
 }
 
 export interface CurationDecision {

@@ -29,16 +29,91 @@ export function buildEdgeContextMenu(
 ): ContextMenuItem[] {
   const edgeKey = (data._key ?? data.key) as string;
   const edgeLabel = (data.label ?? data.edgeType ?? edgeKey) as string;
+  const isImported = data.is_imported === true;
+  const sourceOntologyId = (data.source_ontology_id as string | null | undefined) ?? null;
+  const sourceOntologyName =
+    (data.source_ontology_name as string | null | undefined) ?? null;
 
-  return [
-    {
-      label: `${edgeLabel}`,
-      icon: "🔍",
-      onClick: () => {
+  const viewDetails: ContextMenuItem = {
+    label: `${edgeLabel}`,
+    icon: "🔍",
+    onClick: () => {
+      actions.handleEdgeSelect(edgeKey);
+      actions.setDetailPanelOpen(true);
+    },
+  };
+
+  const viewHistory: ContextMenuItem = {
+    label: "View Version History",
+    icon: "📜",
+    onClick: async () => {
+      try {
+        const history = await api.get<Record<string, unknown>[]>(
+          `/api/v1/ontology/edge/${edgeKey}/history`,
+        );
+        // ``AssetInfoPanel`` switches on ``_history`` (and ``_provenance``)
+        // generically — see ``app/workspace/page.tsx`` lines 1276–1296. We
+        // reuse ``type: "ontology"`` so the same renderer picks it up; the
+        // panel header just shows whatever ``name`` we pass.
+        actions.setInfoPanelItem({
+          type: "ontology",
+          data: { _key: edgeKey, name: edgeLabel, _history: history },
+        });
+      } catch {
         actions.handleEdgeSelect(edgeKey);
         actions.setDetailPanelOpen(true);
-      },
+      }
     },
+  };
+
+  const viewProvenance: ContextMenuItem = {
+    label: "View Provenance",
+    icon: "🔗",
+    onClick: async () => {
+      try {
+        const prov = await api.get<{ data: Record<string, unknown>[] }>(
+          `/api/v1/ontology/edge/${edgeKey}/provenance`,
+        );
+        actions.setInfoPanelItem({
+          type: "ontology",
+          data: { _key: edgeKey, name: edgeLabel, _provenance: prov.data },
+        });
+      } catch {
+        actions.handleEdgeSelect(edgeKey);
+        actions.setDetailPanelOpen(true);
+      }
+    },
+  };
+
+  // Imported edges (Stream 1 H.15) — drop the mutating section and
+  // surface "Open Source Ontology" instead. Same reasoning as the
+  // ``class`` builder: Approve / Reject / Delete are not the right
+  // affordance when the edge is owned by another ontology.
+  if (isImported) {
+    const openLabel = sourceOntologyName
+      ? `Open Source Ontology (${sourceOntologyName})`
+      : "Open Source Ontology";
+    return [
+      viewDetails,
+      { label: "separator0", separator: true },
+      viewHistory,
+      viewProvenance,
+      { label: "separator1", separator: true },
+      {
+        label: openLabel,
+        icon: "🔷",
+        disabled: !sourceOntologyId,
+        onClick: () => {
+          if (sourceOntologyId) {
+            actions.handleSelectOntology(sourceOntologyId);
+          }
+        },
+      },
+    ];
+  }
+
+  return [
+    viewDetails,
     { label: "separator0", separator: true },
     {
       label: "Approve edge",
@@ -55,46 +130,8 @@ export function buildEdgeContextMenu(
       },
     },
     { label: "separator1", separator: true },
-    {
-      label: "View Version History",
-      icon: "📜",
-      onClick: async () => {
-        try {
-          const history = await api.get<Record<string, unknown>[]>(
-            `/api/v1/ontology/edge/${edgeKey}/history`,
-          );
-          // ``AssetInfoPanel`` switches on ``_history`` (and ``_provenance``)
-          // generically — see ``app/workspace/page.tsx`` lines 1276–1296. We
-          // reuse ``type: "ontology"`` so the same renderer picks it up; the
-          // panel header just shows whatever ``name`` we pass.
-          actions.setInfoPanelItem({
-            type: "ontology",
-            data: { _key: edgeKey, name: edgeLabel, _history: history },
-          });
-        } catch {
-          actions.handleEdgeSelect(edgeKey);
-          actions.setDetailPanelOpen(true);
-        }
-      },
-    },
-    {
-      label: "View Provenance",
-      icon: "🔗",
-      onClick: async () => {
-        try {
-          const prov = await api.get<{ data: Record<string, unknown>[] }>(
-            `/api/v1/ontology/edge/${edgeKey}/provenance`,
-          );
-          actions.setInfoPanelItem({
-            type: "ontology",
-            data: { _key: edgeKey, name: edgeLabel, _provenance: prov.data },
-          });
-        } catch {
-          actions.handleEdgeSelect(edgeKey);
-          actions.setDetailPanelOpen(true);
-        }
-      },
-    },
+    viewHistory,
+    viewProvenance,
     { label: "separator2", separator: true },
     {
       label: "Delete",

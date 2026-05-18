@@ -4,12 +4,24 @@ import {
   ONTOLOGY_EDGE_COLORS,
   SEMANTIC_EDGE_LEGEND,
 } from "@/components/graph/graphVisualPalette";
+import { IMPORTED_NODE_BORDER } from "@/components/workspace/importedEntityStyle";
 import type { LensType } from "@/components/workspace/LensToolbar";
 
 export interface CanvasLensLegendProps {
   activeLens: LensType;
   /** When set, diff lens is showing a timeline-filtered subgraph */
   timelineActive: boolean;
+  /**
+   * When ``true`` the canvas is currently rendering at least one class
+   * or edge that came from an imported ontology (effective-graph view,
+   * Stream 1 H.12 / H.15). The legend then surfaces an extra row
+   * explaining the dashed border + dimmed fill so the user does not
+   * have to right-click an imported entity to discover what the
+   * styling means (rule ``ui-architecture.mdc`` §12: "every encoding is
+   * legible in-UI"). When ``false`` the row is omitted; copy stays
+   * tight in the common single-ontology case.
+   */
+  hasImported?: boolean;
 }
 
 const SEMANTIC_SWATCHES: { color: string; label: string }[] = [
@@ -72,6 +84,7 @@ const LENS_META: Record<
 export default function CanvasLensLegend({
   activeLens,
   timelineActive,
+  hasImported = false,
 }: CanvasLensLegendProps) {
   const meta = LENS_META[activeLens];
   const note =
@@ -98,6 +111,20 @@ export default function CanvasLensLegend({
             <span>{s.label}</span>
           </li>
         ))}
+        {hasImported && (
+          <li
+            className="flex items-center gap-2 text-[10px] text-gray-200 border-t border-white/10 pt-1.5 mt-1.5"
+            data-testid="canvas-lens-legend-imported"
+          >
+            <span
+              className="h-2.5 w-2.5 shrink-0 rounded-full border border-dashed"
+              style={{ backgroundColor: "#475569", borderColor: IMPORTED_NODE_BORDER }}
+            />
+            <span>
+              Imported from another ontology — dashed border, dimmed fill. Right-click to open the source.
+            </span>
+          </li>
+        )}
       </ul>
       {note && (
         <p className="mt-2 text-[9px] leading-snug text-gray-400 border-t border-white/10 pt-2">

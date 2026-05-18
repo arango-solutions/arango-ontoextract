@@ -212,4 +212,148 @@ describe("buildClassContextMenu", () => {
     req.onConfirm();
     expect(actions.deleteClass).toHaveBeenCalledWith("C1");
   });
+
+  // Stream 1 H.15: classes imported from another ontology cannot be
+  // curated or deleted here — the menu drops every mutating action and
+  // surfaces "Open Source Ontology" so the user can jump to the owning
+  // ontology and act there.
+  describe("imported classes (Stream 1 H.15)", () => {
+    it("drops Approve/Reject/Delete and adds 'Open Source Ontology'", () => {
+      const actions = makeActions();
+      const items = buildClassContextMenu(
+        {
+          _key: "C1",
+          label: "Person",
+          is_imported: true,
+          source_ontology_id: "foaf",
+          source_ontology_name: "FOAF",
+        },
+        actions,
+      );
+
+      const visibleLabels = items
+        .filter((it) => !it.separator)
+        .map((it) => it.label);
+
+      expect(visibleLabels).toEqual([
+        "View Details",
+        "View Version History",
+        "View Provenance",
+        "Open Source Ontology (FOAF)",
+      ]);
+      // Mutating verbs must not even appear — leaving them disabled would
+      // imply "fix me here once you do X", which is not the intent. The
+      // correct mental model is "go to the source ontology".
+      expect(visibleLabels).not.toContain("Approve");
+      expect(visibleLabels).not.toContain("Reject");
+      expect(visibleLabels).not.toContain("Delete");
+    });
+
+    it("Open Source Ontology deep-links via handleSelectOntology", () => {
+      const actions = makeActions();
+      const items = buildClassContextMenu(
+        {
+          _key: "C1",
+          label: "Person",
+          is_imported: true,
+          source_ontology_id: "foaf",
+          source_ontology_name: "FOAF",
+        },
+        actions,
+      );
+
+      const open = items.find((it) =>
+        typeof it.label === "string" && it.label.startsWith("Open Source Ontology"),
+      )!;
+      expect(open.disabled).toBeFalsy();
+      open.onClick!();
+      expect(actions.handleSelectOntology).toHaveBeenCalledWith("foaf");
+    });
+
+    it("falls back to a bare 'Open Source Ontology' label when source name is missing", () => {
+      const actions = makeActions();
+      const items = buildClassContextMenu(
+        {
+          _key: "C1",
+          label: "Person",
+          is_imported: true,
+          source_ontology_id: "foaf",
+        },
+        actions,
+      );
+
+      const visibleLabels = items
+        .filter((it) => !it.separator)
+        .map((it) => it.label);
+      expect(visibleLabels).toContain("Open Source Ontology");
+      expect(visibleLabels).not.toContain("Open Source Ontology (FOAF)");
+    });
+
+    it("disables 'Open Source Ontology' when source_ontology_id is missing", () => {
+      // Defensive: the wire format from ``/effective`` always populates
+      // ``source_ontology_id`` for imported entities, but if a future bug
+      // or a legacy fixture omits it, the menu must not silently no-op or
+      // fire ``handleSelectOntology(undefined)``. Disabled + no click = the
+      // safe fallback.
+      const actions = makeActions();
+      const items = buildClassContextMenu(
+        { _key: "C1", label: "Person", is_imported: true },
+        actions,
+      );
+      const open = items.find((it) =>
+        typeof it.label === "string" && it.label.startsWith("Open Source Ontology"),
+      )!;
+      expect(open.disabled).toBe(true);
+      open.onClick!();
+      expect(actions.handleSelectOntology).not.toHaveBeenCalled();
+    });
+
+    it("keeps View Version History and View Provenance for imported classes", () => {
+      // Read-only inspection is always safe and useful even on imported
+      // classes — provenance is how the user verifies why an axiom is
+      // present at all.
+      const actions = makeActions();
+      mockedApi.get
+        .mockResolvedValueOnce([{ ts: 1 }])
+        .mockResolvedValueOnce({ data: [{ source: "doc-1" }] });
+
+      const items = buildClassContextMenu(
+        {
+          _key: "C1",
+          label: "Person",
+          is_imported: true,
+          source_ontology_id: "foaf",
+        },
+        actions,
+      );
+
+      const history = items.find((it) => it.label === "View Version History")!;
+      const provenance = items.find((it) => it.label === "View Provenance")!;
+      expect(history).toBeDefined();
+      expect(provenance).toBeDefined();
+    });
+
+    it("treats is_imported: false as a regular class", () => {
+      // Boundary: the field is optional, and the falsy paths (undefined,
+      // false, missing) must all yield the full mutating menu.
+      const actions = makeActions();
+      const items = buildClassContextMenu(
+        { _key: "C1", label: "Person", is_imported: false },
+        actions,
+      );
+
+      const visibleLabels = items
+        .filter((it) => !it.separator)
+        .map((it) => it.label);
+
+      expect(visibleLabels).toEqual([
+        "View Details",
+        "Approve",
+        "Reject",
+        "View Version History",
+        "View Provenance",
+        "Delete",
+      ]);
+    });
+  });
 });

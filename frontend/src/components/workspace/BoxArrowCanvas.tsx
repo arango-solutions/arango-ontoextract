@@ -25,6 +25,7 @@ import {
   confidenceNodeColor,
   normalizeConfidence01,
 } from "@/components/workspace/confidenceLensPalette";
+import { IMPORTED_NODE_BORDER } from "@/components/workspace/importedEntityStyle";
 import type { LensType } from "@/components/workspace/LensToolbar";
 import type { SigmaViewportApi, LayoutType, EdgeStyleType } from "./SigmaCanvas";
 
@@ -197,6 +198,17 @@ export default function BoxArrowCanvas({
       const props = classProperties[cls._key] ?? [];
       const hidden = visibleNodeKeys != null && !visibleNodeKeys.has(cls._key);
 
+      // Imported classes (Stream 1 H.15) render with a dashed border +
+      // dimmed opacity + "imported" header pill so the user can see at
+      // a glance that the class is owned by another ontology and the
+      // canvas's mutating actions do not apply here. The border colour
+      // is pinned to ``IMPORTED_NODE_BORDER`` (a muted slate) regardless
+      // of lens, matching Sigma's encoding so the two renderers agree.
+      const isImported = cls.is_imported === true;
+      const borderColor = isImported
+        ? IMPORTED_NODE_BORDER
+        : lensBorderColor(activeLens, cls);
+
       return {
         id: cls._key,
         type: "classBox" as const,
@@ -207,9 +219,11 @@ export default function BoxArrowCanvas({
           status: cls.status,
           confidence: cls.confidence,
           headerColor: lensHeaderColor(cls, activeLens, visibleNodeKeys, ontologyTier),
-          borderColor: lensBorderColor(activeLens, cls),
+          borderColor,
           properties: props,
           isSelected: selectedNodeKey === cls._key,
+          isImported,
+          sourceOntologyName: cls.source_ontology_name ?? null,
         },
         hidden,
         style: { pointerEvents: "all" as const },
@@ -231,6 +245,13 @@ export default function BoxArrowCanvas({
       const displayLabel = edge.label || EDGE_TYPE_LABELS[edgeType] || edgeType.replace(/_/g, " ");
       const color = lensEdgeColor(edgeType, edge, activeLens);
       const isSelected = selectedEdgeKey === edge._key;
+      // Imported edges (Stream 1 H.15): draw with a dashed stroke so
+      // the visual treatment matches the dashed border on imported
+      // class boxes, and add a subtle opacity dip via the colour mixer
+      // upstream (the renderer pipes ``stroke`` straight to SVG, so we
+      // either dim the colour or set ``opacity``; we lean on stroke
+      // colour to keep the dasharray crisp).
+      const isImported = edge.is_imported === true;
 
       edgesOut.push({
         id: edge._key,
@@ -243,10 +264,11 @@ export default function BoxArrowCanvas({
         style: {
           stroke: isSelected ? "#818cf8" : color,
           strokeWidth: isSelected ? 3 : (edgeType === "subclass_of" ? 2.5 : 2),
+          ...(isImported ? { strokeDasharray: "6 4", opacity: 0.7 } : {}),
         },
         markerEnd: { type: MarkerType.ArrowClosed, color: isSelected ? "#818cf8" : color },
         animated: false,
-        data: { edgeKey: edge._key, edgeType },
+        data: { edgeKey: edge._key, edgeType, isImported },
       });
     }
 
@@ -341,28 +363,40 @@ export default function BoxArrowCanvas({
     (event: React.MouseEvent, node: Node<ClassBoxNodeData>) => {
       event.preventDefault();
       event.stopPropagation();
+      // Forward the effective-graph annotation (Stream 1 H.12 / H.15)
+      // so the class context-menu builder can switch to the read-only
+      // + "Open Source Ontology" inventory when the class is imported.
+      const cls = classes.find((c) => c._key === node.id);
       onContextMenuRef.current(event.nativeEvent, "node", {
         _key: node.id,
         label: node.data.label,
         uri: node.data.uri,
         status: node.data.status,
         confidence: node.data.confidence,
+        is_imported: node.data.isImported === true,
+        source_ontology_id: cls?.source_ontology_id ?? null,
+        source_ontology_name: node.data.sourceOntologyName ?? null,
       });
     },
-    [],
+    [classes],
   );
 
   const handleEdgeContextMenu = useCallback(
     (event: React.MouseEvent, edge: Edge) => {
       event.preventDefault();
       event.stopPropagation();
+      const ek = (edge.data?.edgeKey ?? edge.id) as string;
+      const full = edges.find((ed) => ed._key === ek);
       onContextMenuRef.current(event.nativeEvent, "edge", {
-        _key: edge.data?.edgeKey ?? edge.id,
+        _key: ek,
         edgeType: edge.data?.edgeType,
         label: edge.label,
+        is_imported: full?.is_imported === true,
+        source_ontology_id: full?.source_ontology_id ?? null,
+        source_ontology_name: full?.source_ontology_name ?? null,
       });
     },
-    [],
+    [edges],
   );
 
   const handlePaneContextMenu = useCallback(

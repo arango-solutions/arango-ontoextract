@@ -45,6 +45,7 @@ import type {
   OntologyClass,
   OntologyProperty,
   OntologyEdge,
+  EffectiveOntologyResponse,
 } from "@/types/curation";
 import type { SigmaViewportApi } from "@/components/workspace/SigmaCanvas";
 import type { ClassBoxProperty } from "@/components/workspace/ClassBoxNode";
@@ -364,37 +365,40 @@ function WorkspacePageInner() {
     setGraphLoading(true);
     setGraphError(null);
     try {
-      // ?include=summary drops evidence[] / parent_evidence[] from the
-      // wire response. The canvas does not render those fields -- they
-      // are only needed in the FloatingDetailPanel, which uses the
-      // single-item endpoints. On the WTW Ontology this turns the
-      // /classes round-trip from 909 KB / 2.2s into 360 KB / 0.4s
-      // (5.3x faster, 2.5x smaller). The /edges round-trip drops to
-      // 445 KB on the same projection (1.25x smaller).
+      // Single round-trip to the effective-graph endpoint (Stream 1
+      // H.12). When the ontology has no imports, the response is shaped
+      // identically to ``/{id}/classes`` + ``/{id}/edges`` -- every
+      // entity carries ``is_imported: false`` and ``source_ontology_id``
+      // equal to the target. When the ontology DOES import others, the
+      // canvas (H.15) reads the new annotation fields to render imported
+      // entities with a dashed border + dimmed fill and to swap the
+      // context menu to "Open Source Ontology" (no Approve/Reject/Delete
+      // on entities the target ontology does not own).
       //
-      // fetchOntologyData wraps each request in a module-level cache
-      // keyed on (ontologyId, kind, profile). Selecting an ontology
-      // we've already loaded once in this session returns synchronously
-      // (no network round-trip at all) -- the back-and-forth-between-
-      // ontologies case the user reported. Mutations (approve / reject
-      // / delete) call invalidateOntologyKind below to drop the cached
-      // entry so the next selection sees fresh data.
-      const [classesRes, edgesRes] = await Promise.all([
-        fetchOntologyData(ontologyId, "classes", "summary", () =>
-          api.get<PaginatedResponse<OntologyClass>>(
-            `/api/v1/ontology/${ontologyId}/classes?include=summary`,
+      // ?include=summary drops evidence[] / parent_evidence[] from the
+      // wire response (same projection that ``/classes?include=summary``
+      // uses), so the canvas-bound payload stays small even with imports
+      // expanded. Detail panels and exports continue to fetch
+      // ``?include=full`` via the single-item endpoints.
+      //
+      // fetchOntologyData wraps the request in a module-level cache
+      // keyed on (ontologyId, "effective", "summary"). Selecting an
+      // ontology we have already loaded in this session returns the
+      // cached response synchronously. Mutations (approve / reject /
+      // delete) call ``invalidateOntologyKind(_, "effective")`` (alongside
+      // the existing ``classes`` / ``edges`` invalidations) so a future
+      // selection refetches the server's authoritative view.
+      const effectiveRes = await fetchOntologyData(
+        ontologyId,
+        "effective",
+        "summary",
+        () =>
+          api.get<EffectiveOntologyResponse>(
+            `/api/v1/ontology/${ontologyId}/effective?include=summary`,
           ),
-        ),
-        fetchOntologyData(ontologyId, "edges", "summary", () =>
-          api.get<PaginatedResponse<OntologyEdge>>(
-            `/api/v1/ontology/${ontologyId}/edges?include=summary`,
-          ),
-        ),
-      ]);
-      const classesList = Array.isArray(classesRes) ? classesRes : classesRes.data;
-      const edgesList = Array.isArray(edgesRes) ? edgesRes : edgesRes.data;
-      setClasses(classesList);
-      setEdges(edgesList);
+      );
+      setClasses(effectiveRes.classes ?? []);
+      setEdges(effectiveRes.edges ?? []);
       setProperties([]);
     } catch (err) {
       setGraphError(
@@ -481,6 +485,27 @@ function WorkspacePageInner() {
     }
     return map;
   }, [properties, edges]);
+
+  /**
+   * Whether the current canvas payload contains at least one entity
+   * annotated as imported via the effective-graph endpoint (Stream 1
+   * H.12 / H.15). The legend reads this to surface the "imported"
+   * swatch row only when it is meaningful — for ontologies with no
+   * imports, the row is suppressed so the legend stays compact.
+   *
+   * O(n+m) but cheap (each entity has one boolean field), and re-fires
+   * only when ``classes`` / ``edges`` references swap (mutation-driven
+   * via ``setClasses`` / ``setEdges``).
+   */
+  const canvasHasImported = useMemo(() => {
+    for (const c of classes) {
+      if (c.is_imported) return true;
+    }
+    for (const e of edges) {
+      if (e.is_imported) return true;
+    }
+    return false;
+  }, [classes, edges]);
 
   useEffect(() => {
     const lensKeys: Record<string, LensType> = {
@@ -687,11 +712,15 @@ function WorkspacePageInner() {
     );
     try {
       await api.put(`/api/v1/ontology/${selectedOntologyId}/classes/${key}`, { status: "approved" });
-      // Drop the cached classes entry so a future ontology selection
-      // refetches the server's authoritative view rather than serving
-      // the pre-mutation cached payload. Local state already reflects
-      // the optimistic update, so no immediate refetch is needed.
+      // Drop the cached classes + effective entries so a future
+      // ontology selection refetches the server's authoritative view
+      // rather than serving the pre-mutation cached payload. Local
+      // state already reflects the optimistic update, so no immediate
+      // refetch is needed. ``effective`` is invalidated alongside
+      // ``classes`` because the canvas now reads its payload from the
+      // effective endpoint (Stream 1 H.12 / H.15).
       invalidateOntologyKind(selectedOntologyId, "classes");
+      invalidateOntologyKind(selectedOntologyId, "effective");
     } catch (err) {
       console.error("Failed to approve class", err);
       // refreshGraph() invalidates and refetches -- correctly drops the
@@ -710,6 +739,7 @@ function WorkspacePageInner() {
     try {
       await api.put(`/api/v1/ontology/${selectedOntologyId}/classes/${key}`, { status: "rejected" });
       invalidateOntologyKind(selectedOntologyId, "classes");
+      invalidateOntologyKind(selectedOntologyId, "effective");
     } catch (err) {
       console.error("Failed to reject class", err);
       refreshGraph();
@@ -728,6 +758,7 @@ function WorkspacePageInner() {
         status: "approved",
       });
       invalidateOntologyKind(selectedOntologyId, "edges");
+      invalidateOntologyKind(selectedOntologyId, "effective");
     } catch (err) {
       console.error("Failed to approve edge", err);
       refreshGraph();
@@ -746,6 +777,7 @@ function WorkspacePageInner() {
         status: "rejected",
       });
       invalidateOntologyKind(selectedOntologyId, "edges");
+      invalidateOntologyKind(selectedOntologyId, "effective");
     } catch (err) {
       console.error("Failed to reject edge", err);
       refreshGraph();
@@ -758,6 +790,10 @@ function WorkspacePageInner() {
     try {
       await api.put(`/api/v1/ontology/${oid}/properties/${key}`, { status: "approved" });
       invalidateOntologyKind(oid, "properties");
+      // ``/effective`` carries properties[] too (Stream 1 H.12), so the
+      // next consumer of the effective payload (canvas refresh, H.17
+      // extraction context serializer) sees the curated status.
+      invalidateOntologyKind(oid, "effective");
     } catch (err) {
       console.error("Failed to approve property", err);
     }
@@ -769,6 +805,7 @@ function WorkspacePageInner() {
     try {
       await api.put(`/api/v1/ontology/${oid}/properties/${key}`, { status: "rejected" });
       invalidateOntologyKind(oid, "properties");
+      invalidateOntologyKind(oid, "effective");
     } catch (err) {
       console.error("Failed to reject property", err);
     }
@@ -780,9 +817,12 @@ function WorkspacePageInner() {
       await api.del(`/api/v1/ontology/${selectedOntologyId}/classes/${key}`);
       // Deleting a class can break edges that referenced it (rdfs_domain,
       // rdfs_range_class, subclass_of), so invalidate both kinds, not
-      // just classes. refreshGraph then refetches both from the server.
+      // just classes. ``effective`` is invalidated alongside because the
+      // canvas reads its merged payload (Stream 1 H.15). refreshGraph
+      // then refetches the authoritative view from the server.
       invalidateOntologyKind(selectedOntologyId, "classes");
       invalidateOntologyKind(selectedOntologyId, "edges");
+      invalidateOntologyKind(selectedOntologyId, "effective");
       refreshGraph();
     } catch (err) {
       console.error("Failed to delete class", err);
@@ -1081,6 +1121,7 @@ function WorkspacePageInner() {
                     <CanvasLensLegend
                       activeLens={activeLens}
                       timelineActive={timelineVisibleKeys != null}
+                      hasImported={canvasHasImported}
                     />
                   )}
                 </>
