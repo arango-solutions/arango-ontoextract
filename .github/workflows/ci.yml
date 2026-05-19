@@ -19,13 +19,23 @@ jobs:
   # Tier 1 — Lint (parallel, no deps)
   # ----------------------------------------------------------------------------
   lint-backend:
-    name: Lint Backend
+    name: Lint Backend (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    # ``backend/pyproject.toml`` declares ``requires-python = ">=3.11,<3.14"``.
+    # We pin the matrix to the two versions we actually support in production
+    # (3.11 LTS-style + 3.12 current) so a syntax / typing regression on
+    # either version surfaces at PR time. ``fail-fast: false`` keeps the other
+    # version's results visible when one fails, which is cheaper than
+    # re-pushing to see the second failure.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: backend/pyproject.toml
       - name: Install dependencies
@@ -38,6 +48,9 @@ jobs:
       - name: requirements.txt parity (BYOC)
         # Catches drift between root `requirements.txt` and the canonical
         # backend/pyproject.toml — see scripts/sync-requirements.sh.
+        # Only runs once (on 3.12) since the script reads pyproject.toml,
+        # not the live interpreter.
+        if: matrix.python-version == '3.12'
         run: bash scripts/sync-requirements.sh --check
         working-directory: ${{ github.workspace }}
 
@@ -113,14 +126,21 @@ jobs:
   # Tier 2 — Unit tests (parallel within tier; gated by lint of their language)
   # ----------------------------------------------------------------------------
   test-unit:
-    name: Unit Tests
+    name: Unit Tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     needs: [lint-backend, pre-commit]
+    # Same matrix policy as ``lint-backend``: catch regressions on either
+    # supported interpreter at PR time. The 80% coverage gate must hold on
+    # both versions.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: backend/pyproject.toml
       - name: Install dependencies
@@ -129,12 +149,29 @@ jobs:
       - name: Run unit tests
         run: pytest tests/unit/ -v --cov=app --cov-report=xml --cov-fail-under=80
         working-directory: backend
-      - name: Upload coverage
+      - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-unit
+          # Suffix by Python version so both matrix legs upload without
+          # name collision; the unified-image / downstream jobs do not
+          # care which one they grab.
+          name: coverage-backend-py${{ matrix.python-version }}
           path: backend/coverage.xml
+      # Codecov upload — once per matrix leg so the dashboard shows
+      # per-Python-version trends. ``fail_ci_if_error: false`` keeps a
+      # transient Codecov outage from blocking PRs; the in-repo
+      # ``--cov-fail-under=80`` gate above is the source of truth.
+      - name: Upload coverage to Codecov
+        if: always() && matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: backend/coverage.xml
+          flags: backend-unit
+          name: backend-unit-py${{ matrix.python-version }}
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   test-frontend:
     name: Frontend unit tests
@@ -150,9 +187,28 @@ jobs:
       - name: Install dependencies
         run: npm ci
         working-directory: frontend
-      - name: Run Jest
-        run: npm test -- --ci --coverage=false
+      # Stream 6 PR 1: enable coverage so the ``coverageThreshold`` gate in
+      # ``frontend/jest.config.ts`` (no-regression floor: 55/70/70/55 for
+      # statements/branches/functions/lines) is actually enforced.
+      - name: Run Jest with coverage
+        run: npm test -- --ci --coverage
         working-directory: frontend
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-frontend
+          path: frontend/coverage/lcov.info
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: frontend/coverage/lcov.info
+          flags: frontend-unit
+          name: frontend-unit
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   # ----------------------------------------------------------------------------
   # Tier 3 — Integration tests (only after backend unit tests pass)

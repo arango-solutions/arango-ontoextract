@@ -31,6 +31,12 @@ uv.lock
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+# Frontend Jest coverage output (Stream 6 PR 1 -- enabled in CI)
+frontend/coverage/
+backend/coverage.xml
+# Playwright artifacts (test:e2e writes here; ignored until D.5 lands)
+frontend/playwright-report/
+frontend/test-results/
 
 # Node / Frontend
 node_modules/

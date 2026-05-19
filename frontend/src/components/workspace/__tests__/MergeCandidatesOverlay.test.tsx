@@ -121,8 +121,19 @@ describe("MergeCandidatesOverlay", () => {
       />,
     );
 
-    await screen.findByTestId("merge-empty");
-    expect(screen.getByText(/No duplicate candidates found/)).toBeInTheDocument();
+    // Single ``waitFor`` block so BOTH assertions must hold
+    // simultaneously. Coverage instrumentation slows React's
+    // multi-pass render enough that a one-shot
+    // ``findByTestId`` -> ``getByText`` pair can land between
+    // intermediate states. ``waitFor`` polls until the empty-state
+    // div is mounted *and* its inner text has settled to the
+    // ``rows.length === 0`` branch.
+    await waitFor(() => {
+      expect(screen.getByTestId("merge-empty")).toBeInTheDocument();
+      expect(
+        screen.getByText(/No duplicate candidates found/),
+      ).toBeInTheDocument();
+    });
   });
 
   it("surfaces a failed ER pipeline run", async () => {
