@@ -240,22 +240,42 @@ in `pyproject.toml` but never actually imported. The frontend
 that the backend never implemented. The actual shipped REST surface
 is run-id-scoped: `/api/v1/er/runs/{run_id}/candidates`.
 
-Stream 2 is therefore split into two PRs:
+Stream 2 was scoped as two PRs; only PR 1 was actually needed:
 
-- **PR 1 — Workspace ER overlay (DONE)** — fresh `MergeCandidatesOverlay`
-  in the workspace, bound to the real backend, with new per-pair
-  accept / reject / explain endpoints.
-- **PR 2 — Library refactor (PENDING)** — replace the hand-rolled
-  blocking / clustering / golden-records inside `services/er.py` with
-  calls into `arango-entity-resolution`. Zero user-visible change;
-  unlocks the library's better blocking strategies and vector indexes
-  for future ER work.
+- **PR 1 — Workspace ER overlay (DONE, commit `a29c0a7`)** — fresh
+  `MergeCandidatesOverlay` in the workspace, bound to the real
+  backend, with new per-pair accept / reject / explain endpoints.
+- **PR 2 — Library refactor (INTENTIONALLY DEFERRED)** — the
+  `arango-entity-resolution` package (importable as
+  `entity_resolution`) is installed at 3.5.1 but its
+  `GoldenRecordService`, `BlockingService`, and `SimilarityService`
+  are **person-record-focused**: default field strategies are keyed on
+  `first_name`, `last_name`, `email`, `phone`, `address`, `city`,
+  `state`, `zip_code`, `company`, etc. Forcing the swap on ontology
+  classes (label / description / uri / tier) would require either
+  ugly field-name remapping or verbose per-field strategy overrides,
+  and the resulting golden-record output shape would no longer match
+  the temporal `update_class` + `expire_entity` contract. Hand-rolled
+  is the correct domain fit. Only `WCCClusteringService` would have
+  been a clean swap (it takes a `db` directly and returns a
+  `List[List[str]]` matching what `_execute_clustering` already
+  produces) — but the in-memory union-find is fine at our current
+  ontology sizes and trading it for a server-side AQL traversal is
+  not worth the dependency churn until we have millions of similarTo
+  edges to cluster.
+
+  **Action:** keep the hand-rolled implementations; do not pursue the
+  library swap. Re-open this section only if (a) we need golden
+  records for non-ontology records (e.g. resolving documents or
+  organisations) where the library's defaults fit, or (b) WCC
+  performance on a real workload exceeds in-memory union-find
+  capacity.
 
 #### Tasks
 
 | # | Task | Type | Estimate | Description |
 |---|------|------|----------|-------------|
-| ER.1 | Install and configure `arango-entity-resolution` | Backend | **PARTIAL (v0.4.0-dev)** | Library is in `backend/pyproject.toml` as `arango-entity-resolution>=0.1`, but `services/er.py` never imports it — every primitive (blocking, scoring, clustering, golden-record) is hand-rolled inline. Replacing the hand-rolled code with library calls is **PR 2**. |
+| ER.1 | Install and configure `arango-entity-resolution` | Backend | **INSTALLED, INTENTIONALLY UNUSED (v0.4.0-dev)** | Library is in `backend/pyproject.toml` as `arango-entity-resolution>=0.1` and installs at 3.5.1 under the import name `entity_resolution`. `services/er.py` never imports it — every primitive (blocking, scoring, clustering, golden-record) is hand-rolled inline because the library's services are person-record-focused (see "Plan-vs-reality audit" above for the full rationale). Hand-rolled is the correct domain fit; the library entry can remain as a future option for non-ontology entities. |
 | ER.2 | Replace ER agent stub | Backend | **DONE hand-rolled (v0.4.0-dev)** | `app/extraction/agents/er_agent.py::er_agent_node` is a real LangGraph node: pulls existing classes for the open ontology, scores each extracted class against them via `score_existing_class_vs_extracted`, populates `merge_candidates` on the pipeline state, and delegates cross-tier edge creation to `app/services/cross_tier.py::create_cross_tier_edges`. Uses hand-rolled scoring instead of the library — bundled into PR 2. |
 | ER.3 | Topological similarity scoring | Backend | **DONE (v0.4.0-dev)** | `app/services/er_topology.py` implements a weighted-Jaccard score across shared properties, parents, children, and overall neighborhood. Wired into both `explain_match` and `_execute_scoring` (combined-score component). Batch variant `compute_batch_topological_similarity` caches per-class neighborhoods so the n×n pipeline does O(n) DB reads instead of O(n²). |
 | ER.4 | WCC clustering | Backend | **DONE hand-rolled (v0.4.0-dev)** | Union-Find clustering inside `_execute_clustering` -- not the library's `WCCClusteringService`. PR 2 will swap to the library for auto backend selection + the optional graph-DB-side execution path on large ontologies. |
@@ -265,9 +285,15 @@ Stream 2 is therefore split into two PRs:
 | ER.8 | Cross-tier resolution | Backend | **DONE hand-rolled (v0.4.0-dev)** | `get_cross_tier_candidates` walks every (local, domain) class pair and combines `jaro_winkler(label)` + `token_overlap(description)`. The agent-side companion `create_cross_tier_edges` (in `app/services/cross_tier.py`) materialises `extends_domain` edges for EXTENSION-classified entities. Library swap is part of PR 2. |
 | ER.9 | ER MCP tools integration | Backend | **DONE (v0.4.0-dev)** | Three tools registered in `app/mcp/tools/er.py`: `run_entity_resolution` (triggers pipeline), `explain_entity_match` (field-by-field breakdown), `get_entity_clusters` (WCC member lists). All delegate to `services/er.py`. Once PR 2 lands, the same tools transparently use the library implementations. |
 
-**Exit Criteria:**
-- **PR 1 (MET):** Workspace canvas right-click → "Find Duplicates…" runs ER for the open ontology and lists candidates in an overlay; per-pair accept/reject persists via the new `/candidates/{pair_id}/{accept,reject}` endpoints; explain expansion shows field-level scores; tests pass at 1707 backend + 591 frontend.
-- **PR 2 (PENDING):** `services/er.py` routes blocking / clustering / golden-record execution through `arango-entity-resolution` instead of hand-rolled code, with no user-visible behaviour change. Same test counts must still pass.
+**Exit Criteria — MET:**
+Workspace canvas right-click → "Find Duplicates…" runs ER for the
+open ontology and lists candidates in an overlay; per-pair
+accept/reject persists via the new
+`/candidates/{pair_id}/{accept,reject}` endpoints; explain expansion
+shows field-level scores; tests pass at 1707 backend + 591 frontend.
+
+The library-refactor PR was intentionally not pursued — see the
+plan-vs-reality audit above. Stream 2 is closed.
 
 ---
 
