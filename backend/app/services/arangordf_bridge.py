@@ -8,13 +8,14 @@ detection.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import PurePosixPath
 from typing import Any, cast
 from urllib.parse import urlparse
 
 import httpx
 from arango.database import StandardDatabase
-from rdflib import OWL, RDF, RDFS, URIRef
+from rdflib import OWL, RDF, RDFS, BNode, Literal, URIRef
 from rdflib import Graph as RDFGraph
 
 from app.db.client import get_db
@@ -26,6 +27,49 @@ from app.services.temporal import NEVER_EXPIRES
 log = logging.getLogger(__name__)
 
 _URI_MAP_COLLECTION = "aoe_uri_map"
+
+# ---------------------------------------------------------------------------
+# Stream 3 PR 2 -- OWL restriction import (PRD §6.14 FR-14.2)
+# ---------------------------------------------------------------------------
+
+# Map OWL restriction predicates to the PR 1 ``RestrictionType`` enum values
+# (see ``app.models.ontology.RestrictionType``). Keeping this map flat means
+# the rdflib walker can identify a restriction's kind by a single membership
+# lookup, and PR 1's existing materialization-shape contract is reused
+# verbatim by the import path.
+_OWL_CARDINALITY_PREDICATES: dict[URIRef, str] = {
+    OWL.minCardinality: "minCardinality",
+    OWL.maxCardinality: "maxCardinality",
+    OWL.cardinality: "cardinality",
+}
+_OWL_VALUE_RESTRICTION_PREDICATES: dict[URIRef, str] = {
+    OWL.allValuesFrom: "allValuesFrom",
+    OWL.someValuesFrom: "someValuesFrom",
+    OWL.hasValue: "hasValue",
+}
+# Qualified-cardinality variants are recognised so we can warn-and-skip
+# them explicitly. They require an ``owl:onClass`` / ``owl:onDataRange``
+# companion which expands the PR 1 wire shape; deferred to a follow-up.
+_OWL_QUALIFIED_CARDINALITY_PREDICATES: set[URIRef] = {
+    OWL.minQualifiedCardinality,
+    OWL.maxQualifiedCardinality,
+    OWL.qualifiedCardinality,
+}
+
+# Edges by which OWL restrictions attach to a class. ``rdfs:subClassOf``
+# is by far the most common (the textbook anonymous-superclass pattern);
+# ``owl:equivalentClass`` is also legal when the class is *defined* by
+# a restriction (e.g. ``Adult equivalentClass [Person and (age >= 18)]``).
+_OWL_RESTRICTION_ATTACHMENT_PREDICATES: tuple[URIRef, ...] = (
+    RDFS.subClassOf,
+    OWL.equivalentClass,
+)
+
+# Marker stamped on every constraint document produced by this importer
+# so downstream consumers (queries, dashboards, the future SHACL importer
+# in PR 3) can distinguish "extracted from documents" rows (PR 1, marked
+# by ``extraction_run_id``) from "imported from an OWL file" rows.
+_IMPORT_SOURCE_OWL_RESTRICTION = "owl_restriction"
 
 
 def _ensure_arango_rdf() -> type[Any]:
@@ -103,6 +147,16 @@ def import_owl_to_graph(
         graph_name=graph_name,
     )
 
+    # Stream 3 PR 2 -- materialise OWL restrictions in the same shape
+    # PR 1's extraction-time materializer uses. Runs AFTER tagging so
+    # the class/property resolution AQL sees correctly-tagged rows
+    # (the resolver filters on ``ontology_id``).
+    restrictions_imported = _import_owl_restrictions(
+        db,
+        rdf_graph=rdf_graph,
+        ontology_id=ontology_id,
+    )
+
     _ensure_named_graph(db, graph_name=graph_name)
 
     stats = {
@@ -110,6 +164,7 @@ def import_owl_to_graph(
         "ontology_id": ontology_id,
         "triple_count": triple_count,
         "imported": True,
+        "restrictions_imported": restrictions_imported,
     }
 
     log.info("OWL import completed", extra=stats)
@@ -218,6 +273,427 @@ def sync_owl_imports_edges(
         "skipped": skipped,
         "warnings": warnings,
     }
+
+
+def _extract_owl_restrictions(
+    rdf_graph: RDFGraph,
+) -> list[dict[str, Any]]:
+    """Walk ``rdf_graph`` for OWL restrictions attached to class definitions.
+
+    Restrictions in OWL/Turtle are anonymous nodes typed ``owl:Restriction``
+    that ride on a class via ``rdfs:subClassOf`` or ``owl:equivalentClass``::
+
+        :Account a owl:Class ;
+            rdfs:subClassOf [
+                a owl:Restriction ;
+                owl:onProperty :holder ;
+                owl:minCardinality 1
+            ] .
+
+    Each call returns a list of dicts -- one per (class, restriction)
+    pair -- shaped to be trivially folded into the PR 1 wire format
+    (see ``app.models.ontology.ExtractedConstraint``). The dict is
+    intentionally *not* a Pydantic model; this function does NOT touch
+    the database and is fully pure, so it's safe to test in isolation.
+
+    Keys returned per dict:
+
+    * ``class_uri``         the class the restriction is attached to
+    * ``property_uri``      the constrained property's URI
+    * ``restriction_type``  one of the values in PR 1's ``RestrictionType``
+                            enum (``"minCardinality"`` / ``"cardinality"``
+                            / ``"allValuesFrom"`` / etc.)
+    * ``restriction_value`` ``int`` for cardinality kinds, ``str`` (URI or
+                            datatype URI or literal) for value kinds
+    * ``attachment``        ``"subClassOf"`` or ``"equivalentClass"`` --
+                            kept for diagnostics, the rule engine doesn't
+                            care which it was
+    * ``source_node``       the rdflib node id of the restriction (for log
+                            context only)
+
+    Restrictions that can't be interpreted (missing ``owl:onProperty``,
+    no recognized restriction predicate, qualified cardinality without
+    a follow-up scope) are skipped with a WARNING line so they're not
+    silently dropped -- this matches the PR 1 ``property_id`` resolution
+    failure handling.
+    """
+    out: list[dict[str, Any]] = []
+
+    # Pre-fetch the class URIs once -- iterating rdflib triples is cheap
+    # but ``g.subjects(RDF.type, OWL.Class)`` returns a generator, and
+    # we walk it twice (once for ``rdfs:subClassOf``, once for
+    # ``owl:equivalentClass``).
+    class_uris = sorted(
+        {str(s) for s in rdf_graph.subjects(RDF.type, OWL.Class) if isinstance(s, URIRef)}
+    )
+
+    for class_uri_str in class_uris:
+        class_uri = URIRef(class_uri_str)
+        for attachment_predicate in _OWL_RESTRICTION_ATTACHMENT_PREDICATES:
+            attachment_name = (
+                "subClassOf" if attachment_predicate == RDFS.subClassOf else "equivalentClass"
+            )
+            for candidate in rdf_graph.objects(class_uri, attachment_predicate):
+                # Only blank nodes are restrictions in the textbook sense.
+                # A named superclass on the same edge is just a regular
+                # subClassOf / equivalentClass and is handled elsewhere.
+                if not isinstance(candidate, BNode):
+                    continue
+                if (candidate, RDF.type, OWL.Restriction) not in rdf_graph:
+                    continue
+
+                on_property = rdf_graph.value(candidate, OWL.onProperty)
+                if on_property is None or not isinstance(on_property, URIRef):
+                    log.warning(
+                        "owl:Restriction on class %s missing owl:onProperty; skipping",
+                        class_uri_str,
+                    )
+                    continue
+                property_uri = str(on_property)
+
+                row = _interpret_owl_restriction(
+                    rdf_graph,
+                    restriction_node=candidate,
+                    class_uri=class_uri_str,
+                    property_uri=property_uri,
+                    attachment=attachment_name,
+                )
+                if row is not None:
+                    out.append(row)
+
+    return out
+
+
+def _interpret_owl_restriction(
+    rdf_graph: RDFGraph,
+    *,
+    restriction_node: BNode,
+    class_uri: str,
+    property_uri: str,
+    attachment: str,
+) -> dict[str, Any] | None:
+    """Identify the restriction's kind and value.
+
+    Returns ``None`` when no recognized restriction predicate is found
+    or the value can't be coerced into the PR 1 wire type. Qualified
+    cardinality is recognized but explicitly skipped (deferred).
+    """
+    # Qualified cardinality is structurally different (it pairs the
+    # bound with an ``owl:onClass`` / ``owl:onDataRange`` scope) and
+    # requires a wire-shape extension. Detect & warn rather than fall
+    # through and emit a half-shaped row.
+    for q_pred in _OWL_QUALIFIED_CARDINALITY_PREDICATES:
+        if rdf_graph.value(restriction_node, q_pred) is not None:
+            log.warning(
+                "owl:Restriction on class %s property %s uses qualified cardinality "
+                "(%s); deferred until PR adds qualified-cardinality support",
+                class_uri,
+                property_uri,
+                q_pred,
+            )
+            return None
+
+    for pred, rtype in _OWL_CARDINALITY_PREDICATES.items():
+        raw = rdf_graph.value(restriction_node, pred)
+        if raw is None:
+            continue
+        ivalue = _coerce_cardinality_int(raw)
+        if ivalue is None:
+            log.warning(
+                "owl:Restriction on class %s property %s has %s with non-integer "
+                "value %r; skipping",
+                class_uri,
+                property_uri,
+                rtype,
+                raw,
+            )
+            return None
+        return {
+            "class_uri": class_uri,
+            "property_uri": property_uri,
+            "restriction_type": rtype,
+            "restriction_value": ivalue,
+            "attachment": attachment,
+            "source_node": str(restriction_node),
+        }
+
+    for pred, rtype in _OWL_VALUE_RESTRICTION_PREDICATES.items():
+        raw = rdf_graph.value(restriction_node, pred)
+        if raw is None:
+            continue
+        # ``owl:allValuesFrom`` / ``owl:someValuesFrom`` carry a class or
+        # datatype URI; ``owl:hasValue`` carries an individual URI or a
+        # literal. PR 1's wire shape stores the URI as a string and a
+        # literal's lexical form as a string -- the rule engine + UI
+        # disambiguate by ``restriction_type``.
+        if isinstance(raw, URIRef):
+            value: str = str(raw)
+        elif isinstance(raw, Literal):
+            value = str(raw)
+        else:
+            log.warning(
+                "owl:Restriction on class %s property %s has %s pointing at a blank "
+                "node (%r) -- nested class expressions are not yet supported; skipping",
+                class_uri,
+                property_uri,
+                rtype,
+                raw,
+            )
+            return None
+        return {
+            "class_uri": class_uri,
+            "property_uri": property_uri,
+            "restriction_type": rtype,
+            "restriction_value": value,
+            "attachment": attachment,
+            "source_node": str(restriction_node),
+        }
+
+    log.warning(
+        "owl:Restriction on class %s property %s has no recognized restriction "
+        "predicate (expected one of: min/max/cardinality, all/someValuesFrom, hasValue); "
+        "skipping",
+        class_uri,
+        property_uri,
+    )
+    return None
+
+
+def _coerce_cardinality_int(raw: Any) -> int | None:
+    """Pull an integer out of an rdflib cardinality literal.
+
+    Tolerates::
+
+        "1"^^xsd:nonNegativeInteger
+        "1"^^xsd:integer
+        "1"   (bare untyped literal)
+        1     (python int)
+
+    Returns ``None`` for anything else.
+    """
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return raw
+    if isinstance(raw, Literal):
+        try:
+            value = raw.toPython()
+        except Exception:
+            value = None
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        # Last-ditch: a literal whose datatype rdflib doesn't recognise
+        # may still have a digit string in its lexical form.
+        lex = str(raw).strip()
+        if lex.isdigit():
+            return int(lex)
+    return None
+
+
+def _resolve_class_ids(
+    db: StandardDatabase,
+    *,
+    ontology_id: str,
+    class_uris: list[str],
+) -> dict[str, str]:
+    """Return ``{class_uri: ontology_classes/<key>}`` for known classes.
+
+    URIs that don't resolve to a live class in this ontology are simply
+    omitted from the returned mapping; the caller logs and skips the
+    corresponding restriction (an orphan-on-class row would never be
+    matched by the rule engine).
+    """
+    if not class_uris or not db.has_collection("ontology_classes"):
+        return {}
+    rows = list(
+        run_aql(
+            db,
+            "FOR c IN ontology_classes "
+            "FILTER c.ontology_id == @oid AND c.expired == @never "
+            "  AND c.uri IN @uris "
+            "RETURN {uri: c.uri, id: c._id}",
+            bind_vars={
+                "oid": ontology_id,
+                "never": NEVER_EXPIRES,
+                "uris": class_uris,
+            },
+        )
+    )
+    return {row["uri"]: row["id"] for row in rows if row.get("uri") and row.get("id")}
+
+
+def _resolve_property_ids(
+    db: StandardDatabase,
+    *,
+    ontology_id: str,
+    property_uris: list[str],
+) -> dict[str, str]:
+    """Return ``{property_uri: ontology_<kind>_properties/<key>}``.
+
+    Scans both ``ontology_object_properties`` and
+    ``ontology_datatype_properties`` (PR 1's resolution pattern). When a
+    URI lives in both -- which would mean the import produced a bug,
+    not a valid OWL graph -- the object-property hit wins, matching
+    the iteration order in ``_import_with_rdflib_fallback`` and PGT.
+    """
+    if not property_uris:
+        return {}
+    out: dict[str, str] = {}
+    for col_name in ("ontology_object_properties", "ontology_datatype_properties"):
+        if not db.has_collection(col_name):
+            continue
+        rows = list(
+            run_aql(
+                db,
+                f"FOR p IN {col_name} "
+                "FILTER p.ontology_id == @oid AND p.expired == @never "
+                "  AND p.uri IN @uris "
+                "RETURN {uri: p.uri, id: p._id}",
+                bind_vars={
+                    "oid": ontology_id,
+                    "never": NEVER_EXPIRES,
+                    "uris": property_uris,
+                },
+            )
+        )
+        for row in rows:
+            uri = row.get("uri")
+            pid = row.get("id")
+            if uri and pid and uri not in out:
+                out[uri] = pid
+    return out
+
+
+def _import_owl_restrictions(
+    db: StandardDatabase,
+    *,
+    rdf_graph: RDFGraph,
+    ontology_id: str,
+    now: float | None = None,
+) -> int:
+    """Materialise OWL restrictions from ``rdf_graph`` into ``ontology_constraints``.
+
+    Called from ``import_owl_to_graph`` AFTER the PGT (or rdflib
+    fallback) import has placed classes + properties in the graph, so
+    that ``on_class`` and ``property_id`` can be resolved to real
+    Arango ``_id`` values. The row shape matches PR 1's extraction
+    materializer exactly -- the rule engine + ``/library/{id}/constraints``
+    API treat both rows identically -- with the addition of an
+    ``import_source`` marker so provenance is recoverable.
+
+    Returns the number of constraint rows successfully written.
+
+    Failure modes (all non-fatal, all logged):
+
+    * No ``owl:Restriction`` blank nodes in the graph        -> early return 0
+    * Restriction missing ``owl:onProperty``                  -> skip 1 row
+    * Restriction's cardinality has a non-int value           -> skip 1 row
+    * Restriction's value pointer is a blank-node class expr  -> skip 1 row (deferred)
+    * Qualified cardinality                                   -> skip 1 row (deferred)
+    * Class URI not in ``ontology_classes`` for this ontology -> skip 1 row
+    * Property URI not resolvable to a live property          -> persist with
+                                                                ``property_id=null``,
+                                                                matches PR 1's
+                                                                resolver-miss path
+    """
+    raw_rows = _extract_owl_restrictions(rdf_graph)
+    if not raw_rows:
+        return 0
+
+    if not db.has_collection("ontology_constraints"):
+        # Defensive: ``_ensure_import_collections`` ran earlier for the
+        # rdflib-fallback path, and PGT init-collections covers the rest,
+        # but this importer can be invoked in tests with a minimal mock.
+        db.create_collection("ontology_constraints")
+
+    if now is None:
+        now = time.time()
+
+    class_id_map = _resolve_class_ids(
+        db,
+        ontology_id=ontology_id,
+        class_uris=sorted({r["class_uri"] for r in raw_rows}),
+    )
+    property_id_map = _resolve_property_ids(
+        db,
+        ontology_id=ontology_id,
+        property_uris=sorted({r["property_uri"] for r in raw_rows}),
+    )
+
+    constraint_col = db.collection("ontology_constraints")
+    written = 0
+    skipped_no_class = 0
+    skipped_no_property = 0
+
+    for row in raw_rows:
+        class_uri = row["class_uri"]
+        property_uri = row["property_uri"]
+        class_id = class_id_map.get(class_uri)
+        if class_id is None:
+            # An orphan-on-class row would never be matched by the rule
+            # engine (it joins on ``on_class``); skipping is the
+            # honest move and matches the PR 1 contract that every
+            # constraint references a known class.
+            log.warning(
+                "owl:Restriction targets class %s which is not in ontology %s "
+                "after import; skipping constraint for property %s",
+                class_uri,
+                ontology_id,
+                property_uri,
+            )
+            skipped_no_class += 1
+            continue
+
+        property_id = property_id_map.get(property_uri)
+        if property_id is None:
+            skipped_no_property += 1
+            log.warning(
+                "owl:Restriction on class %s references property %s which is not "
+                "in ontology %s after import; persisting constraint with "
+                "property_id=null so post-hoc repair can recover the link",
+                class_uri,
+                property_uri,
+                ontology_id,
+            )
+
+        constraint_doc: dict[str, Any] = {
+            "constraint_type": "owl:Restriction",
+            "on_class": class_id,
+            "property_id": property_id,
+            "property_uri": property_uri,
+            "restriction_type": row["restriction_type"],
+            "restriction_value": row["restriction_value"],
+            "description": (f"Imported from OWL ({row.get('attachment', 'subClassOf')})"),
+            "ontology_id": ontology_id,
+            "import_source": _IMPORT_SOURCE_OWL_RESTRICTION,
+            # Imported axioms are explicit in the source file -- treat
+            # the import as ground truth (1.0). Extraction-sourced rows
+            # carry the LLM's own confidence on this same field.
+            "confidence": 1.0,
+            "evidence": [],
+            "created": now,
+            "expired": NEVER_EXPIRES,
+        }
+        try:
+            constraint_col.insert(constraint_doc)
+            written += 1
+        except Exception as exc:
+            log.warning(
+                "constraint insert failed for class %s property %s: %s",
+                class_uri,
+                property_uri,
+                exc,
+            )
+
+    log.info(
+        "owl restrictions imported",
+        extra={
+            "ontology_id": ontology_id,
+            "written": written,
+            "skipped_no_class": skipped_no_class,
+            "skipped_no_property_resolution": skipped_no_property,
+            "total_candidates": len(raw_rows),
+        },
+    )
+    return written
 
 
 def _ensure_import_collections(db: StandardDatabase) -> None:
