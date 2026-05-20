@@ -381,46 +381,104 @@ plan-vs-reality audit above. Stream 2 is closed.
 
 ### Stream 5: Schema Extraction from ArangoDB
 **PRD:** §6.9 FR-9.1–9.13
-**Duration:** 2 weeks
+**Duration:** 2 weeks (rescoped — see plan-vs-reality audit below)
 **Priority:** P2 — value-add for existing ArangoDB users
-**Dependencies:** Stream 1 (imports/composition), Stream 3 (constraints)
+**Dependencies:** Stream 1 (imports/composition) ✓; Stream 3 (constraints) — S.9 only
 **Team Size:** 1 developer
 
-#### Objectives
-- Connect to any ArangoDB instance and reverse-engineer its schema into an ontology
-- Leverage `arango-schema-mapper` library for enhanced schema extraction
-- **Named graph-aware extraction** that reads edge definitions for precise relationship mapping
-- **Built-in fallback** that works without the external `schema_analyzer` library
-- **Integration with composition** — schema-derived ontologies can import standard ontologies
+#### Plan-vs-reality audit (v0.4.0-dev)
 
-#### Tasks — Phase 1: Core Schema Extraction
+When Stream 5 was opened in v0.4.0-dev we found S.1 + S.2 + S.3 had
+already shipped (with a 200-line `_stub_extract_schema` that only
+emitted bare `owl:Class` / `owl:ObjectProperty` per collection — no
+named-graph awareness, no domain/range, no datatype properties, no
+provenance). The optional `arangodb-schema-analyzer` library is **not**
+in `pyproject.toml` dependencies; the integration only fires if
+someone installs it manually, so the direct/built-in path is the one
+that runs in production.
 
-| # | Task | Type | Estimate | Description |
-|---|------|------|----------|-------------|
-| S.1 | Wire `arango-schema-mapper` integration | Backend | 6h | Call `snapshot_physical_schema()` and `AgenticSchemaAnalyzer` to produce conceptual model. Handle connection credentials securely. |
-| S.2 | OWL export from schema | Backend | 3h | Call `export_conceptual_model_as_owl_turtle()` and feed into ArangoRDF import pipeline. |
-| S.3 | Schema extraction API | Backend | 3h | `POST /schema/extract` accepts connection URL + credentials, triggers extraction. `GET /schema/extract/{run_id}` returns status and results. |
-| S.4 | Provenance tracking for schema sources | Backend | 2h | Extracted classes link to source database URL + collection name (not document chunks). |
-| S.5 | Schema diff for evolution tracking | Backend | 4h | Re-extract periodically. Diff against previous extraction to detect schema drift. Reuse temporal diff infrastructure. |
+Stream 5 is split into three PRs:
 
-#### Tasks — Phase 2: Named Graph & Direct Mapping
+- **PR 1 — Backend, no UI (DONE, this commit)**:
+  - **S.6 (NEW)** — `POST /api/v1/ontology/schema/graphs` returns
+    named graphs + edge definitions + loose collections, scoped to a
+    `SchemaExtractionConfig` body (credentials in body, not query
+    string, to avoid URL logging leaks).
+  - **S.7 + S.8 (REWRITE)** — `_direct_extract_schema` replaces the
+    minimal stub: walks `db.graphs()`, emits `owl:ObjectProperty`
+    with `rdfs:domain` / `rdfs:range` resolved from edge definitions,
+    samples `field_sample_limit` documents per collection to infer
+    `owl:DatatypeProperty` with XSD types (`xsd:string` /
+    `xsd:integer` / `xsd:decimal` / `xsd:boolean` /
+    `xsd:date` / `xsd:dateTime`), and respects `graph_names` /
+    `include_loose` config knobs for partial extractions.
+  - **S.4 (NEW)** — `_stamp_per_class_provenance` post-import pass
+    stamps `source_db` / `source_collection` / `source_host` on every
+    class via a single bulk AQL update (no N+1). Annotations are also
+    embedded in the generated TTL via the `aoe:` vocabulary so an
+    export-then-re-import round-trip keeps provenance.
+  - **S.10 (NEW)** — `imports: list[str]` config field; each entry
+    expands to an `owl:imports` triple on the generated ontology
+    resource, then the standard `sync_owl_imports_edges` pass wires
+    the `imports` edges to the registry.
+  - **`_stub_extract_schema` kept as a back-compat alias** so
+    existing tests / external callers continue to work; new logic
+    lives in `_direct_extract_schema` which returns
+    `(ttl, uri_to_collection)` so per-class provenance has the data
+    it needs without re-parsing TTL.
+  - 42 unit tests added (`test_schema_extraction.py` rewrite +
+    `test_schema_extraction_api.py` new) covering XSD type
+    inference (incl. the critical `bool`-before-`int` order), field
+    sampling, named-graph filter, loose-collection toggle,
+    provenance stamping (incl. failure swallowing), auto-imports
+    embedding, and the new `/schema/graphs` route's 200 / 400 / 502
+    / 422 contract.
+  - Total backend unit coverage now **84.80%** over 1730 tests
+    (up from ~84.4% at PR start).
 
-| # | Task | Type | Estimate | Description |
-|---|------|------|----------|-------------|
-| S.6 | Named graph discovery API | Backend | 4h | `GET /schema/graphs?db_url=...` connects to the target database, calls `db.graphs()`, and returns a list of named graphs with their edge definitions (edge collection, from vertex collections, to vertex collections). Used by the UI to let users select which graph(s) to extract. (FR-9.9) |
-| S.7 | Named graph-aware extraction | Backend | 6h | Enhance the extraction pipeline to read edge definitions from selected named graphs. Each edge definition maps to an `owl:ObjectProperty` with `rdfs:domain` set to the `from` vertex collection's class and `rdfs:range` set to the `to` vertex collection's class. Produces richer relationship semantics than collection-only scanning. (FR-9.9) |
-| S.8 | Direct graph-to-ontology mapping (no `schema_analyzer`) | Backend | 8h | Built-in fallback that works without `arangodb-schema-analyzer`: (a) document collections → `owl:Class`, (b) edge collections → `owl:ObjectProperty` with domain/range from edge definitions, (c) sampled document fields → `owl:DatatypeProperty` with range inferred from value types (string→`xsd:string`, number→`xsd:integer`/`xsd:decimal`, boolean→`xsd:boolean`, array→`rdf:List`, nested object→new class). Outputs complete OWL/Turtle. (FR-9.10) |
-| S.9 | Index and constraint mapping | Backend | 4h | Map ArangoDB indexes to ontology constraints: unique indexes → `owl:maxCardinality 1`, required fields (from collection schema validation) → `owl:minCardinality 1`, geo indexes → GeoSPARQL property annotation. Results feed into `ontology_constraints` collection. (FR-9.12) |
-| S.10 | Schema-derived ontology auto-imports | Backend | 4h | When extracting, user can select existing ontologies to import. Creates `imports` edges. Optionally triggers ER between schema-derived classes and imported classes to suggest `owl:equivalentClass` / `rdfs:subClassOf` alignments. (FR-9.11) |
+- **PR 2 — Frontend UI (DEFERRED)**: workspace overlay for schema
+  extraction (S.11 + S.12). Per `ui-architecture.mdc` rule 9 it
+  ships as an overlay-not-route opened from the canvas right-click
+  menu ("Extract from ArangoDB…"). Form → graph picker → preview
+  panel (proposed classes / relationships / sampled fields) →
+  commit. Roughly 1 day of work; not in this PR so the backend
+  surface can land + be exercised first.
 
-#### Tasks — Phase 3: UI
+- **PR 3 — Deferred / blocked**:
+  - **S.5 (schema diff for evolution)** — needs snapshot storage
+    design (reuse temporal infrastructure vs new
+    `schema_snapshots` collection). Not blocked, just chunky.
+  - **S.9 (index/constraint mapping)** — genuinely blocked on
+    Stream 3 (OWL Constraints & SHACL Shapes). Will re-open here
+    once `ontology_constraints` is wired through extraction +
+    materialisation.
 
-| # | Task | Type | Estimate | Description |
-|---|------|------|----------|-------------|
-| S.11 | Schema extraction UI with graph selection | Frontend | 6h | Form for ArangoDB connection details. After connecting, displays discovered named graphs with edge definition previews. User selects graph(s), optionally selects base ontologies to import, and previews the proposed class/property/edge mapping before confirming extraction. Progress indicator and results link to curation. (FR-9.13) |
-| S.12 | Schema preview panel | Frontend | 4h | Before committing to extraction, shows a read-only preview: proposed classes (from collections), proposed relationships (from edge definitions), proposed properties (from sampled fields). User can deselect collections/fields to exclude from extraction. |
+#### Tasks
 
-**Exit Criteria:** Users can point AOE at any ArangoDB instance, select named graphs, and generate an ontology from its schema — with or without `schema_analyzer`. Named graph edge definitions produce precise relationship mappings. Schema-derived ontologies can import standard ontologies. Results land in staging for curation.
+| # | Task | Type | Status | Description |
+|---|------|------|--------|-------------|
+| S.1 | Wire `arango-schema-mapper` integration | Backend | **DONE (pre-existing)** | `_try_import_schema_mapper()` + `_run_schema_mapper_extract()` -- graceful degradation when the optional library isn't installed (it isn't, by default). |
+| S.2 | OWL export from schema | Backend | **DONE (pre-existing)** | TTL fed into `import_from_file` -> standard ArangoRDF PGT pipeline. |
+| S.3 | Schema extraction API | Backend | **DONE (pre-existing)** | `POST /api/v1/ontology/schema/extract` + `GET /api/v1/ontology/schema/extract/{run_id}`. |
+| S.4 | Provenance tracking for schema sources | Backend | **DONE (PR 1, v0.4.0-dev)** | `_stamp_per_class_provenance` -- per-class `source_db` / `source_collection` / `source_host`. Bulk AQL, no N+1. Failure swallowed so provenance bugs never break extraction. TTL also carries the same triples via the `aoe:` vocab so exports round-trip. |
+| S.5 | Schema diff for evolution tracking | Backend | **DEFERRED (PR 3)** | Needs snapshot storage design. |
+| S.6 | Named graph discovery API | Backend | **DONE (PR 1, v0.4.0-dev)** | `POST /api/v1/ontology/schema/graphs` -- returns named graphs + edge definitions + loose collections. POST (not GET) so credentials don't leak via URL. Errors mapped to 400 (bad config) / 502 (upstream Arango unreachable) / 422 (validation). |
+| S.7 | Named graph-aware extraction | Backend | **DONE (PR 1, v0.4.0-dev)** | `_direct_extract_schema` walks `db.graphs()`, emits `owl:ObjectProperty` with `rdfs:domain` / `rdfs:range` resolved from edge definitions. Multi-from / multi-to edge defs emit one triple per vertex collection. `graph_names` config restricts the walk; `include_loose` controls fallthrough to non-graph collections. |
+| S.8 | Direct graph-to-ontology mapping (no `schema_analyzer`) | Backend | **DONE (PR 1, v0.4.0-dev)** | Same `_direct_extract_schema` path: (a) document collection → `owl:Class`, (b) edge collection → `owl:ObjectProperty` with domain/range from edge def, (c) sampled scalar fields → `owl:DatatypeProperty` with XSD type inferred from value. Field URIs are scoped to the source collection (`{Col}.{field}`) so two collections with a `name` field don't collide. Heterogeneous types fall back to `xsd:string`. Nested objects + arrays skipped for v1 (logged limitation; can recurse in PR 3). |
+| S.9 | Index and constraint mapping | Backend | **BLOCKED on Stream 3** | Re-open once `ontology_constraints` collection is wired. |
+| S.10 | Schema-derived ontology auto-imports | Backend | **DONE (PR 1, v0.4.0-dev)** | `imports: list[str]` config field; each entry expands to an `owl:imports` triple on the generated ontology resource; standard `sync_owl_imports_edges` wires the `imports` edges to the registry. ER-based alignment suggestions (the second half of S.10) are PR 2 territory once the UI can show + accept them. |
+| S.11 | Schema extraction UI with graph selection | Frontend | **DEFERRED (PR 2)** | Workspace overlay, right-click "Extract from ArangoDB…". |
+| S.12 | Schema preview panel | Frontend | **DEFERRED (PR 2)** | Read-only preview of proposed classes / relationships / properties before commit. |
+
+**Exit Criteria — PR 1 MET:** Backend can connect to any ArangoDB,
+discover named graphs + edge definitions, and reverse-engineer an
+ontology with full domain/range relationships, datatype properties
+from sampled scalar fields, per-class source provenance, and
+configurable auto-imports of existing AOE ontologies — all without
+requiring the optional `arangodb-schema-analyzer` library. 42 new
+unit tests; backend coverage 84.80%.
+
+**Outstanding:** workspace UI (PR 2) and schema-diff + constraint-mapping (PR 3).
 
 ---
 

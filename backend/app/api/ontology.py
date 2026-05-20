@@ -49,6 +49,7 @@ from app.services.schema_extraction import (
     SchemaExtractionConfig,
     extract_schema,
     get_extraction_status,
+    list_named_graphs,
 )
 
 log = logging.getLogger(__name__)
@@ -3058,6 +3059,38 @@ async def get_schema_extraction_status(run_id: str) -> dict[str, Any]:
         return get_extraction_status(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# Stream 5 PR 1 S.6 — named-graph discovery. POST (not GET) because the
+# request carries credentials in the body; we never want them in query
+# strings (URL logging, browser history, referrer leaks). Same shape as
+# SchemaExtractionConfig so the workspace UI's "extract" overlay can
+# reuse the connection form and just swap the action button.
+@router.post("/schema/graphs")
+async def discover_target_graphs(config: SchemaExtractionConfig) -> dict[str, Any]:
+    """List named graphs + loose collections on an external ArangoDB.
+
+    Returns the topology the workspace UI's schema-extraction preview
+    binds to: per-graph edge definitions, vertex/orphan collections,
+    plus loose document/edge collections that are not in any named
+    graph. The response is safe to render (no document samples, no
+    schemas, just topology).
+
+    Errors mapped:
+      - ``ValueError`` -> 400 (bad config)
+      - connection / auth failures -> 502 (upstream Arango unreachable)
+    """
+    try:
+        return list_named_graphs(config)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        # We deliberately surface the upstream error message here -- the
+        # curator needs to know whether the host was wrong, the password
+        # was wrong, or the database does not exist. Sanitisation lives
+        # in the global error envelope.
+        log.exception("Named-graph discovery failed")
+        raise HTTPException(status_code=502, detail=f"Target ArangoDB error: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
