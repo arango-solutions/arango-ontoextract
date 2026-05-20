@@ -436,13 +436,53 @@ Stream 5 is split into three PRs:
   - Total backend unit coverage now **84.80%** over 1730 tests
     (up from ~84.4% at PR start).
 
-- **PR 2 — Frontend UI (DEFERRED)**: workspace overlay for schema
-  extraction (S.11 + S.12). Per `ui-architecture.mdc` rule 9 it
-  ships as an overlay-not-route opened from the canvas right-click
-  menu ("Extract from ArangoDB…"). Form → graph picker → preview
-  panel (proposed classes / relationships / sampled fields) →
-  commit. Roughly 1 day of work; not in this PR so the backend
-  surface can land + be exercised first.
+- **PR 2 — Frontend UI (DONE, v0.4.0-dev)**:
+  `frontend/src/components/workspace/SchemaExtractionOverlay.tsx`.
+  Workspace overlay-not-route per `ui-architecture.mdc` rule 9,
+  opened from the canvas right-click menu's new "Extract from
+  ArangoDB…" entry (peer of "Browse Standard Catalog…"; icon 🗄 —
+  noted in the file header that no canonical icon exists for "extract
+  from external source" yet). Three-step state machine in one
+  component: (1) **connect** — host / db / user / password /
+  verify_tls + optional ontology label, validates required fields
+  client-side before any network hit, surfaces backend 502s inline;
+  (2) **preview** — renders the `/schema/graphs` topology with
+  per-graph checkboxes (default all selected), `include_loose`
+  toggle, `sample_fields` toggle + `field_sample_limit` numeric
+  input, plus an `owl:imports` multi-select sourced from
+  `GET /ontology/library?limit=200` (lazy-fetched on entering the
+  step, fire-and-forget so a registry outage doesn't block extract);
+  a live summary line counts classes + object properties + sampled
+  document collections via the pure `summarizeExtraction()` helper
+  (exported + unit-tested) so the math is provable without
+  rendering; (3) **result** — run id + ontology id + import stats
+  + provenance-stamped count, then `onImported(newOntologyId)`
+  fires once so the parent (workspace page) refreshes the
+  AssetExplorer and switches selection to the new ontology. Esc +
+  × close at any step. "Back" from preview to connect preserves
+  the connection state. `graph_names` normalises to `null` on the
+  wire when every graph is selected (so the backend's "walk all"
+  default kicks in) and to an explicit array otherwise — never
+  the empty array, which would walk zero graphs. The "Extract &
+  Import" button is gated disabled when nothing is selected so a
+  zero-output run cannot be triggered. Wiring: new
+  `setShowSchemaExtraction(show)` field on
+  `WorkspaceContextMenuActions`; `app/workspace/page.tsx` mounts
+  the overlay next to `CatalogBrowserOverlay` with the same
+  `onImported` post-import dance (`setExplorerLibraryNonce` +
+  `handleSelectOntology`). Tests added: 33 new (`canvas.test.ts`
+  +1 for the new menu entry; `SchemaExtractionOverlay.test.tsx`
+  +23 component + 6 `validateConnection` + 5 `summarizeExtraction`
+  pure-helper cases — connect-step rendering, required-field
+  validation, ApiError-502 surfaced inline, Esc + × close,
+  successful discover transitions to preview, summary line math
+  pins, graph toggle updates summary, Extract&Import disabled when
+  all unchecked, Back preserves db field, extract POST body shape
+  with imports + with partial `graph_names`, extract failure stays
+  on preview, result step renders ids + stats). Full frontend
+  Jest suite green at 617/617 (was 591 after PR 1). PR 2 ships
+  the workspace surface for the backend that landed in PR 1; no
+  backend changes.
 
 - **PR 3 — Deferred / blocked**:
   - **S.5 (schema diff for evolution)** — needs snapshot storage
@@ -467,8 +507,8 @@ Stream 5 is split into three PRs:
 | S.8 | Direct graph-to-ontology mapping (no `schema_analyzer`) | Backend | **DONE (PR 1, v0.4.0-dev)** | Same `_direct_extract_schema` path: (a) document collection → `owl:Class`, (b) edge collection → `owl:ObjectProperty` with domain/range from edge def, (c) sampled scalar fields → `owl:DatatypeProperty` with XSD type inferred from value. Field URIs are scoped to the source collection (`{Col}.{field}`) so two collections with a `name` field don't collide. Heterogeneous types fall back to `xsd:string`. Nested objects + arrays skipped for v1 (logged limitation; can recurse in PR 3). |
 | S.9 | Index and constraint mapping | Backend | **BLOCKED on Stream 3** | Re-open once `ontology_constraints` collection is wired. |
 | S.10 | Schema-derived ontology auto-imports | Backend | **DONE (PR 1, v0.4.0-dev)** | `imports: list[str]` config field; each entry expands to an `owl:imports` triple on the generated ontology resource; standard `sync_owl_imports_edges` wires the `imports` edges to the registry. ER-based alignment suggestions (the second half of S.10) are PR 2 territory once the UI can show + accept them. |
-| S.11 | Schema extraction UI with graph selection | Frontend | **DEFERRED (PR 2)** | Workspace overlay, right-click "Extract from ArangoDB…". |
-| S.12 | Schema preview panel | Frontend | **DEFERRED (PR 2)** | Read-only preview of proposed classes / relationships / properties before commit. |
+| S.11 | Schema extraction UI with graph selection | Frontend | **DONE (PR 2, v0.4.0-dev)** | `SchemaExtractionOverlay.tsx` -- canvas right-click "Extract from ArangoDB…" opens an overlay-not-route with a three-step flow: connect form (host/db/user/password/TLS) → graph picker (per-graph checkboxes + loose-collections + field-sampling + auto-imports multi-select) → commit + result. Wired into the workspace canvas context menu via a new `setShowSchemaExtraction` action. |
+| S.12 | Schema preview panel | Frontend | **DONE (PR 2, v0.4.0-dev)** | Step 2 of `SchemaExtractionOverlay` is the preview: per-graph edge-definition strings (`from -[edge]→ to`), loose-collection counts, and a live `Will create N classes and M object properties` summary (driven by the exported pure `summarizeExtraction()` helper) so the curator sees the impact before committing. Datatype-property names aren't shown pre-extract because they come from per-collection field sampling that only runs at extract time; a future iteration can add a "dry-run extract" backend endpoint that returns the TTL + URI map without writing to the registry. |
 
 **Exit Criteria — PR 1 MET:** Backend can connect to any ArangoDB,
 discover named graphs + edge definitions, and reverse-engineer an
@@ -478,7 +518,18 @@ configurable auto-imports of existing AOE ontologies — all without
 requiring the optional `arangodb-schema-analyzer` library. 42 new
 unit tests; backend coverage 84.80%.
 
-**Outstanding:** workspace UI (PR 2) and schema-diff + constraint-mapping (PR 3).
+**Exit Criteria — PR 2 MET:** Workspace canvas right-click → "Extract
+from ArangoDB…" opens the overlay; the curator can connect to any
+ArangoDB, pick which named graphs / loose collections to include,
+toggle field sampling + auto-imports, see a live count of classes
+and object properties the extraction will produce, and commit —
+all without leaving the workspace canvas. Per-step error surfaces
+discriminate `400`/`502`/`500` so the user knows whether to fix
+credentials, network, or scope. 33 new frontend tests (component
++ pure helpers + canvas menu); full Jest suite at 617/617.
+
+**Outstanding (PR 3):** S.5 schema diff + S.9 constraint mapping
+(S.9 blocked on Stream 3).
 
 ---
 

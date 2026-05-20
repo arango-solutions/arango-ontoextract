@@ -34,6 +34,7 @@ function makeActions(
     setReleaseOntology: jest.fn(),
     setShowCreateOntology: jest.fn(),
     setShowCatalogBrowser: jest.fn(),
+    setShowSchemaExtraction: jest.fn(),
     setManageImports: jest.fn(),
     setDependencyOverlay: jest.fn(),
     setFeedbackLearning: jest.fn(),
@@ -80,6 +81,7 @@ describe("buildCanvasContextMenu", () => {
       "Center View",
       "New Ontology…",
       "Browse Standard Catalog…",
+      "Extract from ArangoDB…",
       "Review Feedback Learning",
     ]);
   });
@@ -101,6 +103,7 @@ describe("buildCanvasContextMenu", () => {
       "Center View",
       "New Ontology…",
       "Browse Standard Catalog…",
+      "Extract from ArangoDB…",
       "Review Feedback Learning",
     ]);
   });
@@ -208,6 +211,17 @@ describe("buildCanvasContextMenu", () => {
 
     items.find((it) => it.label === "Browse Standard Catalog…")!.onClick!();
     expect(actions.setShowCatalogBrowser).toHaveBeenCalledWith(true);
+  });
+
+  // Stream 5 PR 2 -- the schema-extraction overlay is the peer of the
+  // catalog browser: both are add-an-ontology actions, both are
+  // overlays-not-routes, both fire ``setShow…(true)`` on click.
+  it("Extract from ArangoDB… opens the schema extraction overlay", () => {
+    const actions = makeActions();
+    const items = buildCanvasContextMenu({}, actions);
+
+    items.find((it) => it.label === "Extract from ArangoDB…")!.onClick!();
+    expect(actions.setShowSchemaExtraction).toHaveBeenCalledWith(true);
   });
 
   it("Review Feedback Learning opens the overlay with no specific ontology", () => {

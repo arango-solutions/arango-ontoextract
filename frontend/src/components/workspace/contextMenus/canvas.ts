@@ -126,6 +126,11 @@ export function buildCanvasContextMenu(
       onClick: () => actions.setShowCatalogBrowser(true),
     },
     {
+      label: "Extract from ArangoDB…",
+      icon: "🗄",
+      onClick: () => actions.setShowSchemaExtraction(true),
+    },
+    {
       label: "Review Feedback Learning",
       icon: "📊",
       onClick: () =>

@@ -196,6 +196,13 @@ export interface WorkspaceContextMenuActions {
    *  standard ontologies from the bundled catalog. Overlay, not a
    *  route, per ``ui-architecture.mdc`` rule 9. */
   setShowCatalogBrowser: (show: boolean) => void;
+  /** Opens the Stream 5 PR 2 ``SchemaExtractionOverlay`` — connect to
+   *  an external ArangoDB, discover its named graphs + loose
+   *  collections, and reverse-engineer the topology into a new AOE
+   *  ontology. Overlay, not a route, per ``ui-architecture.mdc`` rule
+   *  9. Same surface as Catalog Browse: both are add-an-ontology
+   *  actions opened from the canvas right-click menu. */
+  setShowSchemaExtraction: (show: boolean) => void;
   setManageImports: (arg: ManageImportsArg) => void;
   /** Opens the H.7 ``ImportsDependencyOverlay`` — DAG canvas of the
    *  ``owl:imports`` ancestors and dependents of one ontology, sourced

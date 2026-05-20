@@ -9,6 +9,7 @@ import OntologyRenameDialog from "@/components/workspace/OntologyRenameDialog";
 import OntologyReleaseDialog from "@/components/workspace/OntologyReleaseDialog";
 import CreateOntologyDialog from "@/components/workspace/CreateOntologyDialog";
 import CatalogBrowserOverlay from "@/components/workspace/CatalogBrowserOverlay";
+import SchemaExtractionOverlay from "@/components/workspace/SchemaExtractionOverlay";
 import ImportsDependencyOverlay from "@/components/workspace/ImportsDependencyOverlay";
 import ConfirmDialog from "@/components/workspace/ConfirmDialog";
 import OntologyDeleteDialog from "@/components/workspace/OntologyDeleteDialog";
@@ -161,6 +162,13 @@ function WorkspacePageInner() {
   } | null>(null);
   const [showCreateOntology, setShowCreateOntology] = useState(false);
   const [showCatalogBrowser, setShowCatalogBrowser] = useState(false);
+  // Stream 5 PR 2: schema-extraction overlay. Opened from the canvas
+  // context menu's "Extract from ArangoDB…" action (peer of "Browse
+  // Standard Catalog…"). The overlay itself owns the connection +
+  // discovery + commit state machine; the page only needs an open/
+  // closed flag and an ``onImported`` callback to refresh + switch
+  // selection.
+  const [showSchemaExtraction, setShowSchemaExtraction] = useState(false);
   const [dependencyOverlay, setDependencyOverlay] = useState<{
     key: string;
     name: string;
@@ -1174,6 +1182,7 @@ function WorkspacePageInner() {
     setReleaseOntology,
     setShowCreateOntology,
     setShowCatalogBrowser,
+    setShowSchemaExtraction,
     setManageImports,
     setDependencyOverlay,
     setFeedbackLearning,
@@ -1500,6 +1509,21 @@ function WorkspacePageInner() {
         <CatalogBrowserOverlay
           onClose={() => setShowCatalogBrowser(false)}
           onImported={(newOntologyId) => {
+            setExplorerLibraryNonce((n) => n + 1);
+            handleSelectOntology(newOntologyId);
+          }}
+        />
+      )}
+
+      {showSchemaExtraction && (
+        <SchemaExtractionOverlay
+          onClose={() => setShowSchemaExtraction(false)}
+          onImported={(newOntologyId) => {
+            // Same post-import dance as CatalogBrowser: nonce-bump the
+            // explorer so the new ontology appears, then switch the
+            // workspace to it. The overlay stays open on its "result"
+            // step so the user can read the run summary before
+            // dismissing.
             setExplorerLibraryNonce((n) => n + 1);
             handleSelectOntology(newOntologyId);
           }}
