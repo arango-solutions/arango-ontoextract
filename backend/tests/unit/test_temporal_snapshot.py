@@ -47,7 +47,11 @@ class TestGetSnapshot:
                 return iter([cls_doc])
             if col == "ontology_properties":
                 return iter([prop_doc])
-            if col in ("ontology_object_properties", "ontology_datatype_properties"):
+            if col in (
+                "ontology_object_properties",
+                "ontology_datatype_properties",
+                "ontology_constraints",
+            ):
                 return iter([])
             return iter([edge_doc])
 
@@ -59,6 +63,7 @@ class TestGetSnapshot:
         assert len(result["classes"]) == 1
         assert len(result["properties"]) == 1
         assert len(result["edges"]) >= 1
+        assert result["constraints"] == []
 
     def test_returns_empty_when_no_collections(self):
         from app.services.temporal import get_snapshot
@@ -71,6 +76,53 @@ class TestGetSnapshot:
         assert result["classes"] == []
         assert result["properties"] == []
         assert result["edges"] == []
+        assert result["constraints"] == []
+
+    def test_returns_constraints_in_snapshot_bucket(self):
+        """Stream 3 PR 1 -- ``ontology_constraints`` rows land in the
+        snapshot's ``constraints`` bucket (not under classes/properties).
+
+        Uses a distinct ontology_id (and ``bypass_cache=True``) so the
+        snapshot cache from earlier tests in this module can't return a
+        stale value -- the cache key is ``(ontology_id, minute)``.
+        """
+        from app.services.temporal import get_snapshot
+
+        constraint_doc = {
+            "_key": "ck1",
+            "_id": "ontology_constraints/ck1",
+            "constraint_type": "owl:Restriction",
+            "on_class": "ontology_classes/Account",
+            "property_uri": "http://ex.org#holder",
+            "restriction_type": "minCardinality",
+            "restriction_value": 1,
+            "ontology_id": "onto_constraints_only",
+            "created": 100.0,
+            "expired": NEVER_EXPIRES,
+        }
+
+        mock_db = MagicMock()
+        mock_db.has_collection.return_value = True
+
+        def mock_execute(query, bind_vars=None):
+            col = bind_vars.get("@col", "") if bind_vars else ""
+            if col == "ontology_constraints":
+                return iter([constraint_doc])
+            return iter([])
+
+        mock_db.aql.execute = mock_execute
+
+        result = get_snapshot(
+            mock_db,
+            ontology_id="onto_constraints_only",
+            timestamp=300.0,
+            bypass_cache=True,
+        )
+
+        assert result["constraints"] == [constraint_doc]
+        # Constraints must NOT bleed into the other buckets.
+        assert all(d.get("_id") != constraint_doc["_id"] for d in result["classes"])
+        assert all(d.get("_id") != constraint_doc["_id"] for d in result["properties"])
 
 
 class TestGetEntityHistory:

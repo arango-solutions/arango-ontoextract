@@ -401,47 +401,85 @@ def _cardinality_violation(db: Any, ontology_id: str) -> list[Violation]:
     """Detect properties that violate declared min/max cardinality.
 
     Reads cardinality declarations from ``ontology_constraints``
-    documents of ``constraint_type == "cardinality"`` (per PRD §5.1).
-    A constraint document is expected to have:
+    documents written by Stream 3 PR 1 in the PRD §6.14 OWL-native
+    shape (one restriction per row):
 
-    * ``class_id``: the class the constraint applies to
-    * ``property_uri``: the property URI being constrained
-    * ``min_cardinality``: int (optional)
-    * ``max_cardinality``: int (optional)
+    * ``constraint_type``: ``"owl:Restriction"``
+    * ``on_class``: full id, e.g. ``ontology_classes/Customer``
+    * ``property_uri``: the URI of the constrained property
+    * ``restriction_type``: ``"minCardinality"`` | ``"maxCardinality"``
+      | ``"cardinality"`` (the OWL "exactly N" sugar -- expanded here
+      to min==max==N for evaluation)
+    * ``restriction_value``: the integer bound
 
-    No-op when ``ontology_constraints`` is missing or when no
-    documents of ``constraint_type=="cardinality"`` exist for this
-    ontology.
+    A class that declares both a min and a max for the same property
+    has two rows in the collection; this function groups them per
+    ``(on_class, property_uri)`` before checking actual counts.
+
+    No-op when the collection is missing or has no restrictions for
+    this ontology.
     """
     if not (db.has_collection("ontology_constraints") and db.has_collection("rdfs_domain")):
         return []
 
     bind = {"oid": ontology_id, "never": NEVER_EXPIRES}
-    constraints = list(
+    rows = list(
         run_aql(
             db,
             "FOR c IN ontology_constraints "
             "FILTER c.ontology_id == @oid AND c.expired == @never "
-            "  AND c.constraint_type == 'cardinality' "
+            "  AND c.constraint_type == 'owl:Restriction' "
+            "  AND c.restriction_type IN ['minCardinality', 'maxCardinality', 'cardinality'] "
             "RETURN c",
             bind_vars=bind,
         )
     )
 
-    if not constraints:
+    if not rows:
         return []
 
-    violations: list[Violation] = []
-    for c in constraints:
-        class_id = c.get("class_id")
+    # Group rows by (on_class, property_uri). A class with both
+    # minCardinality=1 and maxCardinality=5 on the same property
+    # arrives as two rows; we want to evaluate both bounds in one pass.
+    grouped: dict[tuple[str, str], dict[str, int]] = {}
+    for c in rows:
+        class_id = c.get("on_class")
         prop_uri = c.get("property_uri")
         if not isinstance(class_id, str) or not isinstance(prop_uri, str):
             continue
-        min_card = c.get("min_cardinality")
-        max_card = c.get("max_cardinality")
+        rtype = c.get("restriction_type")
+        rvalue = c.get("restriction_value")
+        if not isinstance(rvalue, int):
+            # Cardinality kinds REQUIRE an integer. A string here means
+            # the LLM (or an importer) confused this with a value
+            # restriction; skip with a warning -- the rule engine
+            # should not crash the consolidation run on bad data.
+            log.warning(
+                "skipping cardinality restriction with non-int value: "
+                "class=%s property=%s restriction_type=%s value=%r",
+                class_id,
+                prop_uri,
+                rtype,
+                rvalue,
+            )
+            continue
+        slot = grouped.setdefault((class_id, prop_uri), {})
+        if rtype == "minCardinality":
+            slot["min"] = rvalue
+        elif rtype == "maxCardinality":
+            slot["max"] = rvalue
+        elif rtype == "cardinality":
+            # owl:cardinality N is sugar for min==N AND max==N.
+            slot["min"] = rvalue
+            slot["max"] = rvalue
+
+    violations: list[Violation] = []
+    for (class_id, prop_uri), bounds in grouped.items():
+        min_card = bounds.get("min")
+        max_card = bounds.get("max")
 
         # Count rdfs_domain edges from properties with this URI to the class.
-        rows = list(
+        count_rows = list(
             run_aql(
                 db,
                 "FOR e IN rdfs_domain "
@@ -454,7 +492,7 @@ def _cardinality_violation(db: Any, ontology_id: str) -> list[Violation]:
                 bind_vars={**bind, "cid": class_id, "puri": prop_uri},
             )
         )
-        actual = rows[0] if rows else 0
+        actual = count_rows[0] if count_rows else 0
 
         if isinstance(min_card, int) and actual < min_card:
             violations.append(

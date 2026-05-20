@@ -73,6 +73,28 @@ You MUST output valid JSON matching the following schema exactly:
             }}
           ]
         }}
+      ],
+      "constraints": [
+        {{
+          "restriction_type": "minCardinality | maxCardinality | cardinality | \
+allValuesFrom | someValuesFrom | hasValue",
+          "property_uri": "string (MUST match the URI of an attribute or \
+relationship of THIS class)",
+          "restriction_value": "int for cardinality kinds | URI string for \
+allValuesFrom/someValuesFrom | literal for hasValue",
+          "description": "string (cite the exact clause/section where the \
+restriction is stated)",
+          "confidence": 0.0-1.0,
+          "evidence": [
+            {{
+              "source_chunk_ids": ["string"],
+              "source_spans": ["string"],
+              "evidence_text": "string",
+              "evidence_confidence": 0.0-1.0,
+              "extraction_rationale": "string"
+            }}
+          ]
+        }}
       ]
     }}
   ],
@@ -84,7 +106,6 @@ Guidelines:
 - Prioritize deep taxonomic hierarchies (rdfs:subClassOf chains)
 - Extract precise technical definitions, not general descriptions
 - Use the document's own terminology for labels
-- Identify constraints and cardinality where stated
 - Extract ATTRIBUTES and RELATIONSHIPS separately for each class:
   * "attributes" = owl:DatatypeProperty — scalar values (XSD types). Use for \
     quantities, identifiers, dates, names, and other literal values
@@ -94,7 +115,24 @@ Guidelines:
 - Cite source evidence for every class, parent_uri, attribute, and relationship. \
   Use the `source_chunk_id` values shown in chunk headers. Keep `evidence_text` \
   to the shortest supporting quote from the text.
-- For standards documents, preserve section/clause references in descriptions"""
+- For standards documents, preserve section/clause references in descriptions
+- Extract OWL RESTRICTIONS as "constraints" whenever the standard expresses a \
+  cardinality, allowed-value, or required-value rule on a class's own attribute \
+  or relationship. Technical standards frequently state these explicitly (MUST, \
+  REQUIRED, SHALL, exactly N, at most N, at least N):
+  * "An IPv4 Address MUST contain exactly four octets" → cardinality=4 on the \
+    octet relationship/attribute
+  * "A Certificate SHALL have at least one extension" → minCardinality=1 on the \
+    extension relationship
+  * "Each X.509 Certificate has at most one Issuer" → maxCardinality=1 on the \
+    issuer relationship
+  * "All values of httpStatusCode MUST be of type xsd:integer" → not a \
+    constraint here; this is the range_datatype of the attribute itself
+  * "The value of protocolVersion is always 'HTTP/1.1'" → hasValue="HTTP/1.1"
+  * property_uri MUST match a uri inside this class's "attributes" or \
+    "relationships" — never reference a property from a different class.
+  * Cite the specific section / clause number in the constraint's \
+    "description" field for traceability."""
 
 _USER = """\
 Extract a formal OWL taxonomy from the following technical document chunks. \

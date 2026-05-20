@@ -192,13 +192,19 @@ class PromotionStatusResponse(BaseModel):
 
 
 class TemporalSnapshot(BaseModel):
-    """Point-in-time graph state."""
+    """Point-in-time graph state.
+
+    Stream 3 PR 1 added ``constraints`` for OWL restrictions and (in
+    PR 3) SHACL shapes. The field defaults to ``[]`` so older snapshots
+    cached without it continue to deserialize.
+    """
 
     ontology_id: str
     timestamp: float
     classes: list[dict[str, Any]]
     properties: list[dict[str, Any]]
     edges: list[dict[str, Any]]
+    constraints: list[dict[str, Any]] = []
 
 
 class TemporalDiffEntry(BaseModel):

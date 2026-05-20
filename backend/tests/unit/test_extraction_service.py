@@ -32,6 +32,7 @@ def _mock_db(
         "ontology_properties",
         "ontology_object_properties",
         "ontology_datatype_properties",
+        "ontology_constraints",
         "has_property",
         "subclass_of",
         "related_to",
@@ -1855,6 +1856,252 @@ class TestMaterializeToGraph:
         )
 
         cols["has_chunk"].insert.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _materialize_to_graph -- OWL restrictions (Stream 3 PR 1)
+# ---------------------------------------------------------------------------
+
+
+class TestMaterializeConstraints:
+    """Stream 3 PR 1 -- LLM-extracted OWL restrictions get materialized
+    into ``ontology_constraints`` with one row per restriction (the
+    OWL-native shape, per PRD §6.14)."""
+
+    def test_writes_min_and_max_cardinality_as_two_rows(self):
+        from app.services.extraction import _materialize_to_graph
+
+        mock_db, cols = _mock_db(chunk_keys=[])
+        result = _make_result(
+            classes=[
+                {
+                    "label": "Account",
+                    "uri": "http://ex.org/onto#Account",
+                    "description": "A financial account",
+                    "confidence": 0.9,
+                    "relationships": [
+                        {
+                            "uri": "http://ex.org/onto#holder",
+                            "label": "holder",
+                            "target_class_uri": "http://ex.org/onto#Customer",
+                            "confidence": 0.9,
+                        },
+                    ],
+                    "constraints": [
+                        {
+                            "restriction_type": "minCardinality",
+                            "property_uri": "http://ex.org/onto#holder",
+                            "restriction_value": 1,
+                            "description": "every account has at least one holder",
+                            "confidence": 0.95,
+                        },
+                        {
+                            "restriction_type": "maxCardinality",
+                            "property_uri": "http://ex.org/onto#holder",
+                            "restriction_value": 1,
+                            "description": "and at most one",
+                            "confidence": 0.95,
+                        },
+                    ],
+                },
+                {
+                    "label": "Customer",
+                    "uri": "http://ex.org/onto#Customer",
+                    "description": "A customer",
+                    "confidence": 0.9,
+                },
+            ]
+        )
+
+        _materialize_to_graph(
+            mock_db,
+            run_id="run_1",
+            document_id="doc_1",
+            ontology_id="onto_1",
+            result=result,
+        )
+
+        cc = cols["ontology_constraints"]
+        assert cc.insert.call_count == 2
+        docs = [c[0][0] for c in cc.insert.call_args_list]
+        for d in docs:
+            assert d["constraint_type"] == "owl:Restriction"
+            assert d["on_class"] == "ontology_classes/Account"
+            assert d["property_uri"] == "http://ex.org/onto#holder"
+            # Relationship URI -> object_properties collection.
+            assert d["property_id"] == "ontology_object_properties/Account_holder"
+            assert d["ontology_id"] == "onto_1"
+            assert d["extraction_run_id"] == "run_1"
+            assert d["expired"] == NEVER_EXPIRES
+        kinds = sorted(d["restriction_type"] for d in docs)
+        assert kinds == ["maxCardinality", "minCardinality"]
+        values = sorted(d["restriction_value"] for d in docs)
+        assert values == [1, 1]
+
+    def test_constraint_on_attribute_resolves_to_datatype_property(self):
+        from app.services.extraction import _materialize_to_graph
+
+        mock_db, cols = _mock_db(chunk_keys=[])
+        result = _make_result(
+            classes=[
+                {
+                    "label": "Customer",
+                    "uri": "http://ex.org/onto#Customer",
+                    "description": "A customer",
+                    "confidence": 0.9,
+                    "attributes": [
+                        {
+                            "uri": "http://ex.org/onto#email",
+                            "label": "email",
+                            "range_datatype": "xsd:string",
+                            "confidence": 0.9,
+                        },
+                    ],
+                    "constraints": [
+                        {
+                            "restriction_type": "cardinality",
+                            "property_uri": "http://ex.org/onto#email",
+                            "restriction_value": 1,
+                            "description": "exactly one email per customer",
+                            "confidence": 0.9,
+                        },
+                    ],
+                },
+            ]
+        )
+
+        _materialize_to_graph(
+            mock_db,
+            run_id="run_1",
+            document_id="doc_1",
+            ontology_id="onto_1",
+            result=result,
+        )
+
+        cc = cols["ontology_constraints"]
+        assert cc.insert.call_count == 1
+        doc = cc.insert.call_args[0][0]
+        assert doc["restriction_type"] == "cardinality"
+        # Attribute URI -> datatype_properties collection.
+        assert doc["property_id"] == "ontology_datatype_properties/Customer_email"
+        assert doc["restriction_value"] == 1
+
+    def test_unresolved_property_uri_persists_with_null_property_id(self, caplog):
+        from app.services.extraction import _materialize_to_graph
+
+        mock_db, cols = _mock_db(chunk_keys=[])
+        result = _make_result(
+            classes=[
+                {
+                    "label": "Account",
+                    "uri": "http://ex.org/onto#Account",
+                    "description": "An account",
+                    "confidence": 0.9,
+                    # No matching attribute / relationship for the constraint
+                    # below -- the LLM hallucinated the URI. Constraint must
+                    # still be persisted so post-hoc repair can recover it.
+                    "constraints": [
+                        {
+                            "restriction_type": "minCardinality",
+                            "property_uri": "http://ex.org/onto#nonexistent",
+                            "restriction_value": 1,
+                            "confidence": 0.5,
+                        },
+                    ],
+                },
+            ]
+        )
+
+        with caplog.at_level("WARNING"):
+            _materialize_to_graph(
+                mock_db,
+                run_id="run_1",
+                document_id="doc_1",
+                ontology_id="onto_1",
+                result=result,
+            )
+
+        cc = cols["ontology_constraints"]
+        assert cc.insert.call_count == 1
+        doc = cc.insert.call_args[0][0]
+        assert doc["property_id"] is None
+        assert doc["property_uri"] == "http://ex.org/onto#nonexistent"
+        assert any(
+            "could not be resolved" in m or "could not resolve" in m for m in caplog.messages
+        )
+
+    def test_constraint_property_uri_fragment_fallback(self):
+        """A subtle LLM drift -- the property URI in the constraint has
+        a different namespace prefix from the attribute URI, but the same
+        fragment. We should still resolve via fragment match."""
+        from app.services.extraction import _materialize_to_graph
+
+        mock_db, cols = _mock_db(chunk_keys=[])
+        result = _make_result(
+            classes=[
+                {
+                    "label": "Customer",
+                    "uri": "http://ex.org/onto#Customer",
+                    "description": "A customer",
+                    "confidence": 0.9,
+                    "attributes": [
+                        {
+                            "uri": "http://ex.org/onto#email",
+                            "label": "email",
+                            "range_datatype": "xsd:string",
+                            "confidence": 0.9,
+                        },
+                    ],
+                    "constraints": [
+                        {
+                            "restriction_type": "minCardinality",
+                            # Different namespace; same #email fragment.
+                            "property_uri": "http://other.example/v2#email",
+                            "restriction_value": 1,
+                            "confidence": 0.8,
+                        },
+                    ],
+                },
+            ]
+        )
+
+        _materialize_to_graph(
+            mock_db,
+            run_id="run_1",
+            document_id="doc_1",
+            ontology_id="onto_1",
+            result=result,
+        )
+
+        cc = cols["ontology_constraints"]
+        assert cc.insert.call_count == 1
+        doc = cc.insert.call_args[0][0]
+        assert doc["property_id"] == "ontology_datatype_properties/Customer_email"
+
+    def test_no_constraints_writes_nothing(self):
+        from app.services.extraction import _materialize_to_graph
+
+        mock_db, cols = _mock_db(chunk_keys=[])
+        result = _make_result(
+            classes=[
+                {
+                    "label": "Plain",
+                    "uri": "http://ex.org/onto#Plain",
+                    "description": "Nothing special",
+                    "confidence": 0.9,
+                },
+            ]
+        )
+
+        _materialize_to_graph(
+            mock_db,
+            run_id="run_1",
+            document_id="doc_1",
+            ontology_id="onto_1",
+            result=result,
+        )
+
+        cols["ontology_constraints"].insert.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

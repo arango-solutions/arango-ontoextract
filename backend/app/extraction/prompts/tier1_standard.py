@@ -73,6 +73,28 @@ You MUST output valid JSON matching the following schema exactly:
             }}
           ]
         }}
+      ],
+      "constraints": [
+        {{
+          "restriction_type": "minCardinality | maxCardinality | cardinality | \
+allValuesFrom | someValuesFrom | hasValue",
+          "property_uri": "string (MUST match the URI of an attribute or \
+relationship of THIS class)",
+          "restriction_value": "int for cardinality kinds | URI string for \
+allValuesFrom/someValuesFrom | literal for hasValue",
+          "description": "string (curator-readable rationale: e.g., 'each \
+Account must have exactly one holder')",
+          "confidence": 0.0-1.0,
+          "evidence": [
+            {{
+              "source_chunk_ids": ["string"],
+              "source_spans": ["string"],
+              "evidence_text": "string",
+              "evidence_confidence": 0.0-1.0,
+              "extraction_rationale": "string"
+            }}
+          ]
+        }}
       ]
     }}
   ],
@@ -103,7 +125,27 @@ Guidelines:
   pointing to the Account class URI
 - Do NOT create relationships pointing to classes you haven't extracted. If the \
   target class is not in your classes array, either extract it as a class or \
-  model the value as an attribute with an appropriate XSD datatype instead"""
+  model the value as an attribute with an appropriate XSD datatype instead
+- Extract OWL RESTRICTIONS as "constraints" on the class when the text states a \
+  cardinality bound or a value restriction on one of the class's own attributes \
+  or relationships. Examples:
+  * "Each Account must have exactly one holder" → constraint with \
+    restriction_type="cardinality", property_uri pointing to the "holder" \
+    relationship, restriction_value=1
+  * "Customers may have multiple accounts" → no cardinality constraint (lower \
+    bound is 0, upper bound is unbounded — default OWL semantics already say this)
+  * "Every Account has at least one signatory and at most five" → TWO \
+    constraints on the same property: one minCardinality=1 and one \
+    maxCardinality=5
+  * "The status of an Account is always one of: Open, Frozen, Closed" → \
+    constraint with restriction_type="hasValue" is NOT the right encoding \
+    (hasValue is for a single value); model this as an attribute with an \
+    enumerated range instead, and only emit a constraint if a single explicit \
+    value is asserted
+  * Only emit a constraint when the text explicitly states a bound or value; \
+    do NOT infer "exactly one" from a singular noun unless the text says so. \
+    property_uri MUST match a uri inside this class's "attributes" or \
+    "relationships" — never reference a property from a different class."""
 
 _USER = """\
 Extract an OWL ontology from the following text chunks. Identify all domain \

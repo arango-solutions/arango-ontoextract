@@ -146,6 +146,67 @@ class ExtractedRelationship(BaseModel):
     evidence: list[SourceEvidence] = []
 
 
+class RestrictionType(StrEnum):
+    """OWL restriction kinds the LLM may emit (PRD §6.14).
+
+    Stream 3 PR 1 covers the cardinality + value-restriction kinds.
+    Qualified cardinality variants (``owl:minQualifiedCardinality`` etc.)
+    are documented in PRD §6.14 but deferred to a follow-up PR -- they
+    require a ``qualified_on_class`` field that's not part of the
+    minimal extraction contract.
+    """
+
+    MIN_CARDINALITY = "minCardinality"
+    MAX_CARDINALITY = "maxCardinality"
+    CARDINALITY = "cardinality"  # exactly N -- semantically: min==max
+    ALL_VALUES_FROM = "allValuesFrom"
+    SOME_VALUES_FROM = "someValuesFrom"
+    HAS_VALUE = "hasValue"
+
+
+class ExtractedConstraint(BaseModel):
+    """A single OWL restriction extracted by the LLM for one class.
+
+    One ``ExtractedConstraint`` becomes one row in ``ontology_constraints``
+    on materialization (one restriction per row -- the OWL-native shape).
+    Cardinality bounds that have BOTH a min and a max therefore emit two
+    rows; the rule engine groups them back together at evaluation time.
+
+    The ``property_uri`` references the constrained property by URI rather
+    than by Arango key because the property may not exist yet when the
+    LLM speaks (the same response may also be extracting the property).
+    Materialization resolves URI -> Arango ``property_id`` opportunisticly;
+    when no match is found, ``property_id`` is left ``null`` and the
+    rule engine falls back to URI matching.
+    """
+
+    restriction_type: RestrictionType
+    property_uri: str = Field(
+        description="URI of the constrained property (an extracted attribute or relationship)."
+    )
+    # ``restriction_value`` is overloaded by ``restriction_type``:
+    #   minCardinality / maxCardinality / cardinality  -> int (non-negative)
+    #   allValuesFrom / someValuesFrom                  -> str (class URI)
+    #   hasValue                                        -> str | int | float | bool (literal)
+    #
+    # Pydantic's union+strict-bool means we lean on the consumer (the
+    # rule engine + UI) to interpret based on ``restriction_type``. The
+    # alternative -- typed-per-restriction subclasses -- would explode
+    # the JSON schema the LLM has to satisfy with no measured win.
+    restriction_value: int | float | bool | str = Field(
+        description=(
+            "Integer for cardinality kinds; URI string for value restrictions; "
+            "literal for hasValue."
+        ),
+    )
+    description: str = Field(
+        default="",
+        description="Curator-readable rationale, e.g. 'each Account must have exactly one holder'.",
+    )
+    confidence: float = Field(ge=0.0, le=1.0, default=0.5)
+    evidence: list[SourceEvidence] = []
+
+
 class ExtractedClass(BaseModel):
     """Pydantic model for LLM extraction output — a single ontology class."""
 
@@ -163,6 +224,10 @@ class ExtractedClass(BaseModel):
     # PGT-aligned fields (ADR-006)
     attributes: list[ExtractedAttribute] = []
     relationships: list[ExtractedRelationship] = []
+    # Stream 3 PR 1 -- OWL restrictions on this class (cardinality,
+    # value restrictions, hasValue). Empty by default so prompts that
+    # don't ask for constraints continue to validate unchanged.
+    constraints: list[ExtractedConstraint] = []
     # Quality signals
     llm_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     faithfulness_score: float = Field(default=0.5, ge=0.0, le=1.0)

@@ -379,17 +379,27 @@ FOR doc IN @@col
 
 # PGT-aligned: include split property collections (ADR-006). Legacy
 # ``ontology_properties`` remains for databases not yet migrated.
+# Stream 3 PR 1 adds ``ontology_constraints`` so snapshots, diffs, and
+# revert all carry OWL restrictions + (future) SHACL shapes alongside
+# classes and properties.
 _ONTOLOGY_VERTEX_COLLECTIONS = [
     "ontology_classes",
     "ontology_properties",
     "ontology_object_properties",
     "ontology_datatype_properties",
+    "ontology_constraints",
 ]
 
 _PROPERTY_VERTEX_COLLECTIONS = [
     "ontology_properties",
     "ontology_object_properties",
     "ontology_datatype_properties",
+]
+
+# Vertex collections fetched separately into the snapshot payload's
+# ``constraints`` bucket (vs ``classes`` or ``properties``).
+_CONSTRAINT_VERTEX_COLLECTIONS = [
+    "ontology_constraints",
 ]
 
 # Edges included in point-in-time snapshot and diff. Aligns with
@@ -438,6 +448,7 @@ def get_snapshot(
 
     classes: list[dict[str, Any]] = []
     properties: list[dict[str, Any]] = []
+    constraints: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
 
     vertex_query = """\
@@ -473,6 +484,27 @@ FOR doc IN @@col
             )
         )
 
+    # Stream 3 PR 1 -- constraints land in their own snapshot bucket so
+    # the existing classes / properties / edges shapes stay stable for
+    # current callers. Time-travel queries that don't care about
+    # constraints can ignore the new key.
+    for constraint_col in _CONSTRAINT_VERTEX_COLLECTIONS:
+        if not db.has_collection(constraint_col):
+            continue
+        constraints.extend(
+            list(
+                run_aql(
+                    db,
+                    vertex_query,
+                    bind_vars={
+                        "@col": constraint_col,
+                        "oid": ontology_id,
+                        "ts": timestamp,
+                    },
+                )
+            )
+        )
+
     active_ids = {doc["_id"] for doc in classes + properties}
 
     edge_query = """\
@@ -494,6 +526,7 @@ FOR e IN @@col
         "timestamp": timestamp,
         "classes": classes,
         "properties": properties,
+        "constraints": constraints,
         "edges": edges,
     }
 

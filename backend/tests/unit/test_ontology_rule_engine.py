@@ -330,11 +330,19 @@ class TestCardinalityViolation:
             {
                 "FOR c IN ontology_constraints": [
                     {
-                        "class_id": "ontology_classes/Customer",
+                        "constraint_type": "owl:Restriction",
+                        "on_class": "ontology_classes/Customer",
                         "property_uri": "http://example.org/onto#hasName",
-                        "min_cardinality": 1,
-                        "max_cardinality": 5,
-                    }
+                        "restriction_type": "minCardinality",
+                        "restriction_value": 1,
+                    },
+                    {
+                        "constraint_type": "owl:Restriction",
+                        "on_class": "ontology_classes/Customer",
+                        "property_uri": "http://example.org/onto#hasName",
+                        "restriction_type": "maxCardinality",
+                        "restriction_value": 5,
+                    },
                 ],
                 "FOR e IN rdfs_domain": [0],  # zero occurrences
             },
@@ -350,9 +358,11 @@ class TestCardinalityViolation:
             {
                 "FOR c IN ontology_constraints": [
                     {
-                        "class_id": "ontology_classes/Customer",
+                        "constraint_type": "owl:Restriction",
+                        "on_class": "ontology_classes/Customer",
                         "property_uri": "http://example.org/onto#hasName",
-                        "max_cardinality": 1,
+                        "restriction_type": "maxCardinality",
+                        "restriction_value": 1,
                     }
                 ],
                 "FOR e IN rdfs_domain": [3],
@@ -369,16 +379,47 @@ class TestCardinalityViolation:
             {
                 "FOR c IN ontology_constraints": [
                     {
-                        "class_id": "ontology_classes/Customer",
+                        "constraint_type": "owl:Restriction",
+                        "on_class": "ontology_classes/Customer",
                         "property_uri": "http://example.org/onto#hasName",
-                        "min_cardinality": 1,
-                        "max_cardinality": 5,
-                    }
+                        "restriction_type": "minCardinality",
+                        "restriction_value": 1,
+                    },
+                    {
+                        "constraint_type": "owl:Restriction",
+                        "on_class": "ontology_classes/Customer",
+                        "property_uri": "http://example.org/onto#hasName",
+                        "restriction_type": "maxCardinality",
+                        "restriction_value": 5,
+                    },
                 ],
                 "FOR e IN rdfs_domain": [3],
             },
         )
         assert engine._cardinality_violation(db, "OID") == []
+
+    def test_exact_cardinality_emits_violation_when_above(self, monkeypatch):
+        """owl:cardinality N == min N AND max N. Three occurrences with
+        cardinality=1 should emit one ``above max`` violation."""
+        db = _db_with_collections("ontology_constraints", "rdfs_domain")
+        _patch_run_aql(
+            monkeypatch,
+            {
+                "FOR c IN ontology_constraints": [
+                    {
+                        "constraint_type": "owl:Restriction",
+                        "on_class": "ontology_classes/Account",
+                        "property_uri": "http://example.org/onto#holder",
+                        "restriction_type": "cardinality",
+                        "restriction_value": 1,
+                    }
+                ],
+                "FOR e IN rdfs_domain": [3],
+            },
+        )
+        violations = engine._cardinality_violation(db, "OID")
+        assert len(violations) == 1
+        assert "above declared max cardinality 1" in violations[0].description
 
     def test_constraint_missing_required_fields_skipped(self, monkeypatch):
         db = _db_with_collections("ontology_constraints", "rdfs_domain")
@@ -386,7 +427,32 @@ class TestCardinalityViolation:
             monkeypatch,
             {
                 "FOR c IN ontology_constraints": [
-                    {"min_cardinality": 1},  # no class_id / property_uri
+                    # no on_class / property_uri
+                    {
+                        "constraint_type": "owl:Restriction",
+                        "restriction_type": "minCardinality",
+                        "restriction_value": 1,
+                    },
+                ],
+            },
+        )
+        assert engine._cardinality_violation(db, "OID") == []
+
+    def test_non_integer_restriction_value_skipped(self, monkeypatch):
+        """Cardinality kinds require an int. A stray string should NOT
+        crash the consolidation run -- skip with a warning."""
+        db = _db_with_collections("ontology_constraints", "rdfs_domain")
+        _patch_run_aql(
+            monkeypatch,
+            {
+                "FOR c IN ontology_constraints": [
+                    {
+                        "constraint_type": "owl:Restriction",
+                        "on_class": "ontology_classes/Customer",
+                        "property_uri": "http://example.org/onto#hasName",
+                        "restriction_type": "minCardinality",
+                        "restriction_value": "not-an-int",
+                    }
                 ],
             },
         )

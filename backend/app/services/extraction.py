@@ -958,6 +958,7 @@ def _materialize_to_graph(
         "ontology_classes",
         "ontology_datatype_properties",
         "ontology_object_properties",
+        "ontology_constraints",
     )
     edge_collections = (
         "rdfs_domain",
@@ -978,12 +979,19 @@ def _materialize_to_graph(
     rdfs_range_col = db.collection("rdfs_range_class")
     extracted_col = db.collection("extracted_from")
     subclass_col = db.collection("subclass_of")
+    constraint_col = db.collection("ontology_constraints")
 
     class_keys: dict[str, str] = {}  # label -> key (legacy name; really label_to_key)
     uri_to_key: dict[str, str] = {}  # full URI -> key
     fragment_to_key: dict[str, str] = {}  # URI fragment -> key (for resolver tier 2)
     class_parent_uris: list[tuple[str, str, list[dict[str, Any]]]] = []
     deferred_rels: list[dict[str, Any]] = []
+    # Stream 3 PR 1 -- OWL restrictions get materialized AFTER all
+    # properties (attributes + relationships) so that ``property_uri``
+    # can be resolved to the property's Arango ``_id``. We collect
+    # (class_key, raw_constraints, class_property_uri_map) tuples here
+    # and process at the bottom of this function.
+    deferred_constraints: list[tuple[str, list[dict[str, Any]], dict[str, tuple[str, str]]]] = []
 
     for cls in classes:
         cls_data = cls.model_dump() if hasattr(cls, "model_dump") else dict(cls)
@@ -1054,11 +1062,19 @@ def _materialize_to_graph(
                         }
                     )
 
+        # Per-class URI → (prop_key, collection) lookup. Populated as we
+        # walk attributes (immediate insert) and queue relationships
+        # (deferred insert) so that constraint materialization later can
+        # resolve property_uri back to a specific property document on
+        # THIS class.
+        class_prop_uri_map: dict[str, tuple[str, str]] = {}
+
         # Attributes → ontology_datatype_properties + rdfs_domain
         for attr in attributes:
             attr_label = attr.get("label", "unknown_attr")
             prop_key = f"{key}_{attr_label.replace(' ', '_').lower()}"
             attr_uri = attr.get("uri") or f"{uri.rsplit('#', 1)[0]}#{attr_label.replace(' ', '')}"
+            class_prop_uri_map[attr_uri] = (prop_key, "ontology_datatype_properties")
             prop_doc = {
                 "_key": prop_key,
                 "uri": attr_uri,
@@ -1097,6 +1113,7 @@ def _materialize_to_graph(
             rel_label = rel.get("label", "unknown_rel")
             prop_key = f"{key}_{rel_label.replace(' ', '_').lower()}"
             rel_uri = rel.get("uri") or f"{uri.rsplit('#', 1)[0]}#{rel_label.replace(' ', '')}"
+            class_prop_uri_map[rel_uri] = (prop_key, "ontology_object_properties")
             deferred_rels.append(
                 {
                     "domain_key": key,
@@ -1126,6 +1143,13 @@ def _materialize_to_graph(
                     "expired": NEVER_EXPIRES,
                 }
             )
+
+        # Stream 3 PR 1 -- queue OWL restrictions on this class. Actual
+        # insert happens at the bottom of this function, AFTER the
+        # deferred-relationships loop has determined every property's key.
+        raw_constraints = cls_data.get("constraints", [])
+        if raw_constraints:
+            deferred_constraints.append((key, raw_constraints, class_prop_uri_map))
 
     # subclass_of edges
     for child_key, parent_uri, parent_evidence in class_parent_uris:
@@ -1263,6 +1287,67 @@ def _materialize_to_graph(
                 target_uri,
                 resolution.target_label,
             )
+
+    # Stream 3 PR 1 -- materialize OWL restrictions into ontology_constraints.
+    #
+    # One restriction document per row (the OWL-native shape, matching
+    # PRD §6.14). A class that has both "min 1 holder" and "max 5
+    # holders" yields TWO documents; the rule engine groups them at
+    # evaluation time. ``property_id`` is left null when the URI can't
+    # be resolved to a property on the same class, so post-hoc repair
+    # can pick it up; the LLM's raw ``property_uri`` is always retained.
+    if deferred_constraints:
+        for class_key, raw_constraints, class_prop_uri_map in deferred_constraints:
+            for raw_c in raw_constraints:
+                restriction_type = raw_c.get("restriction_type")
+                if not restriction_type:
+                    continue
+                property_uri = raw_c.get("property_uri", "") or ""
+                resolved = class_prop_uri_map.get(property_uri)
+                if resolved is None and property_uri:
+                    # Defensive: the LLM occasionally drifts on URI suffix
+                    # casing. Try fragment match against the same class.
+                    target_frag = property_uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1]
+                    for known_uri, lookup in class_prop_uri_map.items():
+                        if known_uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1] == target_frag:
+                            resolved = lookup
+                            break
+                if resolved is None:
+                    log.warning(
+                        "constraint property_uri %r could not be resolved to a "
+                        "property on class %s; persisting with property_id=null",
+                        property_uri,
+                        class_key,
+                    )
+                    property_id: str | None = None
+                else:
+                    prop_key, prop_col_name = resolved
+                    property_id = f"{prop_col_name}/{prop_key}"
+
+                constraint_doc: dict[str, Any] = {
+                    "constraint_type": "owl:Restriction",
+                    "on_class": f"ontology_classes/{class_key}",
+                    "property_id": property_id,
+                    "property_uri": property_uri,
+                    "restriction_type": restriction_type,
+                    "restriction_value": raw_c.get("restriction_value"),
+                    "description": raw_c.get("description", "") or "",
+                    "ontology_id": ontology_id,
+                    "extraction_run_id": run_id,
+                    "confidence": raw_c.get("confidence", 0.5),
+                    "evidence": raw_c.get("evidence", []),
+                    "created": now,
+                    "expired": NEVER_EXPIRES,
+                }
+                try:
+                    constraint_col.insert(constraint_doc)
+                except Exception as exc:
+                    log.warning(
+                        "constraint insert failed for class %s, property_uri=%r: %s",
+                        class_key,
+                        property_uri,
+                        exc,
+                    )
 
     # has_chunk edges
     if db.has_collection("has_chunk"):

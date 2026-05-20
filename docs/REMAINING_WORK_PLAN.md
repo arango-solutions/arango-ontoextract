@@ -66,7 +66,7 @@ The full belief-revision substrate (`revision_meta` collection, evidence-age + e
 | Entity Resolution (§6.7) | **Stub** | ER agent exists but uses placeholder logic. No real `arango-entity-resolution` library integration. |
 | Imports, Composition & Dependencies (§6.15, §6.8.8–8.16) | **COMPLETE (Phase 0 + Phase 1 + Phase 2a + Phase 2b shipped in v0.4.0-dev)** | `owl:imports` edge tracking, imports CRUD, `ontology_imports` named graph, standard ontology catalog (`/ontology/catalog` + bundled DCMI sample), `GET /imports-graph` DAG endpoint, cascade-on-delete impact, base-ontology selector on extraction, OWL exports preserving `owl:imports`, workspace catalog-browser overlay, workspace imports-dependency overlay (DAG canvas + library deep-link), three Visualizer saved queries, effective-graph API (`GET /{id}/effective` with inline conflicts + ETag), merge-conflict detection (duplicate URI / duplicate label / subclass cycle via import), canvas rendering of imported entities (dashed slate border + dimmed fill on Sigma + box-arrow + "Open Source Ontology" context-menu deep-link, with the legend swatch surfacing only when imports are present), drag-and-drop import composition (drag any ontology row onto the canvas to add an `imports` edge, with self/duplicate pre-check, cycle detection on the backend, undo-toast on success, and per-entity "Remove Import (<source name>)" context-menu entries — all routed through a new module-level toast surface), and import-aware extraction prompts (the effective ontology — own + transitive imports — is serialized as a tree-shaped header + reuse guidelines and prepended to `domain_context` for every extraction targeting a composed ontology, so the LLM is told which classes already exist and instructed to reuse via `rdfs:subClassOf` / `owl:equivalentClass` rather than minting duplicates the conflict detector will later flag) are all shipped. |
 | Belief Revision UX (§6.16, Stream 11 Phase 3) | **Complete (v0.4.0-dev)** | Revisions Inbox overlay (IBR.14), inline detail panel (IBR.15), accept/reject/modify REST + service (IBR.16), background consolidation + admin endpoints (IBR.17), four safety guards (IBR.18), Quality Dashboard "Revisions Activity" tile (IBR.19), six MCP tools (IBR.20), and docs cross-link (IBR.21) all shipped. See ADR-008 implementation status appendix. |
-| Constraints (§6.14) | **Not Started** | No OWL restriction or SHACL shape extraction, import, display, or export |
+| Constraints (§6.14) | **PR 1 shipped (v0.4.0-dev)** | Extraction → materialization → API → temporal → rule engine alignment all shipped (I.1, I.2, I.5, I.9, plus rule-engine schema reconciliation). Remaining: OWL restriction import (I.3 → PR 2), SHACL shapes import (I.4 → PR 3), workspace UI (I.6 + I.7 → PR 4), export (I.8 → PR 5). |
 | Schema Extraction (§6.9) | **Stub** | Service shell exists but minimal implementation. No named graph-aware extraction, no direct graph-to-ontology mapping fallback, no UI for graph selection |
 | Quality Dashboard (§6.13.7) | **Mostly Done (v0.4.0-dev)** | Unified `/dashboard`, `/quality` → per-ontology tab, recharts radar, audited OntoQA metrics, connectivity metric, qualitative evaluation, live per-ontology six-dimension view, **event-tagged history tracking (Q.2)**, **trend sparklines (Q.3)**, **gold-standard recall (Q.4)**, **curation throughput timer (Q.5)**. Remaining: RAG benchmark comparison. |
 | Workspace Performance (Stream 12) | **Mostly Done in v0.3.0** | T1+T2+T3+T4+T5 shipped (projections, single-item endpoints, client cache, FLATTEN consolidation, telemetry, format sniffer, UI race fixes). Remaining: T6 WTW switch profile, T7 `/runs/{id}/cost` cache, T8 `/runs` join. |
@@ -299,30 +299,73 @@ plan-vs-reality audit above. Stream 2 is closed.
 
 ### Stream 3: OWL Constraints & SHACL Shapes
 **PRD:** §6.14 FR-14.1–14.7
-**Duration:** 1 week
+**Duration:** 1 week (5 PRs, PR 1 shipped in v0.4.0-dev)
 **Priority:** P2 — formal ontology completeness
-**Dependencies:** Stream 1 (imports needed for constraint context)
+**Dependencies:** Stream 1 (imports needed for constraint context) ✓
 **Team Size:** 1 developer
 
-#### Objectives
-- Extract OWL restrictions and SHACL shapes from LLM extraction and OWL imports
-- Store, display, and export constraints
+#### Plan-vs-reality audit (v0.4.0-dev)
+
+Pre-PR-1 state of the codebase:
+
+| Layer | Shipped? |
+|-------|----------|
+| `ontology_constraints` collection (migration `002_versioned_vertices`) | yes (scaffolding only) |
+| MDI / TTL / temporal indexes on `ontology_constraints` (migrations 005 / 006 / 019 / 020) | yes |
+| Named-graph membership (`004_named_graphs`), deprecation cascade, admin reset truncation | yes |
+| **Writers (extract / import / materialize)** | **no** |
+| **Read API** | **no** |
+| **Workspace / Library UI** | **no** |
+| **OWL restriction export, SHACL export** | **no** |
+| **Temporal snapshot / diff includes constraints** | **no** |
+| Rule engine: `_cardinality_violation` opportunistically reads `ontology_constraints` | yes, but with a non-PRD internal schema (`constraint_type: "cardinality"`, single doc with `min_cardinality` + `max_cardinality`) -- no-ops on empty collection in practice |
+| `has_constraint` edge collection (referenced in dependency / delete code) | **never migrated** -- deferred |
+
+**Implication:** Stream 3 is essentially greenfield. The collection and indexes exist; nothing populates or reads them in production. The rule engine's existing reader needs a one-line filter alignment when writers land.
+
+#### PR split
+
+The original 9-task list (I.1–I.9) is regrouped into 5 vertical-slice PRs, each independently shippable:
+
+| PR | Scope | Tasks | Status |
+|----|-------|-------|--------|
+| **PR 1** | **Data plane vertical slice** -- extraction → materialization → read API → temporal → rule-engine alignment | I.1, I.2, I.5, I.9, rule-engine schema reconciliation | **DONE (v0.4.0-dev)** |
+| PR 2 | OWL restriction import via ArangoRDF (post-PGT hook parses `owl:Restriction` blank nodes) | I.3 | Pending |
+| PR 3 | SHACL shapes parser + import (`sh:NodeShape`, `sh:PropertyShape`) | I.4 | Pending |
+| PR 4 | Workspace UI for constraints (`FloatingDetailPanel` constraints section, curator approve / reject if added) | I.6 + I.7 (rescoped for workspace, not legacy `/library`) | Pending |
+| PR 5 | OWL restriction export in Turtle + new `export_shacl()` | I.8 | Pending |
 
 #### Tasks
 
-| # | Task | Type | Estimate | Description |
-|---|------|------|----------|-------------|
-| I.1 | Constraint extraction prompts | Backend | 4h | Extend extraction prompts: "For each class, identify cardinality constraints, value restrictions, and data validation rules." Add `constraints` field to `ExtractedClass`. |
-| I.2 | Constraint materialization | Backend | 3h | `_materialize_to_graph` writes constraints to `ontology_constraints` collection with temporal fields. |
-| I.3 | OWL restriction import via ArangoRDF | Backend | 4h | After PGT import, parse `owl:Restriction` blank nodes. Create `ontology_constraints` documents linked to target class and property. |
-| I.4 | SHACL shapes import | Backend | 4h | Parse SHACL shapes graphs (Turtle). Create `ontology_constraints` with `constraint_type: "sh:NodeShape"` or `"sh:PropertyShape"`. |
-| I.5 | Constraints API endpoint | Backend | 2h | `GET /library/{ontology_id}/constraints` returns all OWL restrictions and SHACL shapes. |
-| I.6 | Constraints display in Library UI | Frontend | 3h | Class detail panel shows constraints: cardinality badges, value restrictions, SHACL rules with severity icons. |
-| I.7 | Constraints display in Curation UI | Frontend | 3h | NodeDetail shows constraints alongside properties. Curators can approve/reject/edit. |
-| I.8 | Constraints in OWL export | Backend | 3h | Turtle export includes `owl:Restriction` constructs. New `export_shacl()` for SHACL shapes graph. |
-| I.9 | Constraints in temporal queries | Backend | 2h | `get_snapshot` and `get_diff` include constraints from `ontology_constraints`. |
+| # | Task | Type | Status | Description |
+|---|------|------|--------|-------------|
+| I.1 | Constraint extraction prompts | Backend | **DONE (PR 1)** | `ExtractedConstraint` + `RestrictionType` enum (`minCardinality` / `maxCardinality` / `cardinality` / `allValuesFrom` / `someValuesFrom` / `hasValue`) added to `app/models/ontology.py`; `ExtractedClass.constraints: list[ExtractedConstraint] = []` so existing extractions continue to validate. Both `tier1_standard` and `tier1_technical` prompts gained a `"constraints"` JSON-schema slot plus explicit guidelines (with worked examples) instructing the LLM to emit one restriction per row, with property_uri matching the SAME class's attributes/relationships, and to NOT infer "exactly one" from a singular noun. |
+| I.2 | Constraint materialization | Backend | **DONE (PR 1)** | `_materialize_to_graph` builds a per-class URI → (prop_key, collection) map as it walks attributes + queues relationships, then materializes each LLM constraint into `ontology_constraints` with the PRD §6.14 OWL-native shape: `constraint_type="owl:Restriction"`, `on_class`, `property_id` (resolved to `ontology_datatype_properties/...` or `ontology_object_properties/...`, may be `null` when the LLM-supplied URI doesn't match -- which is logged as a warning but persisted so post-hoc repair can recover), `property_uri` (always retained verbatim), `restriction_type`, `restriction_value`, plus standard temporal fields. Fragment fallback handles LLM namespace drift. |
+| I.3 | OWL restriction import via ArangoRDF | Backend | **PR 2 (pending)** | After PGT import, parse `owl:Restriction` blank nodes. Create `ontology_constraints` documents linked to target class and property. |
+| I.4 | SHACL shapes import | Backend | **PR 3 (pending)** | Parse SHACL shapes graphs (Turtle). Create `ontology_constraints` with `constraint_type: "sh:NodeShape"` or `"sh:PropertyShape"`. |
+| I.5 | Constraints API endpoint | Backend | **DONE (PR 1)** | `GET /api/v1/ontology/library/{ontology_id}/constraints` with optional `?constraint_type=owl:Restriction` and `?include_unresolved=true|false` filters. Joins `on_class` → `ontology_classes` for `class_label` and `property_id` → property collection for `property_label` in two AQL passes (one per id-batch), so the UI can render constraints without follow-up round-trips. Stable sort by (class_label, property_uri, restriction_type). Backed by new `app/db/constraints_repo.py` with `list_constraints_for_ontology`, `list_constraints_for_class`, `count_constraints_for_ontology` helpers. |
+| I.6 | Constraints display in workspace `FloatingDetailPanel` | Frontend | **PR 4 (pending)** | Class detail panel shows constraints: cardinality badges, value restrictions, SHACL rules with severity icons. Rescoped from legacy `/library` (deprecated -- the workspace replaced it). |
+| I.7 | Constraint actions in workspace context menu | Frontend | **PR 4 (pending)** | Curator approve / reject / edit of constraints, only when mutation API lands. |
+| I.8 | Constraints in OWL + SHACL export | Backend | **PR 5 (pending)** | Turtle export includes `owl:Restriction` constructs. New `export_shacl()` for SHACL shapes graph. |
+| I.9 | Constraints in temporal queries | Backend | **DONE (PR 1)** | `ontology_constraints` added to `_ONTOLOGY_VERTEX_COLLECTIONS` AND a new `_CONSTRAINT_VERTEX_COLLECTIONS` so `get_snapshot` returns constraints in a dedicated `constraints` bucket (kept distinct from classes/properties so existing callers' field shapes stay stable). `TemporalSnapshot` Pydantic + frontend `TemporalSnapshot` TS interface both extended with `constraints?: OntologyConstraint[]` (added `OntologyConstraint` TS type with the full PRD wire fields). Rule-engine `_cardinality_violation` rewritten to read the PRD shape (`constraint_type == 'owl:Restriction'` + `restriction_type IN ['minCardinality', 'maxCardinality', 'cardinality']`), with `cardinality` (exactly N) expanded to `min == max == N` for evaluation. Multiple rows per (class, property) are grouped client-side before the bounds check, so a class with both min and max cardinality on the same property evaluates as a single bound pair. Non-int `restriction_value` is skipped with a warning instead of crashing the consolidation run. |
 
-**Exit Criteria:** Constraints extractable, importable, displayable, and exportable. SHACL shapes stored alongside OWL restrictions.
+#### PR 1 implementation notes
+
+* **Data shape** (locked by PR 1; subsequent PRs MUST honour it): one OWL restriction = one `ontology_constraints` row with `{constraint_type: "owl:Restriction", on_class, property_id, property_uri, restriction_type, restriction_value, ontology_id, extraction_run_id, confidence, evidence, description, created, expired}`. SHACL (PR 3) will use `constraint_type: "sh:NodeShape"` / `"sh:PropertyShape"` in the same collection.
+* **Rule engine alignment**: the previous internal schema (`constraint_type: "cardinality"`, `class_id`, `min_cardinality`/`max_cardinality` on the same doc) had **zero live data** in production (the no-data-returns-empty test proved it) so the cutover is safe; the 4 rule-engine tests were rewritten to use the PRD shape and a new `test_exact_cardinality_emits_violation_when_above` covers the `cardinality` expansion path.
+* **`has_constraint` edges deferred**: not part of any current migration; `ontology_dependency.py` references the collection name but doesn't fail when it's missing. Adding it would be PR 6 if traversal queries need it -- not blocking the UI work.
+* **Test coverage added**:
+  * `tests/unit/test_extracted_constraint_model.py` (8 tests) -- model + enum + class-with-constraints validation.
+  * `tests/unit/test_constraints_repo.py` (9 tests) -- repo with optional kwargs + empty-collection paths.
+  * `tests/unit/test_constraints_api.py` (5 tests) -- 404, empty, label enrichment + stable sort, unresolved-property null fallback, kwarg pass-through.
+  * `tests/unit/test_extraction_service.py::TestMaterializeConstraints` (5 new tests) -- min+max two-row split, attribute resolution to datatype-properties, unresolved-URI warning + null `property_id`, fragment-fallback resolution, no-constraints no-write.
+  * `tests/unit/test_ontology_rule_engine.py::TestCardinalityViolation` rewritten (2 new tests added: exact-cardinality and non-int-restriction-value skip).
+  * `tests/unit/test_temporal_snapshot.py` new `test_returns_constraints_in_snapshot_bucket`; existing `test_returns_empty_when_no_collections` updated to assert empty constraints bucket.
+* **Verification**: full backend unit suite green (1770/1770); frontend type-check + jest (617/617) + eslint clean.
+
+**Exit Criteria (PR 1):** ✓ Constraints extractable from LLM output, materialized into `ontology_constraints`, queryable via REST (`GET /library/{id}/constraints` with class + property label enrichment), included in temporal snapshots, and read by the rule engine in the PRD-aligned shape.
+
+**Exit Criteria (overall Stream 3):** Constraints extractable, importable (OWL + SHACL), displayable in workspace, and exportable (OWL Turtle + SHACL shapes graph). Pending PRs 2–5.
 
 ---
 

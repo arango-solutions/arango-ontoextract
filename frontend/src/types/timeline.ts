@@ -22,12 +22,29 @@ export interface TimelineEvent {
   details?: Record<string, unknown>;
 }
 
+export interface OntologyConstraint {
+  _key?: string;
+  _id?: string;
+  constraint_type: string;
+  on_class: string;
+  property_id?: string | null;
+  property_uri: string;
+  restriction_type: string;
+  restriction_value: number | string | boolean | null;
+  description?: string;
+  ontology_id: string;
+  confidence?: number;
+  created?: number;
+  expired?: number;
+}
+
 export interface TemporalSnapshot {
   ontology_id: string;
   timestamp: string;
   classes: OntologyClass[];
   properties: OntologyProperty[];
   edges: OntologyEdge[];
+  constraints?: OntologyConstraint[];
 }
 
 export interface TemporalDiff {

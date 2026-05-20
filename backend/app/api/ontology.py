@@ -12,7 +12,13 @@ from pydantic import BaseModel, Field
 
 from app.api.auth import get_user_from_request
 from app.api.errors import ConflictError, NotFoundError, ValidationError
-from app.db import documents_repo, ontology_repo, registry_repo, releases_repo
+from app.db import (
+    constraints_repo,
+    documents_repo,
+    ontology_repo,
+    registry_repo,
+    releases_repo,
+)
 from app.db.client import get_db
 from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import doc_get, run_aql
@@ -618,6 +624,121 @@ async def list_ontology_documents(ontology_id: str) -> dict[str, Any]:
         )
 
     return {"ontology_id": ontology_id, "documents": documents}
+
+
+@router.get("/library/{ontology_id}/constraints")
+async def list_ontology_constraints(
+    ontology_id: str,
+    constraint_type: str | None = Query(
+        default=None,
+        description=(
+            "Optional exact-match filter on constraint_type, e.g. 'owl:Restriction' "
+            "or 'sh:NodeShape'. Omit to return all kinds."
+        ),
+    ),
+    include_unresolved: bool = Query(
+        default=True,
+        description=(
+            "When false, drop constraints whose property_id is null. Default "
+            "true so curators can fix unresolved property URIs in the UI."
+        ),
+    ),
+) -> dict[str, Any]:
+    """List live OWL restrictions and SHACL shapes for an ontology (Stream 3 PR 1).
+
+    Reads from the ``ontology_constraints`` collection populated by
+    extraction materialization (PR 1), OWL import (PR 2 -- future), and
+    SHACL import (PR 3 -- future). Each row is one restriction in the
+    OWL-native shape (a class with both min and max cardinality returns
+    two rows; group on the client side if you want a single bound).
+
+    Joins ``on_class`` to ``ontology_classes`` for ``class_label`` so the
+    workspace UI can render constraints without a second round-trip.
+    Property labels are joined opportunistically -- left null when the
+    constraint references an unresolved property URI.
+    """
+    entry = registry_repo.get_registry_entry(ontology_id)
+    if entry is None:
+        raise NotFoundError(
+            f"Ontology '{ontology_id}' not found",
+            details={"ontology_id": ontology_id},
+        )
+
+    db = get_db()
+    constraints = constraints_repo.list_constraints_for_ontology(
+        db,
+        ontology_id=ontology_id,
+        constraint_type=constraint_type,
+        include_unresolved=include_unresolved,
+    )
+
+    if not constraints:
+        return {
+            "ontology_id": ontology_id,
+            "constraints": [],
+            "total": 0,
+        }
+
+    # One AQL per unique class id / property id to attach labels.
+    # Volumes are typically small (constraints per ontology rarely
+    # exceed a few hundred); per-id round-trip would be wasteful so
+    # we DOCUMENT() in a single query keyed by the ids in this batch.
+    class_ids = sorted({c["on_class"] for c in constraints if c.get("on_class")})
+    property_ids = sorted({c["property_id"] for c in constraints if c.get("property_id")})
+
+    class_labels: dict[str, str] = {}
+    if class_ids:
+        rows = list(
+            run_aql(
+                db,
+                "FOR id IN @ids LET d = DOCUMENT(id) "
+                "FILTER d != null AND d.expired == @never "
+                "RETURN {id: d._id, label: d.label}",
+                bind_vars={"ids": class_ids, "never": NEVER_EXPIRES},
+            )
+        )
+        for row in rows:
+            class_labels[row["id"]] = row.get("label") or ""
+
+    property_labels: dict[str, str] = {}
+    if property_ids:
+        rows = list(
+            run_aql(
+                db,
+                "FOR id IN @ids LET d = DOCUMENT(id) "
+                "FILTER d != null AND d.expired == @never "
+                "RETURN {id: d._id, label: d.label}",
+                bind_vars={"ids": property_ids, "never": NEVER_EXPIRES},
+            )
+        )
+        for row in rows:
+            property_labels[row["id"]] = row.get("label") or ""
+
+    enriched: list[dict[str, Any]] = []
+    for c in constraints:
+        enriched.append(
+            {
+                **c,
+                "class_label": class_labels.get(c.get("on_class", ""), ""),
+                "property_label": property_labels.get(c.get("property_id") or "", ""),
+            }
+        )
+
+    # Stable sort: by class label, then property URI, then restriction
+    # type. The two AQL passes above are unordered.
+    enriched.sort(
+        key=lambda c: (
+            c.get("class_label", ""),
+            c.get("property_uri", ""),
+            c.get("restriction_type", ""),
+        )
+    )
+
+    return {
+        "ontology_id": ontology_id,
+        "constraints": enriched,
+        "total": len(enriched),
+    }
 
 
 # ---------------------------------------------------------------------------
