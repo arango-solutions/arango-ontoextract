@@ -157,6 +157,19 @@ def import_owl_to_graph(
         ontology_id=ontology_id,
     )
 
+    # Stream 3 PR 3 -- same trick for SHACL shapes. Imported lazily so
+    # the module isn't loaded when callers don't use ArangoRDF at all
+    # (keeps startup time clean) and so this file doesn't take on the
+    # SHACL vocab as a hard dependency. Lives in
+    # ``app/services/shacl_import.py``.
+    from app.services.shacl_import import import_shacl_shapes
+
+    shacl_constraints_imported = import_shacl_shapes(
+        db,
+        rdf_graph=rdf_graph,
+        ontology_id=ontology_id,
+    )
+
     _ensure_named_graph(db, graph_name=graph_name)
 
     stats = {
@@ -165,6 +178,7 @@ def import_owl_to_graph(
         "triple_count": triple_count,
         "imported": True,
         "restrictions_imported": restrictions_imported,
+        "shacl_constraints_imported": shacl_constraints_imported,
     }
 
     log.info("OWL import completed", extra=stats)

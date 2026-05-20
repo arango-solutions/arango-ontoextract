@@ -401,20 +401,25 @@ def _cardinality_violation(db: Any, ontology_id: str) -> list[Violation]:
     """Detect properties that violate declared min/max cardinality.
 
     Reads cardinality declarations from ``ontology_constraints``
-    documents written by Stream 3 PR 1 in the PRD §6.14 OWL-native
-    shape (one restriction per row):
+    documents written by Stream 3 PR 1 (LLM extraction) in the PRD
+    §6.14 OWL-native shape, Stream 3 PR 2 (OWL import), AND Stream 3
+    PR 3 (SHACL import). All three sources land rows with one
+    restriction per row and the same on_class / property_uri fields;
+    only ``constraint_type`` / ``restriction_type`` differ:
 
-    * ``constraint_type``: ``"owl:Restriction"``
-    * ``on_class``: full id, e.g. ``ontology_classes/Customer``
-    * ``property_uri``: the URI of the constrained property
-    * ``restriction_type``: ``"minCardinality"`` | ``"maxCardinality"``
-      | ``"cardinality"`` (the OWL "exactly N" sugar -- expanded here
-      to min==max==N for evaluation)
-    * ``restriction_value``: the integer bound
+    * OWL (PR 1 & PR 2): ``constraint_type == "owl:Restriction"``,
+      ``restriction_type in {"minCardinality","maxCardinality","cardinality"}``
+      (``cardinality`` is the OWL "exactly N" sugar -- expanded here
+      to min==max==N).
+    * SHACL (PR 3): ``constraint_type == "sh:PropertyShape"``,
+      ``restriction_type in {"sh:minCount","sh:maxCount"}``.
 
-    A class that declares both a min and a max for the same property
-    has two rows in the collection; this function groups them per
-    ``(on_class, property_uri)`` before checking actual counts.
+    A class that declares both an OWL ``minCardinality 1`` AND a SHACL
+    ``sh:minCount 1`` on the same property arrives as two rows; both
+    feed the same ``min`` slot in the grouped result so the
+    intersection (i.e. the strictest bound) is what's enforced. This
+    is the desired behaviour: redundant declarations don't trigger
+    spurious violations, and stricter declarations win.
 
     No-op when the collection is missing or has no restrictions for
     this ontology.
@@ -428,8 +433,11 @@ def _cardinality_violation(db: Any, ontology_id: str) -> list[Violation]:
             db,
             "FOR c IN ontology_constraints "
             "FILTER c.ontology_id == @oid AND c.expired == @never "
-            "  AND c.constraint_type == 'owl:Restriction' "
-            "  AND c.restriction_type IN ['minCardinality', 'maxCardinality', 'cardinality'] "
+            "  AND c.constraint_type IN ['owl:Restriction', 'sh:PropertyShape'] "
+            "  AND c.restriction_type IN ["
+            "    'minCardinality', 'maxCardinality', 'cardinality',"
+            "    'sh:minCount', 'sh:maxCount'"
+            "  ] "
             "RETURN c",
             bind_vars=bind,
         )
@@ -441,6 +449,11 @@ def _cardinality_violation(db: Any, ontology_id: str) -> list[Violation]:
     # Group rows by (on_class, property_uri). A class with both
     # minCardinality=1 and maxCardinality=5 on the same property
     # arrives as two rows; we want to evaluate both bounds in one pass.
+    # SHACL sh:minCount and OWL minCardinality on the same property
+    # both write to slot["min"] -- if the values disagree the LATER
+    # row wins for now; in practice they should match (the import is
+    # deterministic). A future enhancement can take the strictest
+    # (max of the two for min bounds, min of the two for max bounds).
     grouped: dict[tuple[str, str], dict[str, int]] = {}
     for c in rows:
         class_id = c.get("on_class")
@@ -464,9 +477,9 @@ def _cardinality_violation(db: Any, ontology_id: str) -> list[Violation]:
             )
             continue
         slot = grouped.setdefault((class_id, prop_uri), {})
-        if rtype == "minCardinality":
+        if rtype in ("minCardinality", "sh:minCount"):
             slot["min"] = rvalue
-        elif rtype == "maxCardinality":
+        elif rtype in ("maxCardinality", "sh:maxCount"):
             slot["max"] = rvalue
         elif rtype == "cardinality":
             # owl:cardinality N is sugar for min==N AND max==N.

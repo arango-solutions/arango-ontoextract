@@ -458,6 +458,121 @@ class TestCardinalityViolation:
         )
         assert engine._cardinality_violation(db, "OID") == []
 
+    def test_shacl_min_count_emits_violation_below_min(self, monkeypatch):
+        """Stream 3 PR 3: a sh:PropertyShape row with sh:minCount must
+        fire the cardinality rule exactly like an owl:minCardinality row.
+        The constraint_type IN-clause and restriction_type IN-clause
+        in the rule's AQL were widened to cover SHACL."""
+        db = _db_with_collections("ontology_constraints", "rdfs_domain")
+        _patch_run_aql(
+            monkeypatch,
+            {
+                "FOR c IN ontology_constraints": [
+                    {
+                        "constraint_type": "sh:PropertyShape",
+                        "on_class": "ontology_classes/Customer",
+                        "property_uri": "http://example.org/onto#email",
+                        "restriction_type": "sh:minCount",
+                        "restriction_value": 1,
+                    }
+                ],
+                "FOR e IN rdfs_domain": [0],
+            },
+        )
+        violations = engine._cardinality_violation(db, "OID")
+        assert len(violations) == 1
+        assert "below declared min cardinality" in violations[0].description
+
+    def test_shacl_max_count_emits_violation_above_max(self, monkeypatch):
+        db = _db_with_collections("ontology_constraints", "rdfs_domain")
+        _patch_run_aql(
+            monkeypatch,
+            {
+                "FOR c IN ontology_constraints": [
+                    {
+                        "constraint_type": "sh:PropertyShape",
+                        "on_class": "ontology_classes/Customer",
+                        "property_uri": "http://example.org/onto#email",
+                        "restriction_type": "sh:maxCount",
+                        "restriction_value": 1,
+                    }
+                ],
+                "FOR e IN rdfs_domain": [3],
+            },
+        )
+        violations = engine._cardinality_violation(db, "OID")
+        assert len(violations) == 1
+        assert "above declared max cardinality" in violations[0].description
+
+    def test_owl_and_shacl_on_same_property_group_into_one_bound(self, monkeypatch):
+        """Stream 3 PR 3 invariant: when OWL minCardinality 1 AND SHACL
+        sh:minCount 1 both target the same (class, property), they
+        collapse into ONE bound check -- no duplicate violation. This
+        is the rule engine grouping (slot["min"]) doing its job; if
+        either source rewrites the slot to a different value the LAST
+        row wins (test asserts only the single-violation count, not
+        the winning value, because the import shape is deterministic
+        in practice)."""
+        db = _db_with_collections("ontology_constraints", "rdfs_domain")
+        _patch_run_aql(
+            monkeypatch,
+            {
+                "FOR c IN ontology_constraints": [
+                    {
+                        "constraint_type": "owl:Restriction",
+                        "on_class": "ontology_classes/Customer",
+                        "property_uri": "http://example.org/onto#email",
+                        "restriction_type": "minCardinality",
+                        "restriction_value": 1,
+                    },
+                    {
+                        "constraint_type": "sh:PropertyShape",
+                        "on_class": "ontology_classes/Customer",
+                        "property_uri": "http://example.org/onto#email",
+                        "restriction_type": "sh:minCount",
+                        "restriction_value": 1,
+                    },
+                ],
+                "FOR e IN rdfs_domain": [0],
+            },
+        )
+        violations = engine._cardinality_violation(db, "OID")
+        # ONE violation, not two -- redundant OWL+SHACL declarations
+        # must not produce duplicate findings.
+        assert len(violations) == 1
+
+    def test_owl_min_and_shacl_max_combine_into_one_bound_check(self, monkeypatch):
+        """Cross-vocabulary combination: OWL provides the lower bound,
+        SHACL provides the upper. With 3 actual occurrences and
+        max=1, the SHACL upper bound fires; OWL min=1 is satisfied
+        and is silent."""
+        db = _db_with_collections("ontology_constraints", "rdfs_domain")
+        _patch_run_aql(
+            monkeypatch,
+            {
+                "FOR c IN ontology_constraints": [
+                    {
+                        "constraint_type": "owl:Restriction",
+                        "on_class": "ontology_classes/Customer",
+                        "property_uri": "http://example.org/onto#email",
+                        "restriction_type": "minCardinality",
+                        "restriction_value": 1,
+                    },
+                    {
+                        "constraint_type": "sh:PropertyShape",
+                        "on_class": "ontology_classes/Customer",
+                        "property_uri": "http://example.org/onto#email",
+                        "restriction_type": "sh:maxCount",
+                        "restriction_value": 1,
+                    },
+                ],
+                "FOR e IN rdfs_domain": [3],
+            },
+        )
+        violations = engine._cardinality_violation(db, "OID")
+        assert len(violations) == 1
+        assert "above declared max cardinality" in violations[0].description
+
 
 # ---------------------------------------------------------------------------
 # evaluate_rules orchestrator
