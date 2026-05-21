@@ -37,6 +37,41 @@ beforeEach(() => {
 });
 
 /**
+ * Helper: route ``api.get`` calls by URL so the new constraints fetch
+ * (Stream 3 PR 4, fired when entityType="class") doesn't pollute
+ * call counts or steal the mock for the single-item entity fetch.
+ *
+ * Pass ``entityResponse`` to handle ``/classes/...|/edges/...|/properties/...``
+ * single-item URLs; the constraints URL is always stubbed to an empty
+ * list so tests that don't care about constraints just see the entity.
+ */
+function mockApiByUrl(opts: {
+  entityResponse: unknown | Error;
+  constraints?: unknown;
+}) {
+  const constraintsResponse = opts.constraints ?? {
+    ontology_id: "ont1",
+    constraints: [],
+    total: 0,
+  };
+  apiGet.mockImplementation((url: string) => {
+    if (url.includes("/library/") && url.includes("/constraints")) {
+      return Promise.resolve(constraintsResponse);
+    }
+    return opts.entityResponse instanceof Error
+      ? Promise.reject(opts.entityResponse)
+      : Promise.resolve(opts.entityResponse);
+  });
+}
+
+/** Calls to the single-item entity endpoint (not the constraints endpoint). */
+function entityCalls(): string[] {
+  return apiGet.mock.calls
+    .map((c) => c[0] as string)
+    .filter((u) => !(u.includes("/library/") && u.includes("/constraints")));
+}
+
+/**
  * The whole point of these tests is to pin the contract that
  * FloatingDetailPanel hits the **single-item** endpoints
  * (``/edges/{key}``, ``/properties/{key}``) and never the list
@@ -48,12 +83,14 @@ beforeEach(() => {
 
 describe("FloatingDetailPanel", () => {
   it("class entity hits GET /classes/{key} (one row, not a list)", async () => {
-    apiGet.mockResolvedValue({
-      _key: "Foo",
-      label: "Foo",
-      uri: "ex:Foo",
-      attributes: [],
-      relationships: [],
+    mockApiByUrl({
+      entityResponse: {
+        _key: "Foo",
+        label: "Foo",
+        uri: "ex:Foo",
+        attributes: [],
+        relationships: [],
+      },
     });
 
     render(
@@ -162,7 +199,7 @@ describe("FloatingDetailPanel", () => {
   });
 
   it("does not fire the request again when only re-rendered with same props", async () => {
-    apiGet.mockResolvedValue({ _key: "Foo", label: "Foo" });
+    mockApiByUrl({ entityResponse: { _key: "Foo", label: "Foo" } });
     const { rerender } = render(
       <FloatingDetailPanel
         entityType="class"
@@ -171,7 +208,10 @@ describe("FloatingDetailPanel", () => {
         onClose={() => {}}
       />,
     );
-    await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1));
+    // Count entity calls only -- the class case also fires a
+    // constraints fetch (PR 4), and that's wired through its own
+    // useEffect with the same dep array so it also dedupes.
+    await waitFor(() => expect(entityCalls()).toHaveLength(1));
     rerender(
       <FloatingDetailPanel
         entityType="class"
@@ -182,11 +222,11 @@ describe("FloatingDetailPanel", () => {
     );
     // Effect deps are [entityType, entityKey, ontologyId] -- same values
     // mean no refetch.
-    expect(apiGet).toHaveBeenCalledTimes(1);
+    expect(entityCalls()).toHaveLength(1);
   });
 
   it("refetches when entityKey changes (panel reused for a different selection)", async () => {
-    apiGet.mockResolvedValue({ _key: "Foo", label: "Foo" });
+    mockApiByUrl({ entityResponse: { _key: "Foo", label: "Foo" } });
     const { rerender } = render(
       <FloatingDetailPanel
         entityType="class"
@@ -195,9 +235,9 @@ describe("FloatingDetailPanel", () => {
         onClose={() => {}}
       />,
     );
-    await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(entityCalls()).toHaveLength(1));
 
-    apiGet.mockResolvedValue({ _key: "Bar", label: "Bar" });
+    mockApiByUrl({ entityResponse: { _key: "Bar", label: "Bar" } });
     rerender(
       <FloatingDetailPanel
         entityType="class"
@@ -206,7 +246,8 @@ describe("FloatingDetailPanel", () => {
         onClose={() => {}}
       />,
     );
-    await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(2));
-    expect(apiGet).toHaveBeenLastCalledWith("/api/v1/ontology/ont1/classes/Bar");
+    await waitFor(() => expect(entityCalls()).toHaveLength(2));
+    // Pin that the latest entity request was for the new key.
+    expect(entityCalls().at(-1)).toBe("/api/v1/ontology/ont1/classes/Bar");
   });
 });

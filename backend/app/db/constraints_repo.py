@@ -52,6 +52,7 @@ def list_constraints_for_ontology(
     ontology_id: str,
     constraint_type: str | None = None,
     include_unresolved: bool = True,
+    on_class: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return all live constraint documents for ``ontology_id``.
 
@@ -66,6 +67,12 @@ def list_constraints_for_ontology(
             that didn't match any extracted property). Defaults to
             ``True`` because the UI generally wants to surface
             unresolved constraints so curators can fix the link.
+        on_class: Optional exact-match filter on the full ``on_class``
+            document id (e.g. ``"ontology_classes/Customer"``). Lets
+            the workspace ``FloatingDetailPanel`` fetch constraints
+            for one class without pulling the whole ontology's set --
+            a per-click request that would otherwise scale with the
+            entire constraint count.
 
     Returns the rows in insertion order; for stable display sorts the
     caller should sort by (``on_class``, ``property_uri``).
@@ -88,6 +95,9 @@ def list_constraints_for_ontology(
         bind["ctype"] = constraint_type
     if not include_unresolved:
         filters.append("c.property_id != null")
+    if on_class is not None:
+        filters.append("c.on_class == @on_class")
+        bind["on_class"] = on_class
 
     query = f"FOR c IN {CONSTRAINT_COLLECTION} FILTER {' AND '.join(filters)} RETURN c"
     return list(run_aql(db, query, bind_vars=bind))

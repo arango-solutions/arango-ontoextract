@@ -186,3 +186,34 @@ async def test_forwards_filter_kwargs_to_repo() -> None:
     assert kwargs["ontology_id"] == "onto_1"
     assert kwargs["constraint_type"] == "owl:Restriction"
     assert kwargs["include_unresolved"] is False
+
+
+@pytest.mark.asyncio
+async def test_forwards_class_id_query_param_to_repo() -> None:
+    """Stream 3 PR 4: the workspace FloatingDetailPanel passes
+    ``?class_id=ontology_classes/Customer`` so the repo can scope its
+    AQL to one class. The endpoint must forward it verbatim."""
+    with (
+        patch(
+            "app.api.ontology.registry_repo.get_registry_entry",
+            return_value=_registry_entry(),
+        ),
+        patch("app.api.ontology.get_db", return_value=object()),
+        patch(
+            "app.api.ontology.constraints_repo.list_constraints_for_ontology",
+            return_value=[],
+        ) as mock_repo,
+    ):
+        await list_ontology_constraints(
+            "onto_1",
+            constraint_type=None,
+            include_unresolved=True,
+            class_id="ontology_classes/Customer",
+        )
+
+    kwargs = mock_repo.call_args.kwargs
+    assert kwargs["on_class"] == "ontology_classes/Customer"
+    # Other kwargs forwarded straight through unchanged.
+    assert kwargs["ontology_id"] == "onto_1"
+    assert kwargs["constraint_type"] is None
+    assert kwargs["include_unresolved"] is True

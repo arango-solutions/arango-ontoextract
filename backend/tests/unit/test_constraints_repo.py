@@ -95,6 +95,55 @@ def test_list_constraints_can_filter_out_unresolved(mock_run_aql: MagicMock) -> 
     assert "c.property_id != null" in query
 
 
+@patch("app.db.constraints_repo.run_aql")
+def test_list_constraints_filters_by_on_class_when_provided(
+    mock_run_aql: MagicMock,
+) -> None:
+    """Stream 3 PR 4: the workspace FloatingDetailPanel fetches the
+    constraints for ONE class per click. The repo accepts an
+    ``on_class`` kwarg so this hot-path query is a single round-trip,
+    not a full ontology scan + client-side filter."""
+    db = _db_with(True)
+    mock_run_aql.return_value = iter([])
+
+    constraints_repo.list_constraints_for_ontology(
+        db,
+        ontology_id="o1",
+        on_class="ontology_classes/Customer",
+    )
+
+    args, kwargs = mock_run_aql.call_args
+    query = args[1]
+    bind = kwargs["bind_vars"]
+    assert "c.on_class == @on_class" in query
+    assert bind["on_class"] == "ontology_classes/Customer"
+
+
+@patch("app.db.constraints_repo.run_aql")
+def test_list_constraints_combines_all_filters(mock_run_aql: MagicMock) -> None:
+    """All four optional filters can be combined; each adds its own
+    FILTER clause without conflicting."""
+    db = _db_with(True)
+    mock_run_aql.return_value = iter([])
+
+    constraints_repo.list_constraints_for_ontology(
+        db,
+        ontology_id="o1",
+        constraint_type="sh:PropertyShape",
+        include_unresolved=False,
+        on_class="ontology_classes/Customer",
+    )
+
+    args, kwargs = mock_run_aql.call_args
+    query = args[1]
+    bind = kwargs["bind_vars"]
+    assert "c.constraint_type == @ctype" in query
+    assert "c.property_id != null" in query
+    assert "c.on_class == @on_class" in query
+    assert bind["ctype"] == "sh:PropertyShape"
+    assert bind["on_class"] == "ontology_classes/Customer"
+
+
 # ---------------------------------------------------------------------------
 # list_constraints_for_class
 # ---------------------------------------------------------------------------

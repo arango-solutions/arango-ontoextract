@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { api, ApiError } from "@/lib/api-client";
 import { useDraggablePanel } from "@/hooks/useDraggablePanel";
 import PanelDragGrip from "@/components/workspace/PanelDragGrip";
+import ClassConstraintsSection from "@/components/workspace/ClassConstraintsSection";
 
 interface FloatingDetailPanelProps {
   entityType: "class" | "edge" | "property";
@@ -324,6 +325,18 @@ export default function FloatingDetailPanel({
                   </div>
                 )}
               </div>
+            )}
+
+            {/* ── Constraints Section (Stream 3 PR 4) ──
+                Lazy-rendered after the entity loads so the constraint
+                fetch doesn't race the entity fetch -- and so a class
+                with no constraints adds zero DOM (component returns
+                null in that case). */}
+            {entityType === "class" && (
+              <ClassConstraintsSection
+                ontologyId={ontologyId}
+                classKey={entityKey}
+              />
             )}
           </div>
         )}

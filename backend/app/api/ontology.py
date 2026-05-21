@@ -643,14 +643,23 @@ async def list_ontology_constraints(
             "true so curators can fix unresolved property URIs in the UI."
         ),
     ),
+    class_id: str | None = Query(
+        default=None,
+        description=(
+            "Optional exact-match filter on the full on_class document id "
+            "(e.g. 'ontology_classes/Customer'). Used by the workspace "
+            "FloatingDetailPanel to fetch constraints for one class per "
+            "click without pulling the whole ontology's constraints."
+        ),
+    ),
 ) -> dict[str, Any]:
-    """List live OWL restrictions and SHACL shapes for an ontology (Stream 3 PR 1).
+    """List live OWL restrictions and SHACL shapes for an ontology (Stream 3 PR 1-PR 3).
 
     Reads from the ``ontology_constraints`` collection populated by
-    extraction materialization (PR 1), OWL import (PR 2 -- future), and
-    SHACL import (PR 3 -- future). Each row is one restriction in the
-    OWL-native shape (a class with both min and max cardinality returns
-    two rows; group on the client side if you want a single bound).
+    extraction materialization (PR 1), OWL import (PR 2), and SHACL
+    import (PR 3). Each row is one restriction in the OWL-native shape
+    (a class with both min and max cardinality returns two rows; group
+    on the client side if you want a single bound).
 
     Joins ``on_class`` to ``ontology_classes`` for ``class_label`` so the
     workspace UI can render constraints without a second round-trip.
@@ -670,6 +679,7 @@ async def list_ontology_constraints(
         ontology_id=ontology_id,
         constraint_type=constraint_type,
         include_unresolved=include_unresolved,
+        on_class=class_id,
     )
 
     if not constraints:
