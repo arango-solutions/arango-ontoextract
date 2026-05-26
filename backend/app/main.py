@@ -34,6 +34,7 @@ from app.db.client import close_db
 from app.frontend_static import resolve_frontend_out_dir
 from app.middleware.strip_service_prefix import StripServicePrefixMiddleware
 from app.minimal_login import render_minimal_login_html
+from app.observability import setup_tracing
 from app.static_export_app import NextStaticExportApp
 
 logging.basicConfig(
@@ -73,6 +74,14 @@ if settings.service_url_path_prefix:
     _fastapi_kw["root_path"] = settings.service_url_path_prefix
 
 app = FastAPI(**_fastapi_kw)
+
+# Stream 7 PR 2 -- E.1: install OpenTelemetry tracing BEFORE
+# middleware/routes so the FastAPI instrumentor wraps every request
+# handler. Safe to call when ``settings.otel_enabled`` is False
+# (the default): the no-op sampler drops every span without
+# allocating, so disabled tracing has the same effective cost as
+# not calling this at all.
+setup_tracing(app)
 
 app.add_middleware(
     CORSMiddleware,

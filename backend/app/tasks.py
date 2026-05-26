@@ -15,6 +15,7 @@ from typing import Any, cast
 from app.db import documents_repo
 from app.db.client import get_db
 from app.models.documents import DocumentStatus
+from app.observability import get_tracer
 from app.services import embedding as embedding_svc
 from app.services.ingestion import (
     Chunk,
@@ -28,6 +29,7 @@ from app.services.ingestion import (
 )
 
 log = logging.getLogger(__name__)
+tracer = get_tracer(__name__)
 
 _MIME_PARSERS: dict[str, Callable[[bytes], ParsedDocument]] = {
     "application/pdf": lambda file_bytes: parse_pdf(file_bytes),
@@ -48,56 +50,97 @@ async def process_document(doc_id: str, file_bytes: bytes, mime_type: str) -> No
 
     Updates ``documents.status`` at each stage.  On failure the document is
     marked ``failed`` with the error message stored.
+
+    OpenTelemetry: wrapped in a top-level ``ingest.document`` span
+    (Stream 7 PR 2 -- E.1) with sub-spans for each pipeline stage
+    (parse / chunk / embed / store). The span carries
+    ``doc.id``/``doc.mime``/``doc.byte_size`` attributes so an
+    operator viewing the trace in Jaeger / Tempo can immediately
+    see which document and which stage a slow trace belongs to.
+    Spans are no-ops when ``settings.otel_enabled`` is False, so
+    this costs nothing in the default deployment.
     """
-    try:
-        # --- parsing ---
-        log.info("[ingest:%s] stage=parsing mime=%s bytes=%d", doc_id, mime_type, len(file_bytes))
-        documents_repo.update_document_status(doc_id, DocumentStatus.PARSING)
-        parsed = await _parse(file_bytes, mime_type)
-        log.info("[ingest:%s] parsing done, sections=%d", doc_id, len(parsed.sections))
+    with tracer.start_as_current_span(
+        "ingest.document",
+        attributes={
+            "doc.id": doc_id,
+            "doc.mime": mime_type,
+            "doc.byte_size": len(file_bytes),
+        },
+    ) as ingest_span:
+        try:
+            with tracer.start_as_current_span("ingest.parse") as parse_span:
+                log.info(
+                    "[ingest:%s] stage=parsing mime=%s bytes=%d",
+                    doc_id,
+                    mime_type,
+                    len(file_bytes),
+                )
+                documents_repo.update_document_status(doc_id, DocumentStatus.PARSING)
+                parsed = await _parse(file_bytes, mime_type)
+                parse_span.set_attribute("sections", len(parsed.sections))
+                log.info("[ingest:%s] parsing done, sections=%d", doc_id, len(parsed.sections))
 
-        # --- chunking ---
-        log.info("[ingest:%s] stage=chunking", doc_id)
-        documents_repo.update_document_status(doc_id, DocumentStatus.CHUNKING)
-        chunks = chunk_document(parsed)
-        if not chunks:
-            log.warning("[ingest:%s] no chunks produced — marking ready with warning", doc_id)
+            with tracer.start_as_current_span("ingest.chunk") as chunk_span:
+                log.info("[ingest:%s] stage=chunking", doc_id)
+                documents_repo.update_document_status(doc_id, DocumentStatus.CHUNKING)
+                chunks = chunk_document(parsed)
+                chunk_span.set_attribute("num_chunks", len(chunks))
+                if not chunks:
+                    log.warning(
+                        "[ingest:%s] no chunks produced — marking ready with warning",
+                        doc_id,
+                    )
+                    documents_repo.update_document_status(
+                        doc_id, DocumentStatus.READY, error_message="No content extracted"
+                    )
+                    ingest_span.set_attribute("result", "empty")
+                    return
+                log.info("[ingest:%s] chunking done, num_chunks=%d", doc_id, len(chunks))
+
+            with tracer.start_as_current_span("ingest.embed") as embed_span:
+                log.info("[ingest:%s] stage=embedding, num_texts=%d", doc_id, len(chunks))
+                documents_repo.update_document_status(doc_id, DocumentStatus.EMBEDDING)
+                texts = [c.text for c in chunks]
+                embeddings = await embedding_svc.embed_texts(texts)
+                embed_span.set_attribute("num_embeddings", len(embeddings))
+                log.info(
+                    "[ingest:%s] embedding done, num_embeddings=%d",
+                    doc_id,
+                    len(embeddings),
+                )
+
+            with tracer.start_as_current_span("ingest.store") as store_span:
+                log.info("[ingest:%s] stage=storing chunks", doc_id)
+                chunk_dicts = _build_chunk_dicts(doc_id, chunks, embeddings)
+                stored = documents_repo.create_chunks(chunk_dicts)
+                store_span.set_attribute("chunks.requested", len(chunk_dicts))
+                store_span.set_attribute("chunks.stored", len(stored))
+                if not stored:
+                    raise RuntimeError(
+                        f"All {len(chunk_dicts)} chunk inserts failed — check ArangoDB logs"
+                    )
+                documents_repo.update_document_chunk_count(doc_id, len(stored))
+                log.info(
+                    "[ingest:%s] chunks stored, requested=%d stored=%d",
+                    doc_id,
+                    len(chunk_dicts),
+                    len(stored),
+                )
+
+            _ensure_vector_index()
+
+            documents_repo.update_document_status(doc_id, DocumentStatus.READY)
+            ingest_span.set_attribute("result", "ready")
+            log.info("[ingest:%s] COMPLETE — document ready", doc_id)
+
+        except Exception as exc:
+            ingest_span.set_attribute("result", "failed")
+            ingest_span.record_exception(exc)
+            log.exception("[ingest:%s] FAILED at current stage", doc_id)
             documents_repo.update_document_status(
-                doc_id, DocumentStatus.READY, error_message="No content extracted"
+                doc_id, DocumentStatus.FAILED, error_message=str(exc)
             )
-            return
-        log.info("[ingest:%s] chunking done, num_chunks=%d", doc_id, len(chunks))
-
-        # --- embedding ---
-        log.info("[ingest:%s] stage=embedding, num_texts=%d", doc_id, len(chunks))
-        documents_repo.update_document_status(doc_id, DocumentStatus.EMBEDDING)
-        texts = [c.text for c in chunks]
-        embeddings = await embedding_svc.embed_texts(texts)
-        log.info("[ingest:%s] embedding done, num_embeddings=%d", doc_id, len(embeddings))
-
-        # --- store chunks ---
-        log.info("[ingest:%s] stage=storing chunks", doc_id)
-        chunk_dicts = _build_chunk_dicts(doc_id, chunks, embeddings)
-        stored = documents_repo.create_chunks(chunk_dicts)
-        if not stored:
-            raise RuntimeError(f"All {len(chunk_dicts)} chunk inserts failed — check ArangoDB logs")
-        documents_repo.update_document_chunk_count(doc_id, len(stored))
-        log.info(
-            "[ingest:%s] chunks stored, requested=%d stored=%d",
-            doc_id,
-            len(chunk_dicts),
-            len(stored),
-        )
-
-        # --- vector index ---
-        _ensure_vector_index()
-
-        documents_repo.update_document_status(doc_id, DocumentStatus.READY)
-        log.info("[ingest:%s] COMPLETE — document ready", doc_id)
-
-    except Exception as exc:
-        log.exception("[ingest:%s] FAILED at current stage", doc_id)
-        documents_repo.update_document_status(doc_id, DocumentStatus.FAILED, error_message=str(exc))
 
 
 _VECTOR_INDEX_NAME = "idx_chunks_embedding_vector"

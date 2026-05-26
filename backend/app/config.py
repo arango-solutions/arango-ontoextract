@@ -145,6 +145,40 @@ class Settings(BaseSettings):
     belief_revision_circuit_max_per_minute: int = 50
     belief_revision_circuit_window_seconds: float = 60.0
 
+    # -- Observability (Stream 7 PR 2 -- E.1, OpenTelemetry) ---------------
+    #: Master kill-switch for OpenTelemetry tracing. Default OFF so a
+    #: fresh ``pip install`` deployment has zero runtime cost and zero
+    #: outbound traffic from spans. Flip to ``true`` and point
+    #: ``otel_exporter_otlp_endpoint`` at a collector (Jaeger, Tempo,
+    #: Honeycomb's OTLP receiver, etc) to start emitting spans.
+    #:
+    #: When OFF the OpenTelemetry no-op TracerProvider is used, which
+    #: means ``trace.get_tracer().start_as_current_span(...)`` calls
+    #: scattered through the codebase are effectively free -- no
+    #: context propagation, no exporter, no buffering.
+    otel_enabled: bool = False
+
+    #: ``service.name`` resource attribute on every emitted span.
+    #: Distinguishes this backend in a multi-service Jaeger / Tempo
+    #: view. Defaults to a stable identifier; deployments can override
+    #: when they run multiple instances side-by-side (eg
+    #: ``arango-ontoextract-staging`` vs ``-prod``).
+    otel_service_name: str = "arango-ontoextract"
+
+    #: OTLP/gRPC endpoint to ship spans to. Empty string means
+    #: "console exporter" (logs span JSON to stdout) when
+    #: ``otel_enabled=True`` -- handy for local dev / debugging
+    #: instrumentation without standing up a collector. Set to eg
+    #: ``http://otel-collector:4317`` in a real deployment.
+    otel_exporter_otlp_endpoint: str = ""
+
+    #: Sample rate for the parent-based traceid-ratio sampler.
+    #: 1.0 = trace every request (good for dev / low traffic);
+    #: drop to eg 0.1 in production to keep collector + storage
+    #: cost bounded. Spans inherit the parent's sampling decision,
+    #: so a root request that is sampled emits a complete trace.
+    otel_trace_sample_rate: float = 1.0
+
     # -- Temporal Retention (Stream 7 PR 1 -- E.3) -------------------------
     #: Default retention window for expired temporal versions. Every time a
     #: vertex or edge is superseded (``expired`` set to a real timestamp),

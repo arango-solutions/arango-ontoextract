@@ -25,10 +25,12 @@ from app.db.utils import doc_get, insert_temporal_edge_if_absent, run_aql
 from app.extraction.judges.qualitative_eval_node import run_qualitative_evaluation
 from app.extraction.pipeline import run_pipeline
 from app.models.common import PaginatedResponse
+from app.observability import get_tracer
 from app.services.confidence import compute_class_confidence
 from app.services.edge_repair import resolve_range_class
 
 log = logging.getLogger(__name__)
+tracer = get_tracer(__name__)
 _BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
 
 _MODEL_TOKEN_RATES_PER_MILLION: dict[str, dict[str, float]] = {
@@ -257,17 +259,33 @@ async def execute_run(
 
     final_state: dict[str, Any] = {}
     try:
-        final_state = cast(
-            "dict[str, Any]",
-            await run_pipeline(
-                run_id=run_id,
-                document_id=primary_doc_id,
-                chunks=chunks,
-                event_callback=event_callback,
-                domain_context=domain_context,
-                domain_ontology_ids=domain_ontology_ids or [],
-            ),
-        )
+        # Stream 7 PR 2 -- E.1: trace the pipeline execution. Wrapping
+        # ``run_pipeline`` (not the whole ``execute_run`` body) keeps
+        # the diff small and the trace focused on the actual LangGraph
+        # work; FastAPI's request span already covers the surrounding
+        # API call, and the background-task path propagates context
+        # via contextvars. No-op when otel_enabled=False.
+        with tracer.start_as_current_span(
+            "extraction.run",
+            attributes={
+                "run.id": run_id,
+                "run.primary_doc_id": primary_doc_id,
+                "run.num_documents": len(doc_ids),
+                "run.num_chunks": len(chunks),
+            },
+        ) as run_span:
+            final_state = cast(
+                "dict[str, Any]",
+                await run_pipeline(
+                    run_id=run_id,
+                    document_id=primary_doc_id,
+                    chunks=chunks,
+                    event_callback=event_callback,
+                    domain_context=domain_context,
+                    domain_ontology_ids=domain_ontology_ids or [],
+                ),
+            )
+            run_span.set_attribute("run.errors", len(final_state.get("errors", []) or []))
 
         completed_at = time.time()
         status = "completed"
@@ -345,16 +363,29 @@ async def execute_run(
 
             if ontology_id:
                 col.update({"_key": run_id, "ontology_id": ontology_id})
-                for did in doc_ids:
-                    _materialize_to_graph(
-                        db,
-                        run_id=run_id,
-                        document_id=did,
-                        ontology_id=ontology_id,
-                        result=final_state["consistency_result"],
-                        faithfulness_scores=final_state.get("faithfulness_scores"),
-                        validity_scores=final_state.get("validity_scores"),
-                    )
+                # Stream 7 PR 2 -- E.1: trace the materialization step
+                # (RDF/PGT writes to ArangoDB). One span covers all
+                # documents in the run; per-document tagging via
+                # ``materialize.doc_ids`` keeps cardinality bounded.
+                # No-op when otel_enabled=False.
+                with tracer.start_as_current_span(
+                    "extraction.materialize",
+                    attributes={
+                        "materialize.run_id": run_id,
+                        "materialize.ontology_id": ontology_id,
+                        "materialize.num_documents": len(doc_ids),
+                    },
+                ):
+                    for did in doc_ids:
+                        _materialize_to_graph(
+                            db,
+                            run_id=run_id,
+                            document_id=did,
+                            ontology_id=ontology_id,
+                            result=final_state["consistency_result"],
+                            faithfulness_scores=final_state.get("faithfulness_scores"),
+                            validity_scores=final_state.get("validity_scores"),
+                        )
                 _create_produced_by_edge(db, ontology_id=ontology_id, run_id=run_id)
 
                 # H.8 -- record `owl:imports` edges from this new
@@ -381,17 +412,26 @@ async def execute_run(
                             },
                         )
 
-                try:
-                    from app.services.ontology_graphs import ensure_ontology_graph
+                # Stream 7 PR 2 -- E.1: trace the per-ontology graph
+                # creation. Last step of the extraction-write pipeline;
+                # closing this span signals "extraction is fully landed".
+                with tracer.start_as_current_span(
+                    "ontology.graph.ensure",
+                    attributes={"ontology_id": ontology_id},
+                ) as graph_span:
+                    try:
+                        from app.services.ontology_graphs import ensure_ontology_graph
 
-                    graph_name = ensure_ontology_graph(ontology_id, db=db)
-                    log.info("ensured per-ontology graph %s", graph_name)
-                except Exception:
-                    graph_name = None
-                    log.warning(
-                        "per-ontology graph creation failed",
-                        exc_info=True,
-                    )
+                        graph_name = ensure_ontology_graph(ontology_id, db=db)
+                        graph_span.set_attribute("graph_name", graph_name)
+                        log.info("ensured per-ontology graph %s", graph_name)
+                    except Exception as exc:
+                        graph_name = None
+                        graph_span.record_exception(exc)
+                        log.warning(
+                            "per-ontology graph creation failed",
+                            exc_info=True,
+                        )
 
                 # Stream 7 PR 1 -- E.4: auto-install the ArangoDB Visualizer
                 # assets for the new per-ontology graph so users get a
