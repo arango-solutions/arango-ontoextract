@@ -19,12 +19,17 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from rdflib import Namespace
 
 from app.services.schema_extraction import (
     ExtractionStatus,
     SchemaExtractionConfig,
+    _collect_schema_validation_constraints,
+    _collect_unique_index_fields,
     _direct_extract_schema,
     _infer_xsd_type,
+    _jsonschema_type_to_xsd,
+    _read_collection_validation_and_indexes,
     _runs,
     _sample_collection_fields,
     _stamp_per_class_provenance,
@@ -33,6 +38,8 @@ from app.services.schema_extraction import (
     get_extraction_status,
     list_named_graphs,
 )
+
+SH = Namespace("http://www.w3.org/ns/shacl#")
 
 
 @pytest.fixture(autouse=True)
@@ -770,3 +777,507 @@ class TestGetExtractionStatus:
         assert status["status"] == "completed"
         assert "import_stats" in status
         assert status["target_db"] == "test_db"
+
+
+# ===========================================================================
+# Stream 5 PR 3 S.9 -- ArangoDB constraints -> SHACL
+# ===========================================================================
+
+
+class TestJsonschemaTypeToXsd:
+    """The JSON Schema -> XSD mapper is the single chokepoint where
+    every ArangoDB schema validation type lands in the ontology. Pin
+    every branch -- silent fallthrough to ``None`` would drop the
+    datatype constraint entirely from the SHACL emission and the
+    curator would never know."""
+
+    def test_string_maps_to_xsd_string(self):
+        assert _jsonschema_type_to_xsd({"type": "string"}) == (
+            "http://www.w3.org/2001/XMLSchema#string"
+        )
+
+    def test_integer_maps_to_xsd_integer(self):
+        assert _jsonschema_type_to_xsd({"type": "integer"}) == (
+            "http://www.w3.org/2001/XMLSchema#integer"
+        )
+
+    def test_number_maps_to_xsd_decimal(self):
+        # ``number`` in JSON Schema is any numeric value (integer or
+        # decimal). ``xsd:decimal`` is the safe superset.
+        assert _jsonschema_type_to_xsd({"type": "number"}) == (
+            "http://www.w3.org/2001/XMLSchema#decimal"
+        )
+
+    def test_boolean_maps_to_xsd_boolean(self):
+        assert _jsonschema_type_to_xsd({"type": "boolean"}) == (
+            "http://www.w3.org/2001/XMLSchema#boolean"
+        )
+
+    def test_format_date_overrides_type_string(self):
+        # CRITICAL: ``format`` must win over ``type``. A curator who
+        # wrote ``{type: "string", format: "date"}`` declared the more
+        # specific contract; emitting xsd:string would erase intent.
+        assert (
+            _jsonschema_type_to_xsd({"type": "string", "format": "date"})
+            == "http://www.w3.org/2001/XMLSchema#date"
+        )
+
+    def test_format_date_time_overrides_type_string(self):
+        assert (
+            _jsonschema_type_to_xsd({"type": "string", "format": "date-time"})
+            == "http://www.w3.org/2001/XMLSchema#dateTime"
+        )
+
+    def test_format_uri_overrides_type_string(self):
+        assert (
+            _jsonschema_type_to_xsd({"type": "string", "format": "uri"})
+            == "http://www.w3.org/2001/XMLSchema#anyURI"
+        )
+
+    def test_unrecognised_format_falls_back_to_type(self):
+        # E.g. ``format: "email"`` (a standard JSON Schema format we
+        # don't map). The fallback to ``xsd:string`` keeps the
+        # constraint present rather than silently dropping it.
+        assert (
+            _jsonschema_type_to_xsd({"type": "string", "format": "email"})
+            == "http://www.w3.org/2001/XMLSchema#string"
+        )
+
+    def test_union_type_picks_first_non_null(self):
+        # ``type: [string, null]`` is the JSON Schema idiom for an
+        # optional string. We pick ``string`` so the SHACL datatype
+        # is faithful; nullability is a separate constraint (which is
+        # the absence of ``required`` -- already handled).
+        assert _jsonschema_type_to_xsd({"type": ["null", "integer"]}) == (
+            "http://www.w3.org/2001/XMLSchema#integer"
+        )
+
+    def test_unsupported_type_returns_none(self):
+        # Arrays and nested objects are intentionally out of scope for
+        # v1 (we don't model them as datatype properties); the helper
+        # must signal that with None so the caller can skip them.
+        assert _jsonschema_type_to_xsd({"type": "array"}) is None
+        assert _jsonschema_type_to_xsd({"type": "object"}) is None
+
+    def test_typeless_spec_returns_none(self):
+        assert _jsonschema_type_to_xsd({}) is None
+
+    def test_non_dict_input_returns_none(self):
+        # Defensive: a future caller could pass ``None`` or a list.
+        # The helper must not crash on that path because schema rules
+        # in the wild can carry surprises (eg ``properties: null`` from
+        # a buggy migration).
+        assert _jsonschema_type_to_xsd(None) is None  # type: ignore[arg-type]
+        assert _jsonschema_type_to_xsd([]) is None  # type: ignore[arg-type]
+
+
+class TestCollectSchemaValidationConstraints:
+    """Walks one ``rule`` block (the JSON Schema sitting inside an
+    ArangoDB collection's schema property) and returns the per-field
+    SHACL constraint tuples PR 3's importer can ingest."""
+
+    def test_required_emits_min_count_one(self):
+        rule = {"required": ["name", "email"]}
+        out = _collect_schema_validation_constraints(rule)
+        assert out["name"] == [("sh:minCount", 1)]
+        assert out["email"] == [("sh:minCount", 1)]
+
+    def test_properties_with_type_emits_datatype(self):
+        rule = {"properties": {"name": {"type": "string"}}}
+        out = _collect_schema_validation_constraints(rule)
+        assert ("sh:datatype", "http://www.w3.org/2001/XMLSchema#string") in out["name"]
+
+    def test_required_plus_type_collapses_into_one_field_entry(self):
+        # CRITICAL: when both required AND properties.type mention the
+        # same field, the constraints land on ONE field key. The
+        # emitter relies on this grouping to produce ONE PropertyShape
+        # per field with both triples on the same blank node.
+        rule = {
+            "required": ["name"],
+            "properties": {"name": {"type": "string"}},
+        }
+        out = _collect_schema_validation_constraints(rule)
+        assert len(out) == 1
+        assert ("sh:minCount", 1) in out["name"]
+        assert ("sh:datatype", "http://www.w3.org/2001/XMLSchema#string") in out["name"]
+
+    def test_pattern_emits_sh_pattern(self):
+        rule = {
+            "properties": {
+                "email": {"type": "string", "pattern": "^[^@]+@[^@]+\\.[^@]+$"},
+            }
+        }
+        out = _collect_schema_validation_constraints(rule)
+        kinds = {k for k, _ in out["email"]}
+        assert "sh:pattern" in kinds
+        assert "sh:datatype" in kinds  # type still emitted alongside pattern
+
+    def test_enum_emits_sh_in_as_string_list(self):
+        # PR 3's importer stores sh:in as list[str], so the helper
+        # MUST stringify enum members (which could be ints / mixed).
+        rule = {"properties": {"size": {"type": "string", "enum": ["S", "M", "L"]}}}
+        out = _collect_schema_validation_constraints(rule)
+        in_tuples = [t for t in out["size"] if t[0] == "sh:in"]
+        assert in_tuples == [("sh:in", ["S", "M", "L"])]
+
+    def test_enum_with_mixed_types_stringifies_all_members(self):
+        rule = {"properties": {"code": {"enum": [1, 2, "three"]}}}
+        out = _collect_schema_validation_constraints(rule)
+        in_tuples = [t for t in out["code"] if t[0] == "sh:in"]
+        # All members converted to strings -- PR 3's importer
+        # normalises everything to list[str].
+        assert in_tuples == [("sh:in", ["1", "2", "three"])]
+
+    def test_empty_rule_returns_empty_dict(self):
+        assert _collect_schema_validation_constraints({}) == {}
+
+    def test_none_rule_returns_empty_dict(self):
+        # A collection without schema validation returns rule=None
+        # from _read_collection_validation_and_indexes; the helper
+        # must not crash on it.
+        assert _collect_schema_validation_constraints(None) == {}
+
+    def test_required_with_non_string_entries_ignored(self):
+        # Defensive: a hand-edited schema could carry a stray int in
+        # required. Drop it rather than emitting sh:minCount on a
+        # property with no name.
+        rule = {"required": ["name", 42, None]}
+        out = _collect_schema_validation_constraints(rule)
+        assert list(out.keys()) == ["name"]
+
+    def test_properties_with_non_dict_spec_ignored(self):
+        # Another hand-edit defence: properties.x = "stringtype" (someone
+        # forgot the dict) must not crash.
+        rule = {"properties": {"foo": "bar"}}
+        out = _collect_schema_validation_constraints(rule)
+        assert out == {}
+
+
+class TestCollectUniqueIndexFields:
+    """Single-field unique indexes -> sh:maxCount 1 candidates."""
+
+    def test_single_field_unique_index_collected(self):
+        indexes = [
+            {"type": "persistent", "fields": ["email"], "unique": True, "sparse": False},
+        ]
+        assert _collect_unique_index_fields(indexes) == {"email"}
+
+    def test_non_unique_index_ignored(self):
+        indexes = [
+            {"type": "persistent", "fields": ["email"], "unique": False, "sparse": False},
+        ]
+        assert _collect_unique_index_fields(indexes) == set()
+
+    def test_multi_field_unique_index_skipped(self):
+        # Composite unique key. Doesn't map to a per-property
+        # sh:maxCount 1 -- it's a tuple-uniqueness constraint, which
+        # would need sh:sparql in SHACL. v1 deliberately skips it.
+        indexes = [
+            {
+                "type": "persistent",
+                "fields": ["firstName", "lastName"],
+                "unique": True,
+            },
+        ]
+        assert _collect_unique_index_fields(indexes) == set()
+
+    def test_primary_index_filtered_out(self):
+        # ArangoDB auto-creates a primary index on _key. Emitting
+        # sh:maxCount 1 on _key would be redundant and noisy.
+        indexes = [{"type": "primary", "fields": ["_key"], "unique": True}]
+        assert _collect_unique_index_fields(indexes) == set()
+
+    def test_edge_index_filtered_out(self):
+        indexes = [
+            {"type": "edge", "fields": ["_from", "_to"], "unique": True},
+        ]
+        assert _collect_unique_index_fields(indexes) == set()
+
+    def test_underscore_prefixed_field_ignored(self):
+        # Reserved fields (_key, _from, _to, _rev, _id) are arango
+        # internals; even if some weird custom index references them,
+        # emitting an ontology constraint on them is wrong.
+        indexes = [
+            {"type": "persistent", "fields": ["_id"], "unique": True},
+        ]
+        assert _collect_unique_index_fields(indexes) == set()
+
+    def test_non_list_indexes_returns_empty_set(self):
+        assert _collect_unique_index_fields(None) == set()
+        assert _collect_unique_index_fields("not a list") == set()  # type: ignore[arg-type]
+
+
+class TestReadCollectionValidationAndIndexes:
+    """The DB-touching wrapper for the two pure helpers above. Pins
+    that an exception from either ``collection.properties()`` or
+    ``collection.indexes()`` results in an empty result (with a
+    warning logged) rather than aborting extraction."""
+
+    def test_returns_rule_and_indexes_on_happy_path(self):
+        db = MagicMock()
+        col = MagicMock()
+        col.properties.return_value = {
+            "schema": {
+                "rule": {"type": "object", "required": ["name"]},
+                "level": "moderate",
+            }
+        }
+        col.indexes.return_value = [{"type": "persistent", "fields": ["email"], "unique": True}]
+        db.collection.return_value = col
+
+        rule, indexes = _read_collection_validation_and_indexes(db, "Customer")
+        assert rule == {"type": "object", "required": ["name"]}
+        assert indexes[0]["fields"] == ["email"]
+
+    def test_top_level_schema_dict_without_rule_key_accepted(self):
+        # Older python-arango versions returned the JSON Schema at the
+        # top of the ``schema`` dict (no nested ``rule`` key). Accept
+        # both shapes so a driver upgrade doesn't silently drop
+        # constraint extraction.
+        db = MagicMock()
+        col = MagicMock()
+        col.properties.return_value = {
+            "schema": {"required": ["name"]},
+        }
+        col.indexes.return_value = []
+        db.collection.return_value = col
+
+        rule, _ = _read_collection_validation_and_indexes(db, "Customer")
+        assert rule == {"required": ["name"]}
+
+    def test_collection_resolve_failure_returns_empty(self):
+        db = MagicMock()
+        db.collection.side_effect = Exception("collection gone")
+        rule, indexes = _read_collection_validation_and_indexes(db, "Customer")
+        assert rule is None
+        assert indexes == []
+
+    def test_properties_failure_does_not_block_indexes(self):
+        db = MagicMock()
+        col = MagicMock()
+        col.properties.side_effect = Exception("permission denied")
+        col.indexes.return_value = [{"type": "persistent", "fields": ["x"], "unique": True}]
+        db.collection.return_value = col
+        rule, indexes = _read_collection_validation_and_indexes(db, "Customer")
+        # Validation failed -> rule None; indexes still surface.
+        assert rule is None
+        assert indexes[0]["fields"] == ["x"]
+
+
+class TestDirectExtractSchemaWithConstraints:
+    """End-to-end: a mocked ArangoDB with one collection that carries
+    a JSON Schema validation rule + a unique index produces a TTL that
+    contains the SHACL NodeShape PR 3's importer expects, and the
+    standard import pipeline lands constraint rows in
+    ``ontology_constraints``."""
+
+    @staticmethod
+    def _db_with_one_customer_collection(*, schema_rule=None, indexes=None):
+        """Mock DB shape: one named graph (none), one document
+        collection (Customer) with optional schema validation +
+        indexes. ``_sample_collection_fields`` returns one field
+        (``name``) so the property URI exists for SHACL paths to
+        target."""
+        db = MagicMock()
+        db.graphs.return_value = []
+        db.collections.return_value = [{"name": "Customer", "type": 2, "system": False}]
+        db.has_collection.return_value = True
+
+        col = MagicMock()
+        col.count.return_value = 0
+        col.properties.return_value = (
+            {"schema": {"rule": schema_rule, "level": "moderate"}}
+            if schema_rule is not None
+            else {}
+        )
+        col.indexes.return_value = indexes or []
+        db.collection.return_value = col
+        return db
+
+    @patch("app.services.schema_extraction._sample_collection_fields")
+    def test_required_field_emits_sh_min_count_in_ttl(self, mock_sample):
+        mock_sample.return_value = {"name": "http://www.w3.org/2001/XMLSchema#string"}
+        db = self._db_with_one_customer_collection(
+            schema_rule={"required": ["name"], "properties": {"name": {"type": "string"}}},
+        )
+        ttl, _ = _direct_extract_schema(_make_config(), db=db)
+
+        from rdflib import Graph
+
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+
+        # NodeShape declared.
+        shapes = list(g.subjects(predicate=None, object=SH.NodeShape))
+        assert shapes, "expected at least one sh:NodeShape in extracted TTL"
+        shape = shapes[0]
+        # Targets Customer.
+        targets = list(g.objects(shape, SH.targetClass))
+        assert any("Customer" in str(t) for t in targets)
+        # Has at least one sh:property leading to a node with sh:minCount 1.
+        prop_shapes = list(g.objects(shape, SH.property))
+        assert prop_shapes
+        min_counts = [int(o) for ps in prop_shapes for o in g.objects(ps, SH.minCount)]
+        assert 1 in min_counts
+
+    @patch("app.services.schema_extraction._sample_collection_fields")
+    def test_unique_index_emits_sh_max_count_one(self, mock_sample):
+        mock_sample.return_value = {"email": "http://www.w3.org/2001/XMLSchema#string"}
+        db = self._db_with_one_customer_collection(
+            indexes=[{"type": "persistent", "fields": ["email"], "unique": True}],
+        )
+        ttl, _ = _direct_extract_schema(_make_config(), db=db)
+
+        from rdflib import Graph
+
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+
+        shape = next(iter(g.subjects(predicate=None, object=SH.NodeShape)))
+        prop_shapes = list(g.objects(shape, SH.property))
+        max_counts = [int(o) for ps in prop_shapes for o in g.objects(ps, SH.maxCount)]
+        assert 1 in max_counts
+
+    @patch("app.services.schema_extraction._sample_collection_fields")
+    def test_schema_only_field_gets_synthesised_property(self, mock_sample):
+        # Sampler returns nothing; schema declares a ``required`` field.
+        # The orchestrator must mint an owl:DatatypeProperty on the fly
+        # so the SHACL sh:path lands on a declared property -- otherwise
+        # the imported NodeShape would reference a phantom URI.
+        mock_sample.return_value = {}
+        db = self._db_with_one_customer_collection(
+            schema_rule={
+                "required": ["email"],
+                "properties": {"email": {"type": "string"}},
+            },
+        )
+        ttl, _ = _direct_extract_schema(_make_config(), db=db)
+
+        from rdflib import OWL, RDF, Graph
+
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        datatype_props = [str(s) for s in g.subjects(RDF.type, OWL.DatatypeProperty)]
+        assert any("Customer.email" in p for p in datatype_props)
+
+    @patch("app.services.schema_extraction._sample_collection_fields")
+    def test_extract_constraints_false_skips_emission(self, mock_sample):
+        # Verify the toggle: when extract_constraints=False, NO
+        # SHACL triples are emitted even if schema validation is set.
+        mock_sample.return_value = {"name": "http://www.w3.org/2001/XMLSchema#string"}
+        db = self._db_with_one_customer_collection(
+            schema_rule={"required": ["name"]},
+        )
+        cfg = _make_config(extract_constraints=False)
+        ttl, _ = _direct_extract_schema(cfg, db=db)
+
+        from rdflib import Graph
+
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        assert not list(g.subjects(predicate=None, object=SH.NodeShape))
+
+    @patch("app.services.schema_extraction._sample_collection_fields")
+    def test_collection_without_constraints_emits_no_node_shape(self, mock_sample):
+        # No schema validation, no unique indexes -> no SHACL emission
+        # at all (avoids empty NodeShapes that would just be noise).
+        mock_sample.return_value = {"name": "http://www.w3.org/2001/XMLSchema#string"}
+        db = self._db_with_one_customer_collection()
+        ttl, _ = _direct_extract_schema(_make_config(), db=db)
+
+        from rdflib import Graph
+
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        assert not list(g.subjects(predicate=None, object=SH.NodeShape))
+
+    @patch("app.services.schema_extraction._sample_collection_fields")
+    def test_emitted_ttl_round_trips_through_pr3_shacl_walker(self, mock_sample):
+        """The end-to-end contract: the TTL emitted by S.9 must be
+        ingestible by the same PR 3 SHACL walker that powers
+        ``import_from_file``. Without this, the constraint rows never
+        reach ``ontology_constraints``.
+
+        We deliberately use the real ``_extract_shacl_property_constraints``
+        from ``app.services.shacl_import`` rather than re-walking the
+        TTL ourselves -- the test breaks the day the walker's shape
+        changes or our emitter drifts, which is exactly when we want
+        to know.
+        """
+        from rdflib import Graph
+
+        from app.services.shacl_import import _extract_shacl_property_constraints
+
+        mock_sample.return_value = {"email": "http://www.w3.org/2001/XMLSchema#string"}
+        db = self._db_with_one_customer_collection(
+            schema_rule={
+                "required": ["email"],
+                "properties": {
+                    "email": {
+                        "type": "string",
+                        "pattern": "^[^@]+@[^@]+$",
+                    },
+                },
+            },
+            indexes=[{"type": "persistent", "fields": ["email"], "unique": True}],
+        )
+        ttl, _ = _direct_extract_schema(_make_config(), db=db)
+
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+
+        rows = _extract_shacl_property_constraints(g)
+
+        # We expect one row per constraint -- required (sh:minCount 1),
+        # type (sh:datatype xsd:string), pattern (sh:pattern), unique
+        # (sh:maxCount 1). All four land on the same (class, property)
+        # pair so the materializer can persist them under one shape IRI.
+        kinds = {r["restriction_type"] for r in rows}
+        assert {"sh:minCount", "sh:datatype", "sh:pattern", "sh:maxCount"} <= kinds
+
+        # All rows target the Customer class.
+        assert all("Customer" in r["class_uri"] for r in rows)
+        # All rows reference the same property URI.
+        prop_uris = {r["property_uri"] for r in rows}
+        assert len(prop_uris) == 1
+        assert "Customer.email" in next(iter(prop_uris))
+
+        # Severity defaults to sh:Violation when not declared (PR 3's
+        # walker fills this in -- absence of severity here would mean
+        # the materializer is asked to invent it, which it shouldn't).
+        assert all(r["severity"] == "sh:Violation" for r in rows)
+
+    @patch("app.services.schema_extraction._sample_collection_fields")
+    def test_multiple_constraints_share_one_property_shape(self, mock_sample):
+        # required + type + pattern on the same field must land on
+        # ONE PropertyShape with all three triples -- mirrors how the
+        # SHACL exporter (PR 5) groups them and what every SHACL
+        # parser expects.
+        mock_sample.return_value = {"email": "http://www.w3.org/2001/XMLSchema#string"}
+        db = self._db_with_one_customer_collection(
+            schema_rule={
+                "required": ["email"],
+                "properties": {
+                    "email": {
+                        "type": "string",
+                        "pattern": "^[^@]+@[^@]+$",
+                    },
+                },
+            },
+        )
+        ttl, _ = _direct_extract_schema(_make_config(), db=db)
+
+        from rdflib import Graph
+
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+
+        shape = next(iter(g.subjects(predicate=None, object=SH.NodeShape)))
+        prop_shapes = list(g.objects(shape, SH.property))
+        # Exactly ONE property shape (not one per constraint).
+        assert len(prop_shapes) == 1
+        ps = prop_shapes[0]
+        kinds = {p for p in g.predicates(ps, None)}
+        assert SH.minCount in kinds
+        assert SH.datatype in kinds
+        assert SH.pattern in kinds

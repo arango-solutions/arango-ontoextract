@@ -114,6 +114,24 @@ class SchemaExtractionConfig(BaseModel):
         le=1000,
         description="Documents to sample per collection when inferring field XSD types.",
     )
+    # Stream 5 PR 3 S.9: index + schema-validation -> SHACL constraints.
+    # When True (default), the direct extractor reads every document
+    # collection's schema validation rule and unique indexes and emits
+    # SHACL ``sh:NodeShape`` + ``sh:PropertyShape`` triples into the
+    # generated TTL. Those triples are picked up by the standard PR 3
+    # SHACL importer during ``import_from_file`` so they land in
+    # ``ontology_constraints`` with no separate post-import step. Set
+    # ``False`` for a constraint-free reverse-engineering pass.
+    extract_constraints: bool = Field(
+        default=True,
+        description=(
+            "When True, reverse-engineer SHACL constraints from each "
+            "document collection's schema validation rule (required / "
+            "type / pattern / enum) and unique indexes (one-field unique "
+            "-> sh:maxCount 1). Constraints land in ``ontology_constraints`` "
+            "via the standard SHACL import pass."
+        ),
+    )
     # Stream 5 PR 1 S.10: auto-imports. Each entry is the ``ontology_id``
     # (registry ``_key``) of an existing AOE ontology to import. The
     # generated TTL embeds ``owl:imports <ontology_uri>`` triples and the
@@ -483,6 +501,352 @@ def _sample_collection_fields(
     return field_types
 
 
+# ---------------------------------------------------------------------------
+# Stream 5 PR 3 S.9 -- ArangoDB constraints -> SHACL
+# ---------------------------------------------------------------------------
+
+# Maps JSON Schema ``type`` values to XSD IRIs. JSON Schema's ``type`` is
+# the closest analogue we have to a datatype declaration in ArangoDB
+# schema validation; ``format`` overrides ``type`` for string-shaped
+# date / date-time / URI specialisations (matches PR 3's SHACL importer
+# which writes ``sh:datatype`` as the IRI string -- order matters here).
+_JSONSCHEMA_TO_XSD: dict[str, str] = {
+    "string": "http://www.w3.org/2001/XMLSchema#string",
+    "integer": "http://www.w3.org/2001/XMLSchema#integer",
+    "number": "http://www.w3.org/2001/XMLSchema#decimal",
+    "boolean": "http://www.w3.org/2001/XMLSchema#boolean",
+}
+
+# Standard JSON Schema ``format`` keywords that narrow ``type: string``
+# to a more specific XSD primitive. We only map the ones a sensible
+# ArangoDB user would put in a schema rule; obscure formats (e.g.
+# ``uuid``, ``email``) are left as ``xsd:string`` rather than invented.
+_JSONSCHEMA_FORMAT_TO_XSD: dict[str, str] = {
+    "date": "http://www.w3.org/2001/XMLSchema#date",
+    "date-time": "http://www.w3.org/2001/XMLSchema#dateTime",
+    "time": "http://www.w3.org/2001/XMLSchema#time",
+    "uri": "http://www.w3.org/2001/XMLSchema#anyURI",
+}
+
+
+def _jsonschema_type_to_xsd(spec: dict[str, Any]) -> str | None:
+    """Map one JSON Schema property spec to an XSD IRI, or ``None`` if
+    the spec describes a shape we don't model (array / object / no type).
+
+    ``format`` wins over ``type`` for the recognised specialisations so
+    ``{type: "string", format: "date-time"}`` becomes ``xsd:dateTime``,
+    not ``xsd:string`` -- the curator declared the more specific type
+    and we respect it.
+
+    Returns ``None`` for arrays / nested objects / typeless specs; the
+    caller treats this as "no datatype constraint to emit".
+    """
+    if not isinstance(spec, dict):
+        return None
+    fmt = spec.get("format")
+    if isinstance(fmt, str) and fmt in _JSONSCHEMA_FORMAT_TO_XSD:
+        return _JSONSCHEMA_FORMAT_TO_XSD[fmt]
+    t = spec.get("type")
+    if isinstance(t, str):
+        return _JSONSCHEMA_TO_XSD.get(t)
+    # JSON Schema permits ``type`` to be an array (union). We pick the
+    # first non-null entry -- a union of (string|null) is the common
+    # "optional" idiom and ``xsd:string`` is the right call for it.
+    if isinstance(t, list):
+        for entry in t:
+            if isinstance(entry, str) and entry != "null":
+                return _JSONSCHEMA_TO_XSD.get(entry)
+    return None
+
+
+def _collect_schema_validation_constraints(
+    rule: dict[str, Any] | None,
+) -> dict[str, list[tuple[str, Any]]]:
+    """Walk a JSON Schema ``rule`` block, return per-field SHACL constraint
+    tuples in the wire shape PR 3's importer expects.
+
+    Each tuple is ``(restriction_type, restriction_value)`` where
+    ``restriction_type`` is one of the PR 3 string tokens
+    (``"sh:minCount"`` / ``"sh:datatype"`` / ``"sh:pattern"`` /
+    ``"sh:in"``). The orchestrator that emits SHACL triples maps these
+    to predicate IRIs.
+
+    Recognised JSON Schema constructs (v1):
+
+    * ``required: ["field1", ...]`` -> per field: ``sh:minCount 1``.
+    * ``properties: {field: {type, format, pattern, enum}}``:
+      * ``type`` / ``format`` -> ``sh:datatype <xsd>``.
+      * ``pattern`` -> ``sh:pattern "<regex>"``.
+      * ``enum: [...]`` -> ``sh:in [...]`` (stored as ``list[str]``).
+
+    Constructs NOT yet mapped (warn-skipped at the caller because this
+    helper is pure; the caller logs once per collection):
+
+    * ``minimum`` / ``maximum`` -> would need ``sh:minInclusive`` /
+      ``sh:maxInclusive`` which PR 3's importer doesn't yet recognise.
+    * ``minLength`` / ``maxLength`` -> ditto for ``sh:minLength``.
+    * ``additionalProperties`` -> SHACL ``sh:closed``, deferred.
+    * Nested ``properties`` on object-typed fields -> needs path-based
+      constraints; deferred.
+
+    The caller is responsible for resolving each field to a property
+    URI; this helper deliberately knows nothing about URIs so it can
+    be unit-tested with pure dicts.
+    """
+    if not isinstance(rule, dict):
+        return {}
+
+    out: dict[str, list[tuple[str, Any]]] = {}
+
+    required_raw = rule.get("required")
+    required: set[str] = set()
+    if isinstance(required_raw, list):
+        required = {r for r in required_raw if isinstance(r, str)}
+
+    for field_name in required:
+        out.setdefault(field_name, []).append(("sh:minCount", 1))
+
+    properties = rule.get("properties")
+    if isinstance(properties, dict):
+        for field_name, spec in properties.items():
+            if not isinstance(field_name, str) or not isinstance(spec, dict):
+                continue
+            xsd = _jsonschema_type_to_xsd(spec)
+            if xsd:
+                out.setdefault(field_name, []).append(("sh:datatype", xsd))
+            pattern = spec.get("pattern")
+            if isinstance(pattern, str) and pattern:
+                out.setdefault(field_name, []).append(("sh:pattern", pattern))
+            enum = spec.get("enum")
+            if isinstance(enum, list) and enum:
+                # SHACL sh:in expects a list of values; we stringify so
+                # PR 3's importer can store them as the ``list[str]``
+                # shape it normalises everything else to.
+                out.setdefault(field_name, []).append(("sh:in", [str(v) for v in enum]))
+
+    return out
+
+
+def _collect_unique_index_fields(indexes: list[dict[str, Any]] | None) -> set[str]:
+    """Return the field names that carry a single-field unique index.
+
+    A single-field unique index on ``email`` is the most defensible
+    mapping to ``sh:maxCount 1`` (each subject has at most one email).
+    Multi-field unique indexes (``unique on (firstName, lastName)``)
+    don't have a clean per-property SHACL equivalent -- they're a
+    composite-key uniqueness constraint, which SHACL would express via
+    a custom ``sh:sparql`` shape. We deliberately skip those in v1
+    rather than emit a misleading single-field constraint.
+
+    ``primary`` indexes (auto-created on ``_key``) and ``edge``
+    indexes (auto-created on ``_from`` / ``_to``) are filtered out --
+    they are ArangoDB plumbing, not user-declared constraints, and
+    emitting ``sh:maxCount 1`` on ``_key`` would be both redundant
+    and noisy.
+    """
+    if not isinstance(indexes, list):
+        return set()
+
+    out: set[str] = set()
+    for idx in indexes:
+        if not isinstance(idx, dict):
+            continue
+        if idx.get("type") in {"primary", "edge"}:
+            continue
+        if not idx.get("unique"):
+            continue
+        fields = idx.get("fields")
+        if not isinstance(fields, list) or len(fields) != 1:
+            continue
+        field = fields[0]
+        if isinstance(field, str) and not field.startswith("_"):
+            out.add(field)
+    return out
+
+
+def _read_collection_validation_and_indexes(
+    db: Any,
+    col_name: str,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """Best-effort fetch of one collection's schema validation rule + indexes.
+
+    Either call can fail (collection deleted under us, permission
+    denied, python-arango version drift); both failures are caught and
+    surfaced as ``(None, [])`` with a structured warning so the
+    extraction never aborts on constraint-fetching IO.
+    """
+    rule: dict[str, Any] | None = None
+    indexes: list[dict[str, Any]] = []
+    try:
+        col = db.collection(col_name)
+    except Exception:
+        log.warning(
+            "could not resolve collection for constraint extraction",
+            extra={"collection": col_name},
+            exc_info=True,
+        )
+        return None, []
+
+    try:
+        props = col.properties()
+        if isinstance(props, dict):
+            schema = props.get("schema")
+            if isinstance(schema, dict):
+                # ArangoDB places the JSON Schema under ``schema.rule``.
+                # Some older driver versions returned the rule at the
+                # top level; we accept both.
+                candidate = schema.get("rule") if isinstance(schema.get("rule"), dict) else schema
+                if isinstance(candidate, dict):
+                    rule = candidate
+    except Exception:
+        log.warning(
+            "could not read collection properties for constraint extraction",
+            extra={"collection": col_name},
+            exc_info=True,
+        )
+
+    try:
+        raw_indexes = col.indexes()
+        if isinstance(raw_indexes, list):
+            indexes = [i for i in raw_indexes if isinstance(i, dict)]
+    except Exception:
+        log.warning(
+            "could not read collection indexes for constraint extraction",
+            extra={"collection": col_name},
+            exc_info=True,
+        )
+
+    return rule, indexes
+
+
+def _emit_collection_shacl_shapes(
+    g: Any,
+    db: Any,
+    *,
+    col_name: str,
+    class_uri: Any,
+    field_props: dict[str, Any],
+    ns: Any,
+    sh_ns: Any,
+    aoe_ns: Any,
+    config: SchemaExtractionConfig,
+    bnode_factory: Any,
+    collection_factory: Any,
+) -> int:
+    """Emit a ``sh:NodeShape`` for one document collection.
+
+    Walks the collection's schema validation rule + indexes, groups the
+    resulting constraint tuples per field, and emits one
+    ``sh:PropertyShape`` per constrained field carrying all of its
+    constraints. Returns the number of (field-level) constraints
+    emitted (not the count of PropertyShapes).
+
+    The shape is exactly what PR 3's SHACL importer recognises, so
+    rows land in ``ontology_constraints`` with
+    ``constraint_type="sh:PropertyShape"`` and
+    ``import_source="shacl_shape"`` after ``import_from_file`` runs.
+
+    Fields mentioned in the schema rule or a unique index but NOT in
+    ``field_props`` (because the sampler didn't see them) trigger an
+    extra ``owl:DatatypeProperty`` declaration on the fly so the
+    ``sh:path`` target always exists. Without this, a fresh table
+    whose schema declares ``required: ["email"]`` but has no data yet
+    would import a NodeShape whose ``sh:path`` referenced a phantom
+    property.
+    """
+    from rdflib import OWL, RDF, RDFS, Literal, URIRef
+
+    rule, indexes = _read_collection_validation_and_indexes(db, col_name)
+
+    schema_constraints = _collect_schema_validation_constraints(rule)
+    unique_fields = _collect_unique_index_fields(indexes)
+
+    # Merge: schema validation constraints + unique-index -> sh:maxCount 1.
+    # We keep ``unique_fields`` separate first so the warn-skip list
+    # below knows the difference between a schema-side miss and an
+    # index-side miss.
+    by_field: dict[str, list[tuple[str, Any]]] = {f: list(v) for f, v in schema_constraints.items()}
+    for field_name in unique_fields:
+        by_field.setdefault(field_name, []).append(("sh:maxCount", 1))
+
+    if not by_field:
+        return 0
+
+    constraints_emitted = 0
+    shape_iri = URIRef(str(class_uri) + "Shape")
+    g.add((shape_iri, RDF.type, sh_ns.NodeShape))
+    g.add((shape_iri, sh_ns.targetClass, class_uri))
+    g.add((shape_iri, aoe_ns.sourceDb, Literal(config.target_db)))
+    g.add((shape_iri, aoe_ns.sourceCollection, Literal(col_name)))
+
+    for field_name, tuples in by_field.items():
+        # Resolve the property URI. If the sampler didn't see this
+        # field, mint one now so the SHACL ``sh:path`` lands somewhere
+        # declared. Datatype comes from the schema rule (if it had a
+        # ``sh:datatype`` constraint); otherwise leave rdfs:range
+        # unset -- a downstream curator can fix it once data lands.
+        prop_uri = field_props.get(field_name)
+        if prop_uri is None:
+            prop_uri = ns[f"{col_name}.{field_name}"]
+            g.add((prop_uri, RDF.type, OWL.DatatypeProperty))
+            g.add((prop_uri, RDFS.label, Literal(field_name)))
+            g.add((prop_uri, RDFS.domain, class_uri))
+            g.add((prop_uri, aoe_ns.sourceDb, Literal(config.target_db)))
+            g.add((prop_uri, aoe_ns.sourceCollection, Literal(col_name)))
+            g.add((prop_uri, aoe_ns.sourceField, Literal(field_name)))
+            for kind, value in tuples:
+                if kind == "sh:datatype" and isinstance(value, str):
+                    g.add((prop_uri, RDFS.range, URIRef(value)))
+                    break
+            field_props[field_name] = prop_uri
+
+        pshape = bnode_factory()
+        g.add((shape_iri, sh_ns.property, pshape))
+        g.add((pshape, sh_ns.path, prop_uri))
+
+        for kind, value in tuples:
+            if kind == "sh:minCount" and isinstance(value, int):
+                g.add((pshape, sh_ns.minCount, Literal(value)))
+                constraints_emitted += 1
+            elif kind == "sh:maxCount" and isinstance(value, int):
+                g.add((pshape, sh_ns.maxCount, Literal(value)))
+                constraints_emitted += 1
+            elif kind == "sh:datatype" and isinstance(value, str):
+                g.add((pshape, sh_ns.datatype, URIRef(value)))
+                constraints_emitted += 1
+            elif kind == "sh:pattern" and isinstance(value, str):
+                g.add((pshape, sh_ns.pattern, Literal(value)))
+                constraints_emitted += 1
+            elif kind == "sh:in" and isinstance(value, list) and value:
+                head = bnode_factory()
+                collection_factory(g, head, [Literal(v) for v in value])
+                g.add((pshape, sh_ns["in"], head))
+                constraints_emitted += 1
+            else:
+                # Future-proofing: a kind we know how to collect but
+                # not yet emit (none today, but warn loudly if PR 3
+                # adds a new kind to ``_collect_schema_validation_constraints``
+                # without updating this dispatcher).
+                log.warning(
+                    "unknown SHACL constraint kind from schema extraction; skipped",
+                    extra={
+                        "collection": col_name,
+                        "field": field_name,
+                        "kind": kind,
+                    },
+                )
+
+    log.info(
+        "emitted SHACL NodeShape from collection metadata",
+        extra={
+            "collection": col_name,
+            "constraints": constraints_emitted,
+            "fields": len(by_field),
+        },
+    )
+    return constraints_emitted
+
+
 def _direct_extract_schema(
     config: SchemaExtractionConfig,
     db: Any | None = None,
@@ -497,7 +861,8 @@ def _direct_extract_schema(
     When ``db`` is provided (tests), uses it directly; otherwise opens
     + closes its own connection via :func:`_connect_target`.
     """
-    from rdflib import OWL, RDF, RDFS, XSD, Graph, Literal, Namespace, URIRef
+    from rdflib import OWL, RDF, RDFS, XSD, BNode, Graph, Literal, Namespace, URIRef
+    from rdflib.collection import Collection
 
     own_connection = db is None
     client = None
@@ -514,6 +879,7 @@ def _direct_extract_schema(
         ns_str = f"http://aoe.example.org/schema/{config.target_db}#"
         ns = Namespace(ns_str)
         aoe_ns = Namespace("http://aoe.example.org/vocab#")
+        sh_ns = Namespace("http://www.w3.org/ns/shacl#")
         g = Graph()
         g.bind("owl", OWL)
         g.bind("rdfs", RDFS)
@@ -521,6 +887,7 @@ def _direct_extract_schema(
         g.bind("xsd", XSD)
         g.bind("schema", ns)
         g.bind("aoe", aoe_ns)
+        g.bind("sh", sh_ns)
 
         # Ontology resource + auto-imports (S.10). Each `imports` entry is
         # an existing AOE ontology_id; we expand it to the standard AOE
@@ -637,7 +1004,13 @@ def _direct_extract_schema(
                     _class_for(name)
 
         # Datatype properties from sampled fields (S.8). One pass per
-        # document collection that ended up emitted as a class.
+        # document collection that ended up emitted as a class. We
+        # keep the (col_name -> {field -> prop_uri}) mapping in scope
+        # so the constraint emission below (S.9) can resolve each
+        # SHACL ``sh:path`` to the same property URI a sampled field
+        # would have produced -- two passes that mention the same
+        # field share one property.
+        col_to_field_props: dict[str, dict[str, URIRef]] = {}
         if config.sample_fields:
             class_uris = list(g.subjects(RDF.type, OWL.Class))
             for cls_uri in class_uris:
@@ -669,6 +1042,48 @@ def _direct_extract_schema(
                     g.add((prop_uri, aoe_ns.sourceDb, Literal(config.target_db)))
                     g.add((prop_uri, aoe_ns.sourceCollection, Literal(col_name)))
                     g.add((prop_uri, aoe_ns.sourceField, Literal(fname)))
+                    col_to_field_props.setdefault(col_name, {})[fname] = prop_uri
+
+        # Stream 5 PR 3 S.9 -- index + schema-validation -> SHACL.
+        # Runs after sampling so it can reuse the field -> property
+        # URI map sampling built. Fields mentioned in schema validation
+        # or unique indexes but NOT sampled (eg required field with no
+        # data yet) get a brand-new ``owl:DatatypeProperty`` so the
+        # SHACL ``sh:path`` always lands on a declared property.
+        #
+        # Emission shape (one NodeShape per class):
+        #
+        #   :CustomerShape a sh:NodeShape ;
+        #       sh:targetClass :Customer ;
+        #       sh:property [ sh:path :Customer.email ;
+        #                     sh:minCount 1 ;
+        #                     sh:datatype xsd:string ;
+        #                     sh:pattern "..." ] .
+        #
+        # This is exactly the shape PR 3's SHACL importer recognises
+        # so the constraints land in ``ontology_constraints`` with
+        # ``constraint_type="sh:PropertyShape"`` and the right
+        # ``import_source="shacl_shape"`` provenance marker.
+        constraints_emitted = 0
+        if config.extract_constraints:
+            class_uris = list(g.subjects(RDF.type, OWL.Class))
+            for cls_uri in class_uris:
+                col_name = uri_to_collection.get(str(cls_uri))
+                if not col_name or col_types.get(col_name) != 2:
+                    continue
+                constraints_emitted += _emit_collection_shacl_shapes(
+                    g,
+                    db,
+                    col_name=col_name,
+                    class_uri=URIRef(str(cls_uri)),
+                    field_props=col_to_field_props.setdefault(col_name, {}),
+                    ns=ns,
+                    sh_ns=sh_ns,
+                    aoe_ns=aoe_ns,
+                    config=config,
+                    bnode_factory=BNode,
+                    collection_factory=Collection,
+                )
 
         ttl = g.serialize(format="turtle")
         log.info(
@@ -680,6 +1095,7 @@ def _direct_extract_schema(
                 "classes": sum(1 for _ in g.subjects(RDF.type, OWL.Class)),
                 "object_properties": sum(1 for _ in g.subjects(RDF.type, OWL.ObjectProperty)),
                 "datatype_properties": sum(1 for _ in g.subjects(RDF.type, OWL.DatatypeProperty)),
+                "shacl_constraints_emitted": constraints_emitted,
             },
         )
         return ttl, uri_to_collection

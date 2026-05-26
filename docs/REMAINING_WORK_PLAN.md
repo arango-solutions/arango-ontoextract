@@ -610,14 +610,66 @@ Stream 5 is split into three PRs:
   the workspace surface for the backend that landed in PR 1; no
   backend changes.
 
-- **PR 3 — Deferred / blocked**:
-  - **S.5 (schema diff for evolution)** — needs snapshot storage
-    design (reuse temporal infrastructure vs new
-    `schema_snapshots` collection). Not blocked, just chunky.
-  - **S.9 (index/constraint mapping)** — genuinely blocked on
-    Stream 3 (OWL Constraints & SHACL Shapes). Will re-open here
-    once `ontology_constraints` is wired through extraction +
-    materialisation.
+- **PR 3 sub-A — S.9 constraint mapping (DONE, v0.4.0-dev)**:
+  Stream 3 (OWL Constraints & SHACL Shapes) shipped all five PRs,
+  unblocking S.9. The direct extractor now walks each document
+  collection's `properties()['schema']['rule']` (JSON Schema
+  validation) and `indexes()` and emits a SHACL `sh:NodeShape` +
+  `sh:PropertyShape` block per class into the same TTL document
+  the rest of the schema lands in. The standard `import_from_file`
+  pipeline routes those shapes through PR 3's SHACL importer
+  (`shacl_import.import_shacl_shapes`) so constraint rows land in
+  `ontology_constraints` with no schema-extraction-specific
+  post-import step. Mappings (v1):
+
+  | ArangoDB construct | SHACL emission | Notes |
+  | --- | --- | --- |
+  | `required: ["field"]` | `sh:minCount 1` | Per field |
+  | `properties: {field: {type}}` | `sh:datatype <xsd>` | `format` overrides `type` for `date`/`date-time`/`time`/`uri` |
+  | `properties: {field: {pattern}}` | `sh:pattern "<regex>"` | Coexists with `sh:datatype` on the same PropertyShape |
+  | `properties: {field: {enum}}` | `sh:in (v1 v2 ...)` | RDF list, members stringified for PR 3's `list[str]` wire shape |
+  | Single-field unique index | `sh:maxCount 1` | Composite/primary/edge/underscore-prefixed indexes deliberately skipped (no clean per-property mapping) |
+  | `minimum` / `maximum` / `minLength` / `maxLength` | not emitted v1 | PR 3 importer doesn't yet recognise `sh:minInclusive` etc. |
+  | Nested object properties | not emitted v1 | Same v1 limitation as datatype-property sampling |
+
+  Fields mentioned in the schema rule or a unique index but NOT
+  in the sampling map get a synthetic `owl:DatatypeProperty`
+  emitted on the fly so the SHACL `sh:path` always lands on a
+  declared property (otherwise a fresh table with
+  `required: ["email"]` and no data would import a NodeShape
+  whose `sh:path` referenced a phantom URI). The synthetic
+  property's `rdfs:range` is pulled from the same schema rule's
+  `sh:datatype` constraint when present.
+
+  Toggle: `extract_constraints: bool = True` on
+  `SchemaExtractionConfig` -- defaults on; set `False` for a
+  constraint-free reverse-engineering pass.
+
+  Tests added (40 new in `test_schema_extraction.py`):
+  pure-helper coverage for `_jsonschema_type_to_xsd` (every
+  XSD branch incl. format-override and union-type fallback),
+  `_collect_schema_validation_constraints` (required + type +
+  pattern + enum grouping), `_collect_unique_index_fields`
+  (single vs composite, primary/edge filtering, underscore
+  guard), `_read_collection_validation_and_indexes` (happy
+  path + partial-failure tolerance), the orchestrator
+  `_emit_collection_shacl_shapes` via the full
+  `_direct_extract_schema` integration (six scenarios incl.
+  required → `sh:minCount`, unique-index → `sh:maxCount`,
+  schema-only field → synthetic property, multiple
+  constraints sharing one PropertyShape, `extract_constraints=False`
+  skip, empty-collection no-NodeShape), plus a round-trip
+  test that parses our emitted TTL through PR 3's actual
+  `_extract_shacl_property_constraints` walker so any drift in
+  either direction breaks the test rather than silently
+  producing unimportable shapes.
+
+- **PR 3 sub-B — S.5 schema diff for evolution (DEFERRED)**:
+  Still chunky -- needs snapshot storage design (reuse the
+  temporal `created`/`expired`/`version` infrastructure on
+  `ontology_classes` etc. vs a new `schema_snapshots` collection
+  keyed by `(target_host, target_db, run_id)`). Will land as its
+  own follow-up commit when that design is settled.
 
 #### Tasks
 
@@ -631,7 +683,7 @@ Stream 5 is split into three PRs:
 | S.6 | Named graph discovery API | Backend | **DONE (PR 1, v0.4.0-dev)** | `POST /api/v1/ontology/schema/graphs` -- returns named graphs + edge definitions + loose collections. POST (not GET) so credentials don't leak via URL. Errors mapped to 400 (bad config) / 502 (upstream Arango unreachable) / 422 (validation). |
 | S.7 | Named graph-aware extraction | Backend | **DONE (PR 1, v0.4.0-dev)** | `_direct_extract_schema` walks `db.graphs()`, emits `owl:ObjectProperty` with `rdfs:domain` / `rdfs:range` resolved from edge definitions. Multi-from / multi-to edge defs emit one triple per vertex collection. `graph_names` config restricts the walk; `include_loose` controls fallthrough to non-graph collections. |
 | S.8 | Direct graph-to-ontology mapping (no `schema_analyzer`) | Backend | **DONE (PR 1, v0.4.0-dev)** | Same `_direct_extract_schema` path: (a) document collection → `owl:Class`, (b) edge collection → `owl:ObjectProperty` with domain/range from edge def, (c) sampled scalar fields → `owl:DatatypeProperty` with XSD type inferred from value. Field URIs are scoped to the source collection (`{Col}.{field}`) so two collections with a `name` field don't collide. Heterogeneous types fall back to `xsd:string`. Nested objects + arrays skipped for v1 (logged limitation; can recurse in PR 3). |
-| S.9 | Index and constraint mapping | Backend | **BLOCKED on Stream 3** | Re-open once `ontology_constraints` collection is wired. |
+| S.9 | Index and constraint mapping | Backend | **DONE (PR 3 sub-A, v0.4.0-dev)** | `_direct_extract_schema` now reverse-engineers each document collection's JSON Schema validation rule (`required` -> `sh:minCount 1`; `type`/`format` -> `sh:datatype`; `pattern` -> `sh:pattern`; `enum` -> `sh:in`) and single-field unique indexes (-> `sh:maxCount 1`) into a `sh:NodeShape` + `sh:PropertyShape` block embedded in the generated TTL. Composite-unique, primary, edge, and underscore-prefixed-field indexes are deliberately skipped (no clean per-property SHACL mapping). The standard `import_from_file` path then routes the shapes through PR 3's SHACL importer, so constraints land in `ontology_constraints` with `constraint_type="sh:PropertyShape"` and `import_source="shacl_shape"` with no schema-extraction-specific post-import step. Toggle via `extract_constraints: bool = True` on `SchemaExtractionConfig`. End-to-end round-trip pinned: `test_emitted_ttl_round_trips_through_pr3_shacl_walker` parses our emitted TTL through `_extract_shacl_property_constraints` (the same walker `import_shacl_shapes` uses) and asserts all four constraint kinds materialise correctly. |
 | S.10 | Schema-derived ontology auto-imports | Backend | **DONE (PR 1, v0.4.0-dev)** | `imports: list[str]` config field; each entry expands to an `owl:imports` triple on the generated ontology resource; standard `sync_owl_imports_edges` wires the `imports` edges to the registry. ER-based alignment suggestions (the second half of S.10) are PR 2 territory once the UI can show + accept them. |
 | S.11 | Schema extraction UI with graph selection | Frontend | **DONE (PR 2, v0.4.0-dev)** | `SchemaExtractionOverlay.tsx` -- canvas right-click "Extract from ArangoDB…" opens an overlay-not-route with a three-step flow: connect form (host/db/user/password/TLS) → graph picker (per-graph checkboxes + loose-collections + field-sampling + auto-imports multi-select) → commit + result. Wired into the workspace canvas context menu via a new `setShowSchemaExtraction` action. |
 | S.12 | Schema preview panel | Frontend | **DONE (PR 2, v0.4.0-dev)** | Step 2 of `SchemaExtractionOverlay` is the preview: per-graph edge-definition strings (`from -[edge]→ to`), loose-collection counts, and a live `Will create N classes and M object properties` summary (driven by the exported pure `summarizeExtraction()` helper) so the curator sees the impact before committing. Datatype-property names aren't shown pre-extract because they come from per-collection field sampling that only runs at extract time; a future iteration can add a "dry-run extract" backend endpoint that returns the TTL + URI map without writing to the registry. |
@@ -654,8 +706,9 @@ discriminate `400`/`502`/`500` so the user knows whether to fix
 credentials, network, or scope. 33 new frontend tests (component
 + pure helpers + canvas menu); full Jest suite at 617/617.
 
-**Outstanding (PR 3):** S.5 schema diff + S.9 constraint mapping
-(S.9 blocked on Stream 3).
+**Outstanding (PR 3 sub-B):** S.5 schema diff -- needs snapshot
+storage design first. S.9 constraint mapping shipped as PR 3
+sub-A in v0.4.0-dev (see "Plan-vs-reality audit" above).
 
 ---
 
