@@ -1612,12 +1612,7 @@ def _load_visualizer_installer() -> Any:
     the extraction service when the assets aren't packaged into a
     given deployment (eg a slim API-only image).
     """
-    # mypy: ``scripts.setup.install_visualizer`` is a repo-root tool,
-    # not a typed library; silence import-untyped rather than vendor
-    # stubs for an install-only helper.
-    from scripts.setup.install_visualizer import (  # type: ignore[import-untyped]
-        install_for_ontology_graph,
-    )
+    from scripts.setup.install_visualizer import install_for_ontology_graph
 
     return install_for_ontology_graph
 
