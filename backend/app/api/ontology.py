@@ -37,6 +37,7 @@ from app.models.ontology import (
 from app.services import export as export_svc
 from app.services import ontology_context as ctx_svc
 from app.services import promotion as promotion_svc
+from app.services import schema_diff as schema_diff_svc
 from app.services import temporal as temporal_svc
 from app.services.arangordf_bridge import import_from_file
 from app.services.edge_confidence import (
@@ -3211,6 +3212,45 @@ async def get_schema_extraction_status(run_id: str) -> dict[str, Any]:
         return get_extraction_status(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# Stream 5 PR 3 sub-B S.5 -- cross-ontology schema diff. GET with two
+# query params (no credentials, no body) so this endpoint is safe to
+# bookmark / share / curl. The two ontology_ids are public registry
+# keys; the diff itself is computed entirely from the local AOE
+# database, no upstream Arango is touched.
+@router.get("/schema/diff")
+async def diff_schema_ontologies(
+    a: str = Query(..., description="First ontology_id (the 'before' side)"),
+    b: str = Query(..., description="Second ontology_id (the 'after' side)"),
+) -> dict[str, Any]:
+    """Cross-ontology schema diff (Stream 5 PR 3 sub-B, S.5).
+
+    Compares the current state of two ontologies and returns added /
+    removed / changed classes, properties, and constraints. The
+    canonical use case is two schema-extraction runs against the same
+    target ArangoDB at different points in time, but any two
+    ontologies can be diffed.
+
+    Provenance compatibility is surfaced as a warning (not an error):
+    when the two ontologies have different ``source_db`` /
+    ``source_host`` (or neither was created via schema extraction),
+    the diff is still computed and returned, but the
+    ``provenance.compatible`` field is ``false`` and
+    ``provenance.warning`` carries an explanatory string. The curator
+    decides what to do with it.
+
+    Errors mapped:
+      - same ontology_id passed for both sides -> 400 (caller mistake)
+      - either ontology missing entirely -> 200 with empty added/changed
+        and the missing ontology's classes appearing as ``removed``
+        (no 404 -- the diff is well-defined when one side is empty,
+        and "the user deleted ontology B" is a legitimate diff input).
+    """
+    try:
+        return schema_diff_svc.diff_ontologies(ontology_a=a, ontology_b=b)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # Stream 5 PR 1 S.6 — named-graph discovery. POST (not GET) because the

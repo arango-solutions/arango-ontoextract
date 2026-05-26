@@ -67,7 +67,7 @@ The full belief-revision substrate (`revision_meta` collection, evidence-age + e
 | Imports, Composition & Dependencies (§6.15, §6.8.8–8.16) | **COMPLETE (Phase 0 + Phase 1 + Phase 2a + Phase 2b shipped in v0.4.0-dev)** | `owl:imports` edge tracking, imports CRUD, `ontology_imports` named graph, standard ontology catalog (`/ontology/catalog` + bundled DCMI sample), `GET /imports-graph` DAG endpoint, cascade-on-delete impact, base-ontology selector on extraction, OWL exports preserving `owl:imports`, workspace catalog-browser overlay, workspace imports-dependency overlay (DAG canvas + library deep-link), three Visualizer saved queries, effective-graph API (`GET /{id}/effective` with inline conflicts + ETag), merge-conflict detection (duplicate URI / duplicate label / subclass cycle via import), canvas rendering of imported entities (dashed slate border + dimmed fill on Sigma + box-arrow + "Open Source Ontology" context-menu deep-link, with the legend swatch surfacing only when imports are present), drag-and-drop import composition (drag any ontology row onto the canvas to add an `imports` edge, with self/duplicate pre-check, cycle detection on the backend, undo-toast on success, and per-entity "Remove Import (<source name>)" context-menu entries — all routed through a new module-level toast surface), and import-aware extraction prompts (the effective ontology — own + transitive imports — is serialized as a tree-shaped header + reuse guidelines and prepended to `domain_context` for every extraction targeting a composed ontology, so the LLM is told which classes already exist and instructed to reuse via `rdfs:subClassOf` / `owl:equivalentClass` rather than minting duplicates the conflict detector will later flag) are all shipped. |
 | Belief Revision UX (§6.16, Stream 11 Phase 3) | **Complete (v0.4.0-dev)** | Revisions Inbox overlay (IBR.14), inline detail panel (IBR.15), accept/reject/modify REST + service (IBR.16), background consolidation + admin endpoints (IBR.17), four safety guards (IBR.18), Quality Dashboard "Revisions Activity" tile (IBR.19), six MCP tools (IBR.20), and docs cross-link (IBR.21) all shipped. See ADR-008 implementation status appendix. |
 | Constraints (§6.14) | **PR 1–PR 5 shipped (v0.4.0-dev)** | Extraction (PR 1) → OWL restriction import (PR 2) → SHACL shapes import (PR 3) → materialization → API → temporal → rule engine alignment + workspace UI display (PR 4) + OWL Turtle restriction export & new SHACL shapes export (PR 5) all shipped (I.1–I.6, I.8, I.9, plus rule-engine schema reconciliation and SHACL/OWL cross-vocab combination). Stream 3 v1 complete. Remaining only: curator approve / reject mutation actions (I.7 → blocked on mutation API). |
-| Schema Extraction (§6.9) | **Stub** | Service shell exists but minimal implementation. No named graph-aware extraction, no direct graph-to-ontology mapping fallback, no UI for graph selection |
+| Schema Extraction (§6.9) | **Backend complete (v0.4.0-dev)** | Stream 5 PR 1 (backend extraction with named-graph awareness + per-class provenance + auto-imports) + PR 2 (workspace overlay UI) + PR 3 sub-A (S.9 constraint mapping into SHACL) + PR 3 sub-B (S.5 schema diff endpoint) all shipped. Frontend overlays for diff + constraint-aware preview are tracked under Stream 7. |
 | Quality Dashboard (§6.13.7) | **Mostly Done (v0.4.0-dev)** | Unified `/dashboard`, `/quality` → per-ontology tab, recharts radar, audited OntoQA metrics, connectivity metric, qualitative evaluation, live per-ontology six-dimension view, **event-tagged history tracking (Q.2)**, **trend sparklines (Q.3)**, **gold-standard recall (Q.4)**, **curation throughput timer (Q.5)**. Remaining: RAG benchmark comparison. |
 | Workspace Performance (Stream 12) | **Mostly Done in v0.3.0** | T1+T2+T3+T4+T5 shipped (projections, single-item endpoints, client cache, FLATTEN consolidation, telemetry, format sniffer, UI race fixes). Remaining: T6 WTW switch profile, T7 `/runs/{id}/cost` cache, T8 `/runs` join. |
 | Testing & CI (§8) | **Partial** | ~500 unit tests exist but no CI pipeline, no coverage enforcement |
@@ -664,12 +664,63 @@ Stream 5 is split into three PRs:
   either direction breaks the test rather than silently
   producing unimportable shapes.
 
-- **PR 3 sub-B — S.5 schema diff for evolution (DEFERRED)**:
-  Still chunky -- needs snapshot storage design (reuse the
-  temporal `created`/`expired`/`version` infrastructure on
-  `ontology_classes` etc. vs a new `schema_snapshots` collection
-  keyed by `(target_host, target_db, run_id)`). Will land as its
-  own follow-up commit when that design is settled.
+- **PR 3 sub-B — S.5 schema diff for evolution (DONE, v0.4.0-dev)**:
+  Storage decision: **snapshot-history model** (each extraction
+  stays its own ontology; diff is computed on demand from the
+  existing `ontology_classes` / `ontology_properties` /
+  `ontology_constraints` collections). Rationale: zero migration,
+  no behaviour change to existing extractions, the existing PR 1
+  S.4 per-class provenance stamping already provides the
+  `source_db` / `source_host` fingerprint needed to detect
+  "diffed two unrelated ontologies"; the alternative
+  version-in-place model would silently mutate an ontology on
+  re-extraction which is a UX gotcha; the alternative
+  dedicated-collection model would duplicate state we already
+  have. Service: `app/services/schema_diff.py` (~330 LOC). API:
+  `GET /api/v1/ontology/schema/diff?a=<id>&b=<id>` (GET because
+  no credentials, no body, safe to bookmark). Diff semantics:
+
+  | Bucket | Join key | "changed" trigger |
+  | --- | --- | --- |
+  | Classes | `uri` | Any non-metadata field differs (label, comment, source_db, etc.). |
+  | Properties | `uri` (walks `ontology_properties` + `ontology_object_properties` + `ontology_datatype_properties`) | Any non-metadata field; `rdfs_range` drift is the flagship case. |
+  | Constraints | `(class_uri, property_uri, restriction_type)` composite -- constraints don't carry URIs of their own, so the AQL resolves `class_id` / `property_id` to URIs server-side via lookup against the per-ontology class + property rows | `restriction_value` differs. Severity / message drift is curator metadata, not schema semantics, and intentionally NOT a change trigger in v1. |
+
+  Provenance compatibility (`source_db` + `source_host`) is a
+  warning, not a refusal. The diff serves regardless; the
+  `provenance.compatible` flag + `provenance.warning` string tell
+  the curator whether they're looking at schema evolution or a
+  cross-schema compare.
+
+  Self-diff (`a == b`) raises `ValueError -> 400`: silently
+  returning all-empty buckets would mislead a caller into thinking
+  nothing changed when they passed the same id by mistake.
+
+  Tests added (41 new across two files): `test_schema_diff.py`
+  (37 tests covering every helper -- `_by_uri`, `_schema_data_changed`,
+  `_diff_by_uri`, `_constraint_join_key`, `_diff_constraints`,
+  `_evaluate_provenance` -- plus eight orchestrator scenarios
+  including added class, property range drift, constraint
+  tightening, provenance match + mismatch, summary-vs-bucket
+  consistency, and missing-collection tolerance) and
+  `test_schema_diff_api.py` (4 tests on the route: query-param
+  forwarding, self-diff -> 400, warning pass-through, kwarg
+  contract).
+
+  Edges (`subclass_of`, `has_property`, `rdfs_domain`,
+  `rdfs_range_class`, etc.) are intentionally out of scope for
+  v1: their changes are nearly always implicit consequences of
+  class / property add / remove that the diff already surfaces.
+  If a future iteration wants to surface edge-level drift
+  directly, add a fourth bucket without changing the existing
+  shape.
+
+  **Frontend UI is a follow-up PR**: this commit closes the S.5
+  backend deliverable per the plan's "Backend" task type. A
+  workspace overlay that calls `GET /schema/diff` and renders
+  the three buckets as collapsible accordions (with the
+  `provenance.warning` banner up top) is the natural next step
+  -- tracked under Stream 7 polish.
 
 #### Tasks
 
@@ -679,7 +730,7 @@ Stream 5 is split into three PRs:
 | S.2 | OWL export from schema | Backend | **DONE (pre-existing)** | TTL fed into `import_from_file` -> standard ArangoRDF PGT pipeline. |
 | S.3 | Schema extraction API | Backend | **DONE (pre-existing)** | `POST /api/v1/ontology/schema/extract` + `GET /api/v1/ontology/schema/extract/{run_id}`. |
 | S.4 | Provenance tracking for schema sources | Backend | **DONE (PR 1, v0.4.0-dev)** | `_stamp_per_class_provenance` -- per-class `source_db` / `source_collection` / `source_host`. Bulk AQL, no N+1. Failure swallowed so provenance bugs never break extraction. TTL also carries the same triples via the `aoe:` vocab so exports round-trip. |
-| S.5 | Schema diff for evolution tracking | Backend | **DEFERRED (PR 3)** | Needs snapshot storage design. |
+| S.5 | Schema diff for evolution tracking | Backend | **DONE (PR 3 sub-B, v0.4.0-dev)** | New `app/services/schema_diff.py` + `GET /api/v1/ontology/schema/diff?a=<ontology>&b=<ontology>` endpoint. Computes `{added, removed, changed}` for classes (by `uri`), properties (by `uri` across all three PGT collections), and constraints (by composite `(class_uri, property_uri, restriction_type)` key, joined server-side via AQL because constraints store `_key` references and `_key`s are disjoint across ontologies). `changed` rows wrap `{before, after}` so the curator UI can render side-by-side without re-joining. Self-diff (`a == b`) raises `ValueError -> 400`. Provenance compatibility (`source_db` + `source_host` from class-level stamping in S.4) is surfaced as a **warning**, not a refusal -- the diff is still computed when ontologies have different source DBs or weren't created via schema extraction at all; `provenance.compatible` + `provenance.warning` carry the verdict. Reuses the temporal "skip metadata fields" pattern from `temporal._has_data_changed` but tuned for schema semantics: provenance fields (`source_db` / `source_collection` / `source_field`) are intentionally IN the comparison so a re-extraction repointed at a different source DB shows up as `changed`. Edges (`subclass_of`, `has_property`, `rdfs_domain`, etc.) are deliberately out of scope for v1 -- their changes are nearly always implicit consequences of class / property add / remove that the diff already surfaces. |
 | S.6 | Named graph discovery API | Backend | **DONE (PR 1, v0.4.0-dev)** | `POST /api/v1/ontology/schema/graphs` -- returns named graphs + edge definitions + loose collections. POST (not GET) so credentials don't leak via URL. Errors mapped to 400 (bad config) / 502 (upstream Arango unreachable) / 422 (validation). |
 | S.7 | Named graph-aware extraction | Backend | **DONE (PR 1, v0.4.0-dev)** | `_direct_extract_schema` walks `db.graphs()`, emits `owl:ObjectProperty` with `rdfs:domain` / `rdfs:range` resolved from edge definitions. Multi-from / multi-to edge defs emit one triple per vertex collection. `graph_names` config restricts the walk; `include_loose` controls fallthrough to non-graph collections. |
 | S.8 | Direct graph-to-ontology mapping (no `schema_analyzer`) | Backend | **DONE (PR 1, v0.4.0-dev)** | Same `_direct_extract_schema` path: (a) document collection → `owl:Class`, (b) edge collection → `owl:ObjectProperty` with domain/range from edge def, (c) sampled scalar fields → `owl:DatatypeProperty` with XSD type inferred from value. Field URIs are scoped to the source collection (`{Col}.{field}`) so two collections with a `name` field don't collide. Heterogeneous types fall back to `xsd:string`. Nested objects + arrays skipped for v1 (logged limitation; can recurse in PR 3). |
@@ -706,9 +757,12 @@ discriminate `400`/`502`/`500` so the user knows whether to fix
 credentials, network, or scope. 33 new frontend tests (component
 + pure helpers + canvas menu); full Jest suite at 617/617.
 
-**Outstanding (PR 3 sub-B):** S.5 schema diff -- needs snapshot
-storage design first. S.9 constraint mapping shipped as PR 3
-sub-A in v0.4.0-dev (see "Plan-vs-reality audit" above).
+**Exit Criteria — PR 3 MET:** Sub-A (S.9 constraint mapping, commit
+`a484d54`) and sub-B (S.5 schema diff, this commit) shipped in
+v0.4.0-dev; see "Plan-vs-reality audit" above. Stream 5 is now
+**complete** at the backend level. Frontend overlays for both
+sub-PRs are deferred to Stream 7 (Production Polish) -- the backend
+deliverables are independently useful via REST.
 
 ---
 
