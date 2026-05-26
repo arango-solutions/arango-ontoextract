@@ -17,6 +17,11 @@ from arango.collection import StandardCollection
 from arango.database import StandardDatabase
 
 from app.api.errors import NotFoundError
+from app.api.metrics import (
+    EXTRACTION_DURATION,
+    EXTRACTION_RUNS,
+    QUEUE_DEPTH,
+)
 from app.config import settings
 from app.db.client import get_db
 from app.db.pagination import paginate
@@ -294,6 +299,16 @@ async def execute_run(
         if final_state.get("consistency_result") is None:
             status = "failed"
 
+        # Stream 7 PR 3 -- E.2: record run outcome + duration on the
+        # Prometheus counters that back the extraction-failure-rate
+        # and extraction-throughput alerts. We tag by ``status`` so
+        # the alert rule can compute ``rate(failed) / rate(total)``
+        # without re-deriving from logs. Duration is bucketed by the
+        # histogram declared in ``app/api/metrics.py`` (1s -> 600s).
+        EXTRACTION_RUNS.labels(status=status).inc()
+        started_at = run_record.get("started_at") or completed_at
+        EXTRACTION_DURATION.observe(max(0.0, completed_at - started_at))
+
         consistency = final_state.get("consistency_result")
         classes_extracted = len(consistency.classes) if consistency else 0
         properties_extracted = (
@@ -456,6 +471,15 @@ async def execute_run(
                 )
                 _BACKGROUND_TASKS.add(task)
                 task.add_done_callback(_BACKGROUND_TASKS.discard)
+                # Stream 7 PR 3 -- E.2: keep the queue-depth gauge
+                # current so the "extraction queue depth > 10" alert
+                # has a live signal. Set on add + discard; the
+                # done-callback below uses a lambda so the discard
+                # path also re-reads ``len(...)``.
+                QUEUE_DEPTH.labels(queue="extraction").set(len(_BACKGROUND_TASKS))
+                task.add_done_callback(
+                    lambda _t: QUEUE_DEPTH.labels(queue="extraction").set(len(_BACKGROUND_TASKS))
+                )
 
                 # Q.2 (Stream 4) — record a quality history snapshot tagged
                 # with the originating run so the dashboard's trend chart
@@ -480,6 +504,15 @@ async def execute_run(
 
     except Exception as exc:
         log.exception("extraction pipeline failed", extra={"run_id": run_id})
+        # Stream 7 PR 3 -- E.2: failed runs that bypassed the
+        # success path (eg crashed before completed_at was computed)
+        # still need to tick the counter so the failure-rate alert
+        # sees them. Duration is best-effort: ``started_at`` was
+        # stamped when the run record was created; if it's missing
+        # we observe 0.0 so the count is still recorded.
+        EXTRACTION_RUNS.labels(status="failed").inc()
+        started_at = run_record.get("started_at") or time.time()
+        EXTRACTION_DURATION.observe(max(0.0, time.time() - started_at))
         partial_logs: list[dict[str, Any]] = []
         partial_belief_revision: dict[str, Any] | None = None
         if final_state and final_state.get("step_logs"):

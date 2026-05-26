@@ -15,6 +15,7 @@ from fastapi import APIRouter, Query, UploadFile
 
 from app.api.dependencies import get_or_404
 from app.api.errors import ConflictError, ValidationError
+from app.api.metrics import QUEUE_DEPTH
 from app.db import documents_repo
 from app.db.client import get_db
 from app.db.utils import run_aql
@@ -28,6 +29,30 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
 _background_tasks: set[asyncio.Task[None]] = set()  # prevent GC of fire-and-forget tasks
+
+
+def _track_ingest_task(task: asyncio.Task[None]) -> None:
+    """Track an ingestion task + update the ``ingest`` queue-depth metric.
+
+    Stream 7 PR 3 -- E.2: the queue-depth gauge backs the alert
+    rule ``ExtractionQueueBacklog`` (see ``infra/monitoring/alerts.yml``).
+    We update on both add and done-callback so the value tracks
+    actual depth in real time. Without this the gauge stays at 0
+    even under load and the alert never fires.
+
+    Centralised here so all upload endpoints in this module share
+    one queue-tracking implementation -- adding a third upload route
+    later won't need its own metric wiring.
+    """
+    _background_tasks.add(task)
+    QUEUE_DEPTH.labels(queue="ingest").set(len(_background_tasks))
+
+    def _on_done(_t: asyncio.Task[None]) -> None:
+        _background_tasks.discard(_t)
+        QUEUE_DEPTH.labels(queue="ingest").set(len(_background_tasks))
+
+    task.add_done_callback(_on_done)
+
 
 _ALLOWED_MIME_TYPES = {
     "application/pdf",
@@ -139,8 +164,7 @@ async def upload_document(
     )
 
     task = asyncio.create_task(process_document(doc["_key"], content, mime))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    _track_ingest_task(task)
 
     return {
         "doc_id": doc["_key"],
@@ -224,8 +248,7 @@ async def update_document(
     documents_repo.update_document_status(doc_id, DocumentStatus.UPLOADING)
 
     task = asyncio.create_task(process_document(doc_id, content, mime))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    _track_ingest_task(task)
 
     updated = documents_repo.get_document(doc_id)
     return _to_doc_response(updated or {"_key": doc_id})

@@ -1,0 +1,79 @@
+# Alertmanager routing (Stream 7 PR 3 -- E.2).
+#
+# Default: alerts log to stdout via the ``null`` receiver and the
+# operator wires in their real channel (Slack / PagerDuty / email)
+# by overriding this file at deploy time. Shipping with stdout-only
+# is deliberate -- the alternative is bundling sample webhook URLs
+# that drift, leak, or get mistaken for production.
+#
+# Two routes are pre-wired:
+# * ``severity: critical`` -- short group-wait so paging is fast,
+#                             group_interval keeps duplicates quiet.
+# * ``severity: warning``  -- longer group-wait; warnings batch
+#                             together so the channel isn't spammed.
+#
+# To customise:
+# 1. Add a real receiver block (eg ``slack-critical``) under
+#    ``receivers:`` with your webhook + channel.
+# 2. Point the matching route ``receiver:`` at it.
+# 3. ``docker compose ... up -d alertmanager`` to reload.
+#
+# See the runbook in ``docs/operations/production-deployment.md``
+# for end-to-end setup including secret handling.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default
+  group_by: ["alertname", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+
+  routes:
+    # Critical alerts -- shortest group_wait so we page fast.
+    - match:
+        severity: critical
+      receiver: critical
+      group_wait: 10s
+      repeat_interval: 1h
+
+    # Warnings -- longer batching, less aggressive repeats.
+    - match:
+        severity: warning
+      receiver: warnings
+      group_wait: 60s
+      repeat_interval: 12h
+
+receivers:
+  # Default catch-all -- logs alert payloads to the Alertmanager
+  # container's stdout (visible via ``docker logs alertmanager``).
+  # Replace with a real receiver in deployment.
+  - name: default
+
+  # Page-worthy events. Drop in a PagerDuty service_key or a
+  # Slack webhook for #alerts-critical here.
+  - name: critical
+    # Example (commented):
+    # pagerduty_configs:
+    #   - service_key: "${PAGERDUTY_SERVICE_KEY}"
+    #     severity: "{{ .CommonLabels.severity }}"
+
+  # Lower-priority alerts. Suggest #alerts-warnings or an email
+  # group rather than paging on these.
+  - name: warnings
+    # Example (commented):
+    # slack_configs:
+    #   - api_url: "${SLACK_WARNINGS_WEBHOOK}"
+    #     channel: "#alerts-warnings"
+    #     send_resolved: true
+
+# Inhibit warnings when a related critical is already firing -- no
+# point paging twice about the same incident.
+inhibit_rules:
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: ["alertname"]

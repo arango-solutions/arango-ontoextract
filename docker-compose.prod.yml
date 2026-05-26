@@ -1,3 +1,41 @@
+# Production docker-compose (Stream 7 PR 3 -- E.6).
+#
+# Production-grade hardening over the previous compose:
+# * Resource limits + reservations on every service so a runaway
+#   container can't starve its neighbours on a single host.
+# * Log rotation via json-file driver (10MB x 5 files) so disks
+#   don't fill quietly between restarts.
+# * Health checks already present; reaffirmed and consistent.
+# * Optional monitoring stack (Prometheus + Alertmanager) behind
+#   the ``monitoring`` profile -- start with:
+#       docker compose -f docker-compose.prod.yml \
+#         --profile monitoring up -d
+#   Alert rules live in ``infra/monitoring/alerts.yml``;
+#   Alertmanager routing in ``infra/monitoring/alertmanager.yml``.
+# * Optional OpenTelemetry collector behind the ``tracing`` profile
+#   for the Stream 7 PR 2 (E.1) tracing pipeline.
+#
+# Resource sizing rationale (tune per deployment):
+# * Backend: 2 vCPU / 2GB -- LLM proxy work is mostly I/O; CPU
+#   floor reserved so it doesn't get squeezed off-CPU under load.
+# * Frontend: 0.5 vCPU / 512MB -- Next.js static serve only.
+# * ArangoDB: 4 vCPU / 4GB -- query workhorse; needs RAM headroom
+#   for vector index + working set.
+# * Redis: 0.5 vCPU / 384MB -- maxmemory already capped at 256MB
+#   in command; container ceiling gives breathing room.
+# * Caddy: 0.5 vCPU / 256MB -- pure reverse proxy.
+
+x-default-logging: &default-logging
+  # 10MB rotated, 5 files retained = ~50MB/container cap on host
+  # disk. Production deployments funnel these into a real log
+  # aggregator (Loki, CloudWatch, Datadog) via a sidecar or the
+  # node-level log driver; this rotation is the floor that stops
+  # local disk exhaustion regardless.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   # ---------- Reverse proxy / TLS ----------
   caddy:
@@ -17,6 +55,15 @@ services:
         condition: service_healthy
     networks:
       - aoe-prod-network
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
 
   # ---------- Backend (FastAPI) ----------
   backend:
@@ -29,6 +76,11 @@ services:
       APP_ENV: production
       REDIS_URL: redis://redis:6379/0
       ARANGO_HOST: http://arangodb:8529
+      # Stream 7 PR 2 -- E.1: OpenTelemetry knobs (default off).
+      # Flip OTEL_ENABLED=true + point at the collector to start
+      # shipping spans. See docs/operations/production-deployment.md.
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
       arangodb:
         condition: service_healthy
@@ -40,8 +92,21 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    # Internal-only metrics scrape target for Prometheus (no host
+    # port published -- the network alias is enough).
+    expose:
+      - "8000"
     networks:
       - aoe-prod-network
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
 
   # ---------- Frontend (Next.js) ----------
   frontend:
@@ -62,6 +127,15 @@ services:
       start_period: 15s
     networks:
       - aoe-prod-network
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
 
   # ---------- ArangoDB ----------
   arangodb:
@@ -80,6 +154,15 @@ services:
       retries: 5
     networks:
       - aoe-prod-network
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 1G
 
   # ---------- Redis ----------
   redis:
@@ -95,6 +178,15 @@ services:
       retries: 5
     networks:
       - aoe-prod-network
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 384M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
 
   # ---------- MCP Server (optional) ----------
   mcp-server:
@@ -113,6 +205,80 @@ services:
         condition: service_healthy
     networks:
       - aoe-prod-network
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+
+  # ---------- Prometheus (Stream 7 PR 3 -- E.2) ----------
+  # Profile: ``monitoring``. Scrapes the backend's /api/v1/metrics
+  # every 15s, evaluates alert rules in ``alerts.yml``, forwards
+  # firing alerts to Alertmanager.
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      # Exposed locally for ad-hoc queries; in real deployments,
+      # gate behind Caddy auth or drop the host binding entirely.
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - aoe-prod-network
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.2"
+          memory: 256M
+
+  # ---------- Alertmanager (Stream 7 PR 3 -- E.2) ----------
+  # Profile: ``monitoring``. Receives alerts from Prometheus,
+  # dedups + groups + routes per ``alertmanager.yml``. Ships with
+  # a stdout-only default receiver -- wire your Slack /
+  # PagerDuty config in before going live.
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    volumes:
+      - ./infra/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    networks:
+      - aoe-prod-network
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
 
 volumes:
   caddy_data:
@@ -120,6 +286,8 @@ volumes:
   arangodb_prod_data:
   arangodb_prod_apps:
   redis_prod_data:
+  prometheus_data:
+  alertmanager_data:
 
 networks:
   aoe-prod-network:

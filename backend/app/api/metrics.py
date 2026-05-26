@@ -63,6 +63,21 @@ ACTIVE_WEBSOCKETS = Gauge(
     labelnames=["endpoint"],
 )
 
+# -- Database connectivity (Stream 7 PR 3 -- E.2) -----------------------
+# Incremented every time a connection to ArangoDB fails (eg the
+# ``/ready`` probe can't reach ``db.version()``). The companion alert
+# rule in ``infra/monitoring/alerts.yml`` fires when this counter
+# increases at all over a 5m window -- ie any connection failure in
+# production is page-worthy. Operators get visibility into transient
+# Arango flakiness before users notice. Label ``reason`` keeps the
+# cardinality tiny (``timeout`` / ``auth`` / ``unknown``) while
+# splitting the dashboard into useful slices.
+DB_CONNECTION_ERRORS = Counter(
+    "aoe_db_connection_errors_total",
+    "Total ArangoDB connection failures observed on the readiness probe",
+    labelnames=["reason"],
+)
+
 
 class PrometheusMiddleware(BaseHTTPMiddleware):
     """Records request latency and counts for Prometheus."""

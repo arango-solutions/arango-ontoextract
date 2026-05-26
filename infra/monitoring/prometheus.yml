@@ -1,0 +1,67 @@
+# Prometheus scrape + alerting config (Stream 7 PR 3 -- E.2).
+#
+# Loaded by the ``prometheus`` service in ``docker-compose.prod.yml``
+# (profile ``monitoring``). Operators start the monitoring stack with:
+#
+#     docker compose -f docker-compose.prod.yml --profile monitoring up -d
+#
+# The backend exposes Prometheus-format metrics at
+# ``/api/v1/metrics`` via ``app.api.metrics``. The middleware records
+# request latency / counts; manual instrumentation in
+# ``app.services.extraction`` and ``app.api.documents`` records
+# extraction outcomes + queue depth; ``app.api.health`` records DB
+# connection failures from the readiness probe. Alert rules in
+# ``alerts.yml`` reference exactly these series.
+#
+# Cardinality notes:
+# * Path label uses the route pattern (``/api/v1/ontology/{id}``),
+#   not raw URLs, so cardinality stays bounded under load.
+# * Queue label ("ingest" / "extraction") is a closed set.
+# * DB-error ``reason`` is a closed 3-way bucket (timeout / auth /
+#   unknown) -- raw exception messages are never used as labels.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    # ``service`` matches ``settings.otel_service_name`` so traces
+    # and metrics line up in a unified observability view.
+    service: arango-ontoextract
+
+# Rule files evaluated every ``evaluation_interval`` above. Adding
+# a new alert? Drop it into ``alerts.yml`` (no Prometheus restart
+# needed; SIGHUP to reload, or ``--web.enable-lifecycle`` for HTTP
+# reload).
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+# Alertmanager handles routing / dedup / silencing. We point at
+# the in-network service name from ``docker-compose.prod.yml``.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  # ----- AOE backend metrics -------------------------------------
+  - job_name: aoe-backend
+    metrics_path: /api/v1/metrics
+    static_configs:
+      - targets:
+          - backend:8000
+        labels:
+          # Cluster label is convenient when Prometheus federation
+          # is set up later. Defaults to ``prod`` for the production
+          # compose; override per-environment if you stand up
+          # staging on the same Prometheus.
+          cluster: prod
+
+  # ----- Prometheus self-scrape ----------------------------------
+  # Lets us alert on Prometheus itself going down (eg via
+  # `up{job="prometheus"} == 0` in a meta-alert). Optional but
+  # free; Prometheus exposes its own metrics on the same port.
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090

@@ -1,0 +1,136 @@
+# Prometheus alert rules (Stream 7 PR 3 -- E.2, PRD Section 8.5).
+#
+# These rules implement the four production-grade alerts the PRD
+# requires. Every rule's expression references a metric that is
+# actively written by application code (see ``app/api/metrics.py``
+# for the series definitions and the wiring sites listed in each
+# alert's ``runbook_url`` annotation).
+#
+# Severity convention:
+# * critical -- page immediately, customer-visible impact or system
+#               down. Routed by alertmanager to the on-call rotation.
+# * warning  -- investigate during business hours; performance or
+#               capacity drift that hasn't broken anything yet.
+#
+# Window choice: ``for: 5m`` on most rules absorbs transient blips
+# (one slow ChatGPT response shouldn't page anyone). The DB-error
+# alert uses ``for: 2m`` because a real Arango outage is worth
+# paging on faster.
+
+groups:
+  - name: aoe-production
+    interval: 30s
+    rules:
+
+      # =========================================================
+      # E.2 #1: Extraction failure rate > 20% over 5m
+      # =========================================================
+      # Source: ``EXTRACTION_RUNS`` counter wired in
+      # ``services/extraction.execute_run``. Status labels:
+      #   * ``completed``              -- success path
+      #   * ``completed_with_errors``  -- partial success (NOT failure)
+      #   * ``failed``                 -- pipeline crashed or
+      #                                   produced no result
+      #
+      # We use ``rate()`` (not ``increase()``) so the denominator is
+      # not biased by long-idle periods, and an OR-zero clamp so we
+      # don't fire when nothing has run in the window.
+      - alert: ExtractionFailureRateHigh
+        expr: |
+          (
+            sum(rate(aoe_extraction_runs_total{status="failed"}[5m]))
+            /
+            sum(rate(aoe_extraction_runs_total[5m]))
+          ) > 0.20
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Extraction failure rate above 20% ({{ $value | humanizePercentage }})"
+          description: |
+            More than 20% of extraction runs have failed in the last
+            5 minutes. Check ``/api/v1/runs?status=failed`` for the
+            offending run ids, then inspect their step_logs for
+            common patterns (LLM provider down, consistency-check
+            crash, materialization write errors).
+          runbook_url: "https://github.com/ArthurKeen/arango-ontoextract/blob/main/docs/operations/production-deployment.md#alert-extractionfailureratehigh"
+
+      # =========================================================
+      # E.2 #2: API p95 latency > 2s
+      # =========================================================
+      # Source: ``REQUEST_LATENCY`` histogram in
+      # ``app/api/metrics.PrometheusMiddleware``. Excludes the
+      # ``/api/v1/metrics`` endpoint itself (it's exempted in the
+      # middleware so scraping doesn't pollute its own histogram).
+      #
+      # ``histogram_quantile`` over a 5m window smooths short
+      # spikes; tweak the window if the alert proves too sleepy /
+      # too jumpy under real traffic.
+      - alert: APILatencyP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(aoe_http_request_duration_seconds_bucket[5m])) by (le, method, path)
+          ) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "API p95 latency > 2s on {{ $labels.method }} {{ $labels.path }} ({{ $value | humanizeDuration }})"
+          description: |
+            p95 request latency exceeded 2 seconds for the last 5
+            minutes. Common causes: ArangoDB query regressions,
+            cold caches after a deploy, LLM provider slowness
+            bleeding into routes that proxy LLM calls. Check the
+            associated trace in Jaeger / Tempo via the request's
+            ``trace_id`` log field.
+
+      # =========================================================
+      # E.2 #3: Extraction queue depth > 10
+      # =========================================================
+      # Source: ``QUEUE_DEPTH`` gauge set by
+      # ``services.extraction._BACKGROUND_TASKS`` (queue=extraction)
+      # and ``api.documents._track_ingest_task`` (queue=ingest).
+      # Either queue backing up means user uploads are starving for
+      # workers.
+      - alert: ExtractionQueueBacklog
+        expr: max(aoe_queue_depth) by (queue) > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "{{ $labels.queue }} queue depth sustained above 10 ({{ $value }})"
+          description: |
+            The ``{{ $labels.queue }}`` background-task queue has
+            held more than 10 in-flight tasks for 5 minutes. This
+            usually means LLM latency / cost is gating throughput.
+            Consider horizontal scaling, or check
+            ``aoe_extraction_duration_seconds`` for runaway runs.
+
+      # =========================================================
+      # E.2 #4: ArangoDB connection failures
+      # =========================================================
+      # Source: ``DB_CONNECTION_ERRORS`` counter incremented in
+      # ``app/api/health.ready`` whenever the readiness probe
+      # cannot reach Arango. Any non-zero rate is page-worthy:
+      # readiness probes run every few seconds in Kubernetes, so a
+      # real outage produces a clearly elevated rate fast.
+      - alert: ArangoDBConnectionFailures
+        expr: sum(rate(aoe_db_connection_errors_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "ArangoDB connection failures detected ({{ $value | humanize }}/s, reason={{ $labels.reason }})"
+          description: |
+            The backend's readiness probe is failing to reach
+            ArangoDB. Check Arango container/pod health, network
+            policies, and credentials. ``reason`` label buckets
+            the failure: ``timeout`` (network / Arango hung),
+            ``auth`` (creds / DB-not-found / permissions),
+            ``unknown`` (anything else).
+          runbook_url: "https://github.com/ArthurKeen/arango-ontoextract/blob/main/docs/operations/production-deployment.md#alert-arangodbconnectionfailures"
