@@ -1,8 +1,20 @@
-"""Export ontology graphs as OWL Turtle, JSON-LD, or CSV.
+"""Export ontology graphs as OWL Turtle, JSON-LD, CSV, or SHACL Turtle.
 
-Queries current (non-expired) classes, properties, and edges from the database,
-builds an rdflib Graph representing valid OWL 2, and serializes to the requested
-format. All exports are temporal-aware: only current versions are included.
+Queries current (non-expired) classes, properties, edges, and constraints
+from the database, builds an rdflib Graph representing valid OWL 2 (plus a
+parallel SHACL shapes graph), and serializes to the requested format. All
+exports are temporal-aware: only current versions are included.
+
+Stream 3 PR 5 adds:
+
+* OWL ``owl:Restriction`` emission in the standard Turtle export -- pulls
+  ``ontology_constraints`` rows whose ``constraint_type == "owl:Restriction"``
+  (covers both PR 1 LLM-extracted rows and PR 2 OWL-imported rows; SHACL
+  rows go to the SHACL export, not Turtle).
+* ``export_shacl()`` -- a new exporter that emits a SHACL shapes graph
+  from ``constraint_type IN ("sh:NodeShape", "sh:PropertyShape")`` rows.
+  Grouped per target class as one ``sh:NodeShape`` with one
+  ``sh:PropertyShape`` per property.
 """
 
 from __future__ import annotations
@@ -13,13 +25,16 @@ import json
 import logging
 from typing import Any, cast
 
-from rdflib import OWL, RDF, RDFS, XSD, Graph, Literal, Namespace, URIRef
+from rdflib import OWL, RDF, RDFS, XSD, BNode, Graph, Literal, Namespace, URIRef
 
 from app.config import settings
 from app.db.client import get_db
+from app.db.constraints_repo import list_constraints_for_ontology
 from app.db.ontology_repo import list_classes, list_properties
 from app.db.registry_repo import get_registry_entry
 from app.services.temporal import NEVER_EXPIRES
+
+SH = Namespace("http://www.w3.org/ns/shacl#")
 
 log = logging.getLogger(__name__)
 
@@ -110,12 +125,37 @@ def _build_rdf_graph(ontology_id: str) -> Graph:
 
     _add_edges_to_graph(db, g, ontology_id)
 
+    # Stream 3 PR 5 -- emit owl:Restriction blank nodes for every
+    # OWL-typed constraint row. SHACL rows are intentionally excluded;
+    # they belong in the SHACL shapes graph (export_shacl), not in
+    # the OWL document.
+    # ``_id`` is the join key constraints store in ``on_class`` /
+    # ``property_id``. Some legacy / mocked rows omit it; we filter
+    # so the dict comp doesn't crash on them. Such rows simply won't
+    # match any constraint join and are quietly dropped from the
+    # restriction lookup (constraints without a target class were
+    # already a no-op before this PR).
+    class_id_to_uri = {
+        cls["_id"]: URIRef(cls["uri"]) for cls in classes if cls.get("uri") and cls.get("_id")
+    }
+    property_id_to_uri = {
+        p["_id"]: URIRef(p["uri"]) for p in properties if p.get("uri") and p.get("_id")
+    }
+    restrictions_emitted = _add_owl_restrictions_to_graph(
+        db,
+        g,
+        ontology_id=ontology_id,
+        class_id_to_uri=class_id_to_uri,
+        property_id_to_uri=property_id_to_uri,
+    )
+
     log.info(
         "built RDF graph for export",
         extra={
             "ontology_id": ontology_id,
             "classes": len(classes),
             "properties": len(properties),
+            "restrictions_emitted": restrictions_emitted,
             "triples": len(g),
         },
     )
@@ -218,6 +258,414 @@ def _resolve_range(range_str: str) -> URIRef:
     if lower in _XSD_MAP:
         return _XSD_MAP[lower]
     return URIRef(range_str)
+
+
+# ---------------------------------------------------------------------------
+# OWL restriction emission (Stream 3 PR 5)
+# ---------------------------------------------------------------------------
+
+# Mapping from our internal restriction_type token (matches
+# RestrictionType in app.models.ontology) to the OWL predicate that
+# carries the value on the restriction blank node.
+_OWL_CARDINALITY_PREDICATE: dict[str, URIRef] = {
+    "minCardinality": OWL.minCardinality,
+    "maxCardinality": OWL.maxCardinality,
+    "cardinality": OWL.cardinality,
+}
+
+_OWL_QUANTIFIED_PREDICATE: dict[str, URIRef] = {
+    "allValuesFrom": OWL.allValuesFrom,
+    "someValuesFrom": OWL.someValuesFrom,
+}
+
+
+def _add_owl_restrictions_to_graph(
+    db: Any,
+    g: Graph,
+    *,
+    ontology_id: str,
+    class_id_to_uri: dict[str, URIRef],
+    property_id_to_uri: dict[str, URIRef],
+) -> int:
+    """Emit `owl:Restriction` blank nodes for OWL-typed constraint rows.
+
+    For each row from ``ontology_constraints`` where
+    ``constraint_type == "owl:Restriction"``, materialises:
+
+        <on_class_uri> rdfs:subClassOf [
+            a owl:Restriction ;
+            owl:onProperty <property_uri> ;
+            <restriction_predicate> <restriction_value>
+        ] .
+
+    Rows whose ``on_class`` cannot be resolved to a known class URI
+    (e.g. the class was deleted but the constraint row was orphaned)
+    are skipped with a warning -- a dangling subClassOf would produce
+    a syntactically valid but semantically broken Turtle document.
+
+    Rows whose ``property_id`` is null (the LLM extractor or OWL
+    importer couldn't resolve the property URI) are skipped with a
+    warning rather than emitting a restriction with no ``owl:onProperty``.
+    Such a triple would be malformed OWL.
+
+    Returns the count of restriction blank nodes successfully emitted.
+    """
+    rows = list_constraints_for_ontology(
+        db,
+        ontology_id=ontology_id,
+        constraint_type="owl:Restriction",
+    )
+    if not rows:
+        return 0
+
+    emitted = 0
+    skipped_class = 0
+    skipped_property = 0
+    skipped_value = 0
+
+    for row in rows:
+        on_class_id = row.get("on_class")
+        class_uri = class_id_to_uri.get(on_class_id or "")
+        if class_uri is None:
+            skipped_class += 1
+            continue
+
+        prop_id = row.get("property_id")
+        prop_uri: URIRef | None = None
+        if prop_id:
+            prop_uri = property_id_to_uri.get(prop_id)
+        if prop_uri is None:
+            # Fall back on the raw property_uri stored on the row.
+            # This keeps the export useful even when the importer
+            # couldn't link the constraint to a known property -- the
+            # output Turtle remains round-trip valid (the OWL parser
+            # accepts any IRI as the value of owl:onProperty).
+            raw_uri = row.get("property_uri")
+            if raw_uri:
+                prop_uri = URIRef(raw_uri)
+        if prop_uri is None:
+            skipped_property += 1
+            continue
+
+        rkind = row.get("restriction_type", "")
+        rvalue = row.get("restriction_value")
+
+        # Build the restriction body. We add ALL triples to a working
+        # list first and only commit them if the value is well-formed,
+        # so a half-emitted restriction never appears in the graph.
+        restriction_predicate: URIRef | None = None
+        restriction_object: URIRef | Literal | None = None
+
+        if rkind in _OWL_CARDINALITY_PREDICATE:
+            if not isinstance(rvalue, int) or isinstance(rvalue, bool) or rvalue < 0:
+                # Cardinality MUST be xsd:nonNegativeInteger. A bool
+                # would silently pass `isinstance(int)` so we filter
+                # it explicitly; a negative integer is a contract bug
+                # we'd rather surface than serialise.
+                skipped_value += 1
+                continue
+            restriction_predicate = _OWL_CARDINALITY_PREDICATE[rkind]
+            restriction_object = Literal(rvalue, datatype=XSD.nonNegativeInteger)
+
+        elif rkind in _OWL_QUANTIFIED_PREDICATE:
+            if not isinstance(rvalue, str) or not rvalue:
+                skipped_value += 1
+                continue
+            restriction_predicate = _OWL_QUANTIFIED_PREDICATE[rkind]
+            restriction_object = URIRef(rvalue)
+
+        elif rkind == "hasValue":
+            if rvalue is None:
+                skipped_value += 1
+                continue
+            restriction_predicate = OWL.hasValue
+            # owl:hasValue can be a literal OR an IRI individual. We
+            # treat any string that parses as an http(s) IRI as a URI
+            # reference (matching the typical OWL convention); other
+            # strings become plain literals; numbers / booleans become
+            # typed literals so a round-trip preserves the datatype.
+            if isinstance(rvalue, str) and (
+                rvalue.startswith("http://") or rvalue.startswith("https://")
+            ):
+                restriction_object = URIRef(rvalue)
+            else:
+                restriction_object = Literal(rvalue)
+        else:
+            # Unknown restriction kind -- skip with a warning rather
+            # than emit a malformed restriction. Examples that could
+            # land here in the future: qualified cardinality (PR 2
+            # warn-skip), or any custom kind a future extraction prompt
+            # decides to invent.
+            skipped_value += 1
+            continue
+
+        r = BNode()
+        g.add((r, RDF.type, OWL.Restriction))
+        g.add((r, OWL.onProperty, prop_uri))
+        g.add((r, restriction_predicate, restriction_object))
+        g.add((class_uri, RDFS.subClassOf, r))
+        emitted += 1
+
+    if skipped_class or skipped_property or skipped_value:
+        log.warning(
+            "owl:Restriction emission skipped some constraint rows",
+            extra={
+                "ontology_id": ontology_id,
+                "skipped_unresolved_class": skipped_class,
+                "skipped_unresolved_property": skipped_property,
+                "skipped_malformed_value": skipped_value,
+                "emitted": emitted,
+            },
+        )
+
+    return emitted
+
+
+# ---------------------------------------------------------------------------
+# SHACL shapes graph emission (Stream 3 PR 5)
+# ---------------------------------------------------------------------------
+
+# Map our stored SHACL ``restriction_type`` tokens to the predicate that
+# carries the value on the property shape blank node.
+_SHACL_VALUE_PREDICATE: dict[str, URIRef] = {
+    "sh:minCount": SH.minCount,
+    "sh:maxCount": SH.maxCount,
+    "sh:datatype": SH.datatype,
+    "sh:class": SH["class"],
+    "sh:hasValue": SH.hasValue,
+    "sh:pattern": SH.pattern,
+    "sh:nodeKind": SH.nodeKind,
+    "sh:in": SH["in"],
+}
+
+_SHACL_INTEGER_KINDS = {"sh:minCount", "sh:maxCount"}
+_SHACL_URI_KINDS = {"sh:datatype", "sh:class", "sh:nodeKind"}
+
+
+def _emit_shacl_value(g: Graph, shape: BNode, kind: str, value: Any) -> bool:
+    """Add the value triple for one SHACL constraint to the property shape.
+
+    Returns ``True`` if a triple was emitted; ``False`` to indicate the
+    row should be skipped (malformed value for its kind). The caller
+    is responsible for counting / logging the skip -- this keeps the
+    helper pure and unit-testable.
+    """
+    predicate = _SHACL_VALUE_PREDICATE.get(kind)
+    if predicate is None:
+        return False
+
+    if kind in _SHACL_INTEGER_KINDS:
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return False
+        g.add((shape, predicate, Literal(value, datatype=XSD.nonNegativeInteger)))
+        return True
+
+    if kind in _SHACL_URI_KINDS:
+        if not isinstance(value, str) or not value:
+            return False
+        g.add((shape, predicate, URIRef(value)))
+        return True
+
+    if kind == "sh:hasValue":
+        if value is None:
+            return False
+        if isinstance(value, str) and (value.startswith("http://") or value.startswith("https://")):
+            g.add((shape, predicate, URIRef(value)))
+        else:
+            g.add((shape, predicate, Literal(value)))
+        return True
+
+    if kind == "sh:pattern":
+        if not isinstance(value, str) or not value:
+            return False
+        g.add((shape, predicate, Literal(value)))
+        return True
+
+    if kind == "sh:in":
+        if not isinstance(value, list) or not value:
+            return False
+        # sh:in expects an RDF list. rdflib's Collection helper would
+        # work but adds a dependency; for v1 we build the list inline
+        # so the dependency surface stays exactly what _build_rdf_graph
+        # already uses.
+        from rdflib.collection import Collection
+
+        node = BNode()
+        Collection(g, node, [Literal(v) for v in value])
+        g.add((shape, predicate, node))
+        return True
+
+    return False
+
+
+def _build_shacl_graph(ontology_id: str) -> Graph:
+    """Build a SHACL shapes graph for ``ontology_id`` (Stream 3 PR 5).
+
+    Reads ``ontology_constraints`` rows with
+    ``constraint_type IN ("sh:NodeShape", "sh:PropertyShape")`` and
+    groups them by ``on_class``. Each class becomes one ``sh:NodeShape``
+    with ``sh:targetClass`` set; each unique property under that class
+    becomes one ``sh:PropertyShape`` (a blank node attached via
+    ``sh:property``) carrying all of its SHACL constraints
+    (``sh:minCount``, ``sh:datatype``, ``sh:pattern``, etc.).
+
+    Severity (``sh:severity``) and message (``sh:message``) inherit
+    from the original imported shape -- captured per row at PR 3
+    import time. When multiple rows for the same property carry
+    different severities (because a curator hand-mixed them later)
+    we take the *first* non-empty severity / message and warn -- the
+    SHACL spec doesn't allow per-constraint severity on a property
+    shape, only per-shape.
+    """
+    db = get_db()
+
+    registry = get_registry_entry(ontology_id, db=db)
+    ontology_uri = settings.default_ontology_uri.rstrip("#") + "/" + ontology_id
+    if registry:
+        ontology_uri = registry.get("uri", ontology_uri)
+
+    g = Graph()
+    g.bind("sh", SH)
+    g.bind("rdf", RDF)
+    g.bind("rdfs", RDFS)
+    g.bind("xsd", XSD)
+    g.bind("owl", OWL)
+
+    # Header so a SHACL parser sees the shapes-graph as an ontology
+    # of its own -- matches what the SHACL community publishes.
+    ont_node = URIRef(ontology_uri.rstrip("#") + "/shapes")
+    g.add((ont_node, RDF.type, OWL.Ontology))
+    g.add((ont_node, RDFS.label, Literal(f"SHACL shapes for {ontology_id}")))
+
+    rows = [
+        row
+        for row in list_constraints_for_ontology(db, ontology_id=ontology_id)
+        if row.get("constraint_type") in {"sh:NodeShape", "sh:PropertyShape"}
+    ]
+    if not rows:
+        log.info(
+            "no SHACL constraints to export",
+            extra={"ontology_id": ontology_id, "triples": len(g)},
+        )
+        return g
+
+    classes = list_classes(db, ontology_id=ontology_id, include_expired=False)
+    properties = list_properties(db, ontology_id=ontology_id)
+    # See note in ``_build_rdf_graph`` -- same ``_id`` guard rule.
+    class_id_to_uri = {
+        cls["_id"]: URIRef(cls["uri"]) for cls in classes if cls.get("uri") and cls.get("_id")
+    }
+    property_id_to_uri = {
+        p["_id"]: URIRef(p["uri"]) for p in properties if p.get("uri") and p.get("_id")
+    }
+
+    # Group: { class_uri -> { property_uri -> [constraint rows] } }
+    grouped: dict[URIRef, dict[URIRef, list[dict[str, Any]]]] = {}
+    skipped_class = 0
+    skipped_property = 0
+
+    for row in rows:
+        class_uri = class_id_to_uri.get(row.get("on_class") or "")
+        if class_uri is None:
+            skipped_class += 1
+            continue
+        prop_uri: URIRef | None = None
+        if row.get("property_id"):
+            prop_uri = property_id_to_uri.get(row["property_id"])
+        if prop_uri is None and row.get("property_uri"):
+            prop_uri = URIRef(row["property_uri"])
+        if prop_uri is None:
+            skipped_property += 1
+            continue
+        grouped.setdefault(class_uri, {}).setdefault(prop_uri, []).append(row)
+
+    shapes_emitted = 0
+    properties_emitted = 0
+    skipped_value = 0
+
+    for class_uri, props in grouped.items():
+        # One NodeShape per class. The shape IRI is derived from the
+        # class URI with a "Shape" suffix; deterministic so re-export
+        # produces stable IRIs (good for diff tooling and downstream
+        # citation). When PR 3 captured the original shape_iri, future
+        # work can prefer that over the synthetic IRI -- for v1 we
+        # stay deterministic.
+        shape_iri = URIRef(str(class_uri) + "Shape")
+        g.add((shape_iri, RDF.type, SH.NodeShape))
+        g.add((shape_iri, SH.targetClass, class_uri))
+        shapes_emitted += 1
+
+        for prop_uri, prop_rows in props.items():
+            pshape = BNode()
+            g.add((shape_iri, SH.property, pshape))
+            g.add((pshape, SH.path, prop_uri))
+
+            severity_iri: str | None = None
+            message_text: str | None = None
+            for r in prop_rows:
+                ok = _emit_shacl_value(
+                    g,
+                    pshape,
+                    r.get("restriction_type", ""),
+                    r.get("restriction_value"),
+                )
+                if not ok:
+                    skipped_value += 1
+                if severity_iri is None and r.get("severity"):
+                    severity_iri = r["severity"]
+                if message_text is None and r.get("description"):
+                    message_text = r["description"]
+
+            if severity_iri:
+                g.add((pshape, SH.severity, URIRef(severity_iri)))
+            if message_text:
+                g.add((pshape, SH.message, Literal(message_text)))
+            properties_emitted += 1
+
+    if skipped_class or skipped_property or skipped_value:
+        log.warning(
+            "SHACL export skipped some constraint rows",
+            extra={
+                "ontology_id": ontology_id,
+                "skipped_unresolved_class": skipped_class,
+                "skipped_unresolved_property": skipped_property,
+                "skipped_malformed_value": skipped_value,
+                "shapes_emitted": shapes_emitted,
+                "properties_emitted": properties_emitted,
+            },
+        )
+
+    log.info(
+        "built SHACL shapes graph",
+        extra={
+            "ontology_id": ontology_id,
+            "shapes_emitted": shapes_emitted,
+            "properties_emitted": properties_emitted,
+            "triples": len(g),
+        },
+    )
+    return g
+
+
+def export_shacl(ontology_id: str, fmt: str = "turtle") -> str:
+    """Export the SHACL shapes graph for ``ontology_id`` (Stream 3 PR 5).
+
+    Args:
+        ontology_id: The registry ID of the ontology to export.
+        fmt: rdflib serialization format (default ``turtle`` -- the
+            canonical SHACL serialization).
+
+    Returns:
+        Serialized SHACL shapes graph. Empty-ish (header triples only)
+        when the ontology has no SHACL constraints.
+    """
+    g = _build_shacl_graph(ontology_id)
+    serialized = g.serialize(format=fmt)
+    log.info(
+        "exported SHACL shapes",
+        extra={"ontology_id": ontology_id, "format": fmt, "triples": len(g)},
+    )
+    return serialized
 
 
 def export_ontology(ontology_id: str, fmt: str = "turtle") -> str:

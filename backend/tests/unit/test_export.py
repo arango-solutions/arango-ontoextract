@@ -7,7 +7,9 @@ import io
 import json
 from unittest.mock import MagicMock, patch
 
-from rdflib import OWL, RDF, RDFS, Graph, URIRef
+from rdflib import OWL, RDF, RDFS, Graph, Namespace, URIRef
+
+SH = Namespace("http://www.w3.org/ns/shacl#")
 
 _MOCK_CLASSES = [
     {
@@ -465,3 +467,496 @@ class TestExportCsv:
         assert "uri" in class_header
         assert "label" in class_header
         assert "description" in class_header
+
+
+# ===========================================================================
+# Stream 3 PR 5 -- OWL restriction emission + SHACL shapes export
+# ===========================================================================
+
+
+_CLASSES_WITH_IDS = [
+    {
+        "_id": "ontology_classes/Customer",
+        "_key": "Customer",
+        "uri": "http://example.org/test#Customer",
+        "label": "Customer",
+        "description": "",
+        "status": "approved",
+        "ontology_id": "test_ont",
+    }
+]
+
+_PROPS_WITH_IDS = [
+    {
+        "_id": "ontology_datatype_properties/customer_hasName",
+        "_key": "customer_hasName",
+        "uri": "http://example.org/test#hasName",
+        "label": "has name",
+        "property_type": "datatype",
+        "range": "xsd:string",
+        "status": "approved",
+        "ontology_id": "test_ont",
+    },
+    {
+        "_id": "ontology_object_properties/customer_hasFavoriteColor",
+        "_key": "customer_hasFavoriteColor",
+        "uri": "http://example.org/test#hasFavoriteColor",
+        "label": "has favorite colour",
+        "property_type": "object",
+        "range": "http://example.org/test#Color",
+        "status": "approved",
+        "ontology_id": "test_ont",
+    },
+]
+
+
+def _constraint(**overrides):
+    """Build an ``ontology_constraints`` row with sensible defaults."""
+    base = {
+        "_key": "c1",
+        "_id": "ontology_constraints/c1",
+        "constraint_type": "owl:Restriction",
+        "on_class": "ontology_classes/Customer",
+        "property_id": "ontology_datatype_properties/customer_hasName",
+        "property_uri": "http://example.org/test#hasName",
+        "restriction_type": "minCardinality",
+        "restriction_value": 1,
+        "ontology_id": "test_ont",
+    }
+    base.update(overrides)
+    return base
+
+
+class TestOwlRestrictionEmission:
+    """The Turtle export must emit one ``owl:Restriction`` blank node per
+    OWL-typed constraint row, attached to the target class via
+    ``rdfs:subClassOf``. The shape is the inverse of PR 2's import:
+    a Turtle file produced by this exporter and re-imported via
+    ``import_owl_to_graph`` should reproduce the same constraints in
+    ``ontology_constraints`` (round-trip).
+    """
+
+    @staticmethod
+    def _ttl_for_constraints(constraints, *, classes=None, properties=None):
+        from app.services.export import export_ontology
+
+        cls = classes if classes is not None else _CLASSES_WITH_IDS
+        props = properties if properties is not None else _PROPS_WITH_IDS
+        with (
+            patch("app.services.export.get_db", return_value=_mock_db()),
+            patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY),
+            patch("app.services.export.list_classes", return_value=cls),
+            patch("app.services.export.list_properties", return_value=props),
+            patch(
+                "app.services.export.list_constraints_for_ontology",
+                return_value=constraints,
+            ),
+        ):
+            return export_ontology("test_ont", fmt="turtle")
+
+    def test_min_cardinality_emits_one_restriction(self):
+        ttl = self._ttl_for_constraints([_constraint()])
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+
+        from rdflib import OWL, RDF, RDFS, XSD, Literal, URIRef
+
+        customer = URIRef("http://example.org/test#Customer")
+        has_name = URIRef("http://example.org/test#hasName")
+
+        # Exactly one subClassOf -> owl:Restriction blank node.
+        restrictions = list(g.objects(customer, RDFS.subClassOf))
+        assert len(restrictions) == 1
+        r = restrictions[0]
+        assert (r, RDF.type, OWL.Restriction) in g
+        assert (r, OWL.onProperty, has_name) in g
+        assert (r, OWL.minCardinality, Literal(1, datatype=XSD.nonNegativeInteger)) in g
+
+    def test_min_and_max_emit_two_separate_restrictions(self):
+        """One restriction per row -- mirrors PR 1's "one row per OWL
+        bound" semantics and matches how every standards body publishes
+        OWL files (min and max are independent axioms)."""
+        ttl = self._ttl_for_constraints(
+            [
+                _constraint(_key="c1", restriction_type="minCardinality", restriction_value=1),
+                _constraint(_key="c2", restriction_type="maxCardinality", restriction_value=5),
+            ]
+        )
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+
+        from rdflib import OWL, RDFS, URIRef
+
+        customer = URIRef("http://example.org/test#Customer")
+        rs = list(g.objects(customer, RDFS.subClassOf))
+        assert len(rs) == 2
+        preds = {p for r in rs for p in g.predicates(r, None)}
+        assert OWL.minCardinality in preds
+        assert OWL.maxCardinality in preds
+
+    def test_exact_cardinality_emits_owl_cardinality(self):
+        ttl = self._ttl_for_constraints(
+            [_constraint(restriction_type="cardinality", restriction_value=3)]
+        )
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import OWL, RDFS, URIRef
+
+        customer = URIRef("http://example.org/test#Customer")
+        r = next(iter(g.objects(customer, RDFS.subClassOf)))
+        cards = list(g.objects(r, OWL.cardinality))
+        assert len(cards) == 1
+        assert int(cards[0]) == 3
+
+    def test_all_values_from_emits_owl_all_values_from_iri(self):
+        ttl = self._ttl_for_constraints(
+            [
+                _constraint(
+                    property_id="ontology_object_properties/customer_hasFavoriteColor",
+                    property_uri="http://example.org/test#hasFavoriteColor",
+                    restriction_type="allValuesFrom",
+                    restriction_value="http://example.org/test#Color",
+                )
+            ]
+        )
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import OWL, URIRef
+
+        color = URIRef("http://example.org/test#Color")
+        assert (None, OWL.allValuesFrom, color) in g
+
+    def test_some_values_from_emits_owl_some_values_from_iri(self):
+        ttl = self._ttl_for_constraints(
+            [
+                _constraint(
+                    property_id="ontology_object_properties/customer_hasFavoriteColor",
+                    property_uri="http://example.org/test#hasFavoriteColor",
+                    restriction_type="someValuesFrom",
+                    restriction_value="http://example.org/test#Color",
+                )
+            ]
+        )
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import OWL, URIRef
+
+        assert (None, OWL.someValuesFrom, URIRef("http://example.org/test#Color")) in g
+
+    def test_has_value_iri_emits_uri_object(self):
+        ttl = self._ttl_for_constraints(
+            [
+                _constraint(
+                    restriction_type="hasValue",
+                    restriction_value="http://example.org/test#Red",
+                )
+            ]
+        )
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import OWL, URIRef
+
+        red = URIRef("http://example.org/test#Red")
+        assert (None, OWL.hasValue, red) in g
+
+    def test_has_value_literal_emits_literal_object(self):
+        ttl = self._ttl_for_constraints(
+            [_constraint(restriction_type="hasValue", restriction_value="Acme Corp")]
+        )
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import OWL, Literal
+
+        assert (None, OWL.hasValue, Literal("Acme Corp")) in g
+
+    def test_unresolved_class_skipped_not_crashed(self):
+        ttl = self._ttl_for_constraints([_constraint(on_class="ontology_classes/DoesNotExist")])
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import OWL
+
+        # Nothing emitted -- silent drop is fine because the warning
+        # is logged. The point is the export doesn't crash and doesn't
+        # produce a dangling subClassOf to a non-existent class.
+        assert (None, None, OWL.Restriction) not in g
+
+    def test_null_property_id_falls_back_to_property_uri(self):
+        """PR 1/PR 2 may persist a constraint with ``property_id=null``
+        when the LLM extractor or OWL importer couldn't resolve the
+        URI. The exporter SHOULD still produce a valid restriction
+        using the raw ``property_uri`` -- losing the constraint on
+        export would be worse than the resolver miss it represents."""
+        ttl = self._ttl_for_constraints(
+            [_constraint(property_id=None, property_uri="http://example.org/test#hasName")]
+        )
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import OWL, URIRef
+
+        assert (None, OWL.onProperty, URIRef("http://example.org/test#hasName")) in g
+
+    def test_negative_cardinality_skipped_not_emitted(self):
+        ttl = self._ttl_for_constraints([_constraint(restriction_value=-1)])
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import OWL
+
+        assert (None, None, OWL.Restriction) not in g
+
+    def test_shacl_typed_rows_excluded_from_owl_export(self):
+        """Cross-vocabulary firewall: SHACL rows MUST NOT appear in the
+        OWL Turtle export -- they belong in the SHACL shapes graph.
+        Pinned because the constraint store mixes both, and a future
+        refactor could accidentally widen the filter."""
+
+        # The exporter only requests ``constraint_type="owl:Restriction"``
+        # rows, so a SHACL-typed row passed here would only appear if
+        # the call site changes. Simulate the bug-defense by patching
+        # to return both kinds via constraint_type filter awareness.
+        def _ret(*args, **kwargs):
+            if kwargs.get("constraint_type") == "owl:Restriction":
+                return []
+            return [_constraint(constraint_type="sh:PropertyShape", restriction_type="sh:minCount")]
+
+        from app.services.export import export_ontology
+
+        with (
+            patch("app.services.export.get_db", return_value=_mock_db()),
+            patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY),
+            patch("app.services.export.list_classes", return_value=_CLASSES_WITH_IDS),
+            patch("app.services.export.list_properties", return_value=_PROPS_WITH_IDS),
+            patch(
+                "app.services.export.list_constraints_for_ontology",
+                side_effect=_ret,
+            ),
+        ):
+            ttl = export_ontology("test_ont", fmt="turtle")
+
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import OWL
+
+        assert (None, None, OWL.Restriction) not in g
+
+    def test_no_constraints_does_not_change_existing_classes_or_properties(self):
+        """Empty constraint set must not alter the base ontology's
+        classes / properties / declarations -- a pure no-op."""
+        ttl = self._ttl_for_constraints([])
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import OWL, RDF, URIRef
+
+        customer = URIRef("http://example.org/test#Customer")
+        assert (customer, RDF.type, OWL.Class) in g
+        assert (None, None, OWL.Restriction) not in g
+
+
+class TestExportShacl:
+    """``export_shacl`` builds the SHACL shapes graph from constraint
+    rows whose ``constraint_type`` is ``"sh:NodeShape"`` /
+    ``"sh:PropertyShape"``. Output is the standard SHACL Turtle a
+    downstream validator (TopBraid / pyshacl) would consume."""
+
+    @staticmethod
+    def _ttl_for_shacl(constraints, *, classes=None, properties=None):
+        from app.services.export import export_shacl
+
+        cls = classes if classes is not None else _CLASSES_WITH_IDS
+        props = properties if properties is not None else _PROPS_WITH_IDS
+
+        # The repo helper filters by ontology_id and (when requested)
+        # constraint_type. _build_shacl_graph calls it WITHOUT a
+        # constraint_type filter and then filters in Python; mirror that.
+        def _list(*args, **kwargs):
+            if kwargs.get("constraint_type"):
+                return [
+                    c for c in constraints if c.get("constraint_type") == kwargs["constraint_type"]
+                ]
+            return constraints
+
+        with (
+            patch("app.services.export.get_db", return_value=_mock_db()),
+            patch("app.services.export.get_registry_entry", return_value=_MOCK_REGISTRY),
+            patch("app.services.export.list_classes", return_value=cls),
+            patch("app.services.export.list_properties", return_value=props),
+            patch(
+                "app.services.export.list_constraints_for_ontology",
+                side_effect=_list,
+            ),
+        ):
+            return export_shacl("test_ont")
+
+    def test_no_shacl_rows_produces_header_only_graph(self):
+        ttl = self._ttl_for_shacl([])
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import URIRef
+
+        assert (None, None, SH.NodeShape) not in g
+        # Header ontology node IS present so the file is self-describing.
+        ont_node = URIRef("http://example.org/test/shapes")
+        from rdflib import OWL, RDF
+
+        assert (ont_node, RDF.type, OWL.Ontology) in g
+
+    def test_min_count_emits_node_shape_with_property_shape(self):
+        ttl = self._ttl_for_shacl(
+            [
+                _constraint(
+                    constraint_type="sh:PropertyShape",
+                    restriction_type="sh:minCount",
+                    restriction_value=1,
+                )
+            ]
+        )
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import XSD, Literal, URIRef
+
+        customer = URIRef("http://example.org/test#Customer")
+        customer_shape = URIRef("http://example.org/test#CustomerShape")
+        has_name = URIRef("http://example.org/test#hasName")
+
+        assert (customer_shape, SH.targetClass, customer) in g
+        # NodeShape declaration.
+        from rdflib import RDF
+
+        assert (customer_shape, RDF.type, SH.NodeShape) in g
+        # PropertyShape bnode with sh:path -> hasName and sh:minCount 1.
+        pshape = next(iter(g.objects(customer_shape, SH.property)))
+        assert (pshape, SH.path, has_name) in g
+        assert (pshape, SH.minCount, Literal(1, datatype=XSD.nonNegativeInteger)) in g
+
+    def test_multiple_constraints_on_same_property_share_one_property_shape(self):
+        """A property with sh:minCount AND sh:datatype must appear as
+        ONE PropertyShape carrying BOTH triples -- not two separate
+        PropertyShapes, which would obscure the intent in tooling."""
+        ttl = self._ttl_for_shacl(
+            [
+                _constraint(
+                    _key="c1",
+                    constraint_type="sh:PropertyShape",
+                    restriction_type="sh:minCount",
+                    restriction_value=1,
+                ),
+                _constraint(
+                    _key="c2",
+                    constraint_type="sh:PropertyShape",
+                    restriction_type="sh:datatype",
+                    restriction_value="http://www.w3.org/2001/XMLSchema#string",
+                ),
+            ]
+        )
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import URIRef
+
+        customer_shape = URIRef("http://example.org/test#CustomerShape")
+        pshapes = list(g.objects(customer_shape, SH.property))
+        assert len(pshapes) == 1
+        ps = pshapes[0]
+        # Both triples land on the same bnode.
+        assert (ps, SH.minCount, None) in g
+        assert (ps, SH.datatype, URIRef("http://www.w3.org/2001/XMLSchema#string")) in g
+
+    def test_sh_in_emits_rdf_list(self):
+        ttl = self._ttl_for_shacl(
+            [
+                _constraint(
+                    constraint_type="sh:PropertyShape",
+                    restriction_type="sh:in",
+                    restriction_value=["S", "M", "L"],
+                )
+            ]
+        )
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import URIRef
+        from rdflib.collection import Collection
+
+        customer_shape = URIRef("http://example.org/test#CustomerShape")
+        ps = next(iter(g.objects(customer_shape, SH.property)))
+        head = next(iter(g.objects(ps, SH["in"])))
+        items = [str(it) for it in Collection(g, head)]
+        assert items == ["S", "M", "L"]
+
+    def test_severity_and_message_carry_to_property_shape(self):
+        ttl = self._ttl_for_shacl(
+            [
+                _constraint(
+                    constraint_type="sh:PropertyShape",
+                    restriction_type="sh:minCount",
+                    restriction_value=1,
+                    severity="http://www.w3.org/ns/shacl#Warning",
+                    description="Name is recommended.",
+                )
+            ]
+        )
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import Literal, URIRef
+
+        customer_shape = URIRef("http://example.org/test#CustomerShape")
+        ps = next(iter(g.objects(customer_shape, SH.property)))
+        assert (ps, SH.severity, URIRef("http://www.w3.org/ns/shacl#Warning")) in g
+        assert (ps, SH.message, Literal("Name is recommended.")) in g
+
+    def test_two_classes_produce_two_node_shapes(self):
+        order_class = {
+            "_id": "ontology_classes/Order",
+            "_key": "Order",
+            "uri": "http://example.org/test#Order",
+            "label": "Order",
+            "ontology_id": "test_ont",
+        }
+        order_prop = {
+            "_id": "ontology_datatype_properties/order_amount",
+            "_key": "order_amount",
+            "uri": "http://example.org/test#amount",
+            "label": "amount",
+            "property_type": "datatype",
+            "ontology_id": "test_ont",
+        }
+        ttl = self._ttl_for_shacl(
+            [
+                _constraint(
+                    constraint_type="sh:PropertyShape",
+                    restriction_type="sh:minCount",
+                    restriction_value=1,
+                ),
+                _constraint(
+                    _key="c2",
+                    on_class="ontology_classes/Order",
+                    property_id="ontology_datatype_properties/order_amount",
+                    property_uri="http://example.org/test#amount",
+                    constraint_type="sh:PropertyShape",
+                    restriction_type="sh:minCount",
+                    restriction_value=1,
+                ),
+            ],
+            classes=[*_CLASSES_WITH_IDS, order_class],
+            properties=[*_PROPS_WITH_IDS, order_prop],
+        )
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        from rdflib import URIRef
+
+        assert (URIRef("http://example.org/test#CustomerShape"), SH.targetClass, None) in g
+        assert (URIRef("http://example.org/test#OrderShape"), SH.targetClass, None) in g
+
+    def test_owl_typed_rows_excluded_from_shacl_export(self):
+        """The cross-vocabulary firewall in reverse: OWL rows MUST NOT
+        leak into the SHACL graph. Pinned so a future filter loosening
+        doesn't quietly produce a bogus shapes file."""
+        ttl = self._ttl_for_shacl(
+            [
+                _constraint(
+                    constraint_type="owl:Restriction",
+                    restriction_type="minCardinality",
+                    restriction_value=1,
+                )
+            ]
+        )
+        g = Graph()
+        g.parse(data=ttl, format="turtle")
+        assert (None, None, SH.NodeShape) not in g

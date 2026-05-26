@@ -2451,9 +2451,17 @@ async def delete_class_endpoint(ontology_id: str, class_key: str) -> dict[str, A
 @router.get("/{ontology_id}/export")
 async def export_ontology_endpoint(
     ontology_id: str,
-    format: str = Query("turtle", description="Export format: turtle, jsonld, csv"),
+    format: str = Query(
+        "turtle",
+        description=(
+            "Export format. ``turtle`` (default) emits OWL 2 Turtle with "
+            "``owl:Restriction`` blank nodes for OWL constraints; ``shacl`` "
+            "emits a separate SHACL shapes graph; ``jsonld`` / ``csv`` are "
+            "the established alternative serialisations of the OWL ontology."
+        ),
+    ),
 ) -> Response:
-    """Export an ontology in OWL Turtle, JSON-LD, or CSV format."""
+    """Export an ontology in OWL Turtle, JSON-LD, CSV, or SHACL Turtle format."""
     entry = registry_repo.get_registry_entry(ontology_id)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"Ontology '{ontology_id}' not found")
@@ -2472,6 +2480,19 @@ async def export_ontology_endpoint(
                 content=csv_content,
                 media_type="text/csv",
                 headers={"Content-Disposition": f'attachment; filename="{ontology_id}.csv"'},
+            )
+        elif format == "shacl":
+            # Stream 3 PR 5 -- separate SHACL shapes graph. Convention
+            # is a sibling ``.shapes.ttl`` next to the main ontology
+            # Turtle, which is what TopBraid / Protege / SHACL parsers
+            # expect to find when looking for shape constraints.
+            shacl_content = export_svc.export_shacl(ontology_id)
+            return PlainTextResponse(
+                content=shacl_content,
+                media_type="text/turtle",
+                headers={
+                    "Content-Disposition": (f'attachment; filename="{ontology_id}.shapes.ttl"')
+                },
             )
         else:
             ttl_content = export_svc.export_ontology(ontology_id, fmt="turtle")
