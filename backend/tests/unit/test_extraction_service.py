@@ -2886,3 +2886,154 @@ class TestExecuteRunAgreementRateFromStepLogs:
         update_arg = mock_col.update.call_args[0][0]
         # (0.8 + 0.6) / 2 = 0.7
         assert abs(update_arg["stats"]["pass_agreement_rate"] - 0.7) < 0.001
+
+
+# ===========================================================================
+# Stream 7 PR 1 -- E.4: auto-install visualizer for per-ontology graph
+# ===========================================================================
+
+
+@pytest.fixture(autouse=True)
+def _isolate_visualizer_installer():
+    """Autouse: prevent ANY test in this module from triggering the
+    real ``scripts.setup.install_visualizer`` import.
+
+    Stream 7 PR 1 wired ``_auto_install_visualizer_assets`` into
+    every successful ``execute_run`` path. Without this isolation,
+    pre-existing tests that exercise ``execute_run`` end-to-end
+    accidentally fire the lazy import inside
+    ``_load_visualizer_installer``, which:
+
+    1. Pollutes ``sys.modules['scripts']`` as a PEP-420 namespace
+       package when ``PROJECT_ROOT`` happens to be on ``sys.path``
+       (eg leaked from a prior test that prepended it), AND
+    2. Breaks subsequent tests in ``test_visualizer_imports_assets``
+       whose module-scoped fixture relies on
+       ``__import__("scripts.setup.install_visualizer", ...)``
+       resolving against a clean module table.
+
+    By stubbing the resolver at the helper level, no test in this
+    module touches the real import. Individual tests that DO want
+    to assert on the install call use the ``_stub_install_visualizer``
+    fixture below, which adds an explicit return-value override
+    on top of this baseline stub.
+
+    The default stub returns an empty dict -- behaviour-equivalent
+    to a successful no-op install for tests that don't care.
+    """
+    default_install_mock = MagicMock(
+        name="default_install_for_ontology_graph",
+        return_value={},
+    )
+    with patch(
+        "app.services.extraction._load_visualizer_installer",
+        return_value=default_install_mock,
+    ):
+        yield
+
+
+@pytest.fixture()
+def _stub_install_visualizer():
+    """Override the autouse stub with a fresh Mock that the test
+    can introspect (call counts, args, side_effect). Yields the
+    install Mock so tests can configure ``return_value`` /
+    ``side_effect`` and then assert call shape.
+
+    Why both fixtures: the autouse is defence-in-depth (keep
+    sibling tests in the module from hitting the real import).
+    This explicit fixture gives the four ``TestAutoInstallVisualizerAssets``
+    tests a clean handle to assert against without picking up
+    accumulated calls from the autouse default.
+    """
+    install_mock = MagicMock(name="install_for_ontology_graph")
+    with patch(
+        "app.services.extraction._load_visualizer_installer",
+        return_value=install_mock,
+    ):
+        yield install_mock
+
+
+class TestAutoInstallVisualizerAssets:
+    """The extraction service's E.4 helper. Calls
+    ``install_for_ontology_graph`` after a successful
+    ``ensure_ontology_graph`` so the curator gets a graph-aware
+    Visualizer (theme + canvas actions + saved queries) immediately
+    on first open.
+
+    The critical contract: failures from the visualizer install path
+    MUST NOT propagate -- the extraction write path has already
+    succeeded by this point, and a missing visualizer asset file
+    cannot be allowed to fail the run.
+    """
+
+    def test_installs_when_graph_name_provided(self, _stub_install_visualizer) -> None:
+        from app.services.extraction import _auto_install_visualizer_assets
+
+        _stub_install_visualizer.return_value = {"installed": 3}
+        mock_db = MagicMock()
+        _auto_install_visualizer_assets(
+            mock_db,
+            ontology_id="my_onto",
+            graph_name="ontology_my_onto",
+        )
+
+        _stub_install_visualizer.assert_called_once_with(mock_db, "ontology_my_onto")
+
+    def test_skipped_when_graph_name_none(self, _stub_install_visualizer) -> None:
+        """``ensure_ontology_graph`` failure path: caller passes
+        graph_name=None and we must NOT attempt the install. The
+        upstream warning has already surfaced; doing nothing is the
+        right move.
+        """
+        from app.services.extraction import _auto_install_visualizer_assets
+
+        mock_db = MagicMock()
+        _auto_install_visualizer_assets(
+            mock_db,
+            ontology_id="my_onto",
+            graph_name=None,
+        )
+
+        _stub_install_visualizer.assert_not_called()
+
+    def test_install_failure_is_swallowed(self, _stub_install_visualizer) -> None:
+        """The flagship resilience case: if the visualizer asset
+        loader raises (eg missing JSON file, registry write timeout,
+        partial install on a slim image), the helper must NOT
+        propagate. We assert it returns normally even when the
+        downstream call blows up.
+        """
+        from app.services.extraction import _auto_install_visualizer_assets
+
+        _stub_install_visualizer.side_effect = FileNotFoundError("ontology_theme.json missing")
+        mock_db = MagicMock()
+
+        # MUST NOT raise.
+        _auto_install_visualizer_assets(
+            mock_db,
+            ontology_id="my_onto",
+            graph_name="ontology_my_onto",
+        )
+
+        # We still attempted the install (so the operator gets the
+        # warning log line they need to re-run the script manually).
+        _stub_install_visualizer.assert_called_once()
+
+    def test_install_returning_empty_dict_still_succeeds(self, _stub_install_visualizer) -> None:
+        """A partial install (eg only the theme but no saved queries
+        because the asset file was empty) returns ``{}``. The helper
+        must accept that as a successful install -- the operator can
+        re-run the script later to fill the gaps. Refusing to
+        complete here would be worse than half-installed assets.
+        """
+        from app.services.extraction import _auto_install_visualizer_assets
+
+        _stub_install_visualizer.return_value = {}
+        mock_db = MagicMock()
+        _auto_install_visualizer_assets(
+            mock_db,
+            ontology_id="my_onto",
+            graph_name="ontology_my_onto",
+        )
+
+        _stub_install_visualizer.assert_called_once()

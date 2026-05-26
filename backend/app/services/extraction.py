@@ -387,10 +387,25 @@ async def execute_run(
                     graph_name = ensure_ontology_graph(ontology_id, db=db)
                     log.info("ensured per-ontology graph %s", graph_name)
                 except Exception:
+                    graph_name = None
                     log.warning(
                         "per-ontology graph creation failed",
                         exc_info=True,
                     )
+
+                # Stream 7 PR 1 -- E.4: auto-install the ArangoDB Visualizer
+                # assets for the new per-ontology graph so users get a
+                # graph-aware visualisation immediately on first open
+                # without having to run ``install_visualizer.py`` by hand.
+                # Delegated to a helper so the failure-shielding logic
+                # (which must NOT abort the extraction write path) is
+                # unit-testable without standing up the whole extraction
+                # loop.
+                _auto_install_visualizer_assets(
+                    db,
+                    ontology_id=ontology_id,
+                    graph_name=graph_name,
+                )
 
                 # Track the task so it is not garbage-collected before completion.
                 task = asyncio.create_task(
@@ -1582,6 +1597,77 @@ def _recompute_multi_signal_confidence(
             )
         except Exception as exc:
             log.warning("confidence update failed for %s: %s", key, exc)
+
+
+def _load_visualizer_installer() -> Any:
+    """Resolve ``install_for_ontology_graph`` from the visualizer
+    setup script. Isolated so tests can monkeypatch this single
+    entry point (``app.services.extraction._load_visualizer_installer``)
+    without touching ``sys.modules`` or ``sys.path``, which sibling
+    tests in the suite manipulate and would otherwise cause
+    cross-test pollution.
+
+    The import is lazy (inside the function body) so the
+    visualizer asset loader doesn't become a hard dependency of
+    the extraction service when the assets aren't packaged into a
+    given deployment (eg a slim API-only image).
+    """
+    # mypy: ``scripts.setup.install_visualizer`` is a repo-root tool,
+    # not a typed library; silence import-untyped rather than vendor
+    # stubs for an install-only helper.
+    from scripts.setup.install_visualizer import (  # type: ignore[import-untyped]
+        install_for_ontology_graph,
+    )
+
+    return install_for_ontology_graph
+
+
+def _auto_install_visualizer_assets(
+    db: StandardDatabase,
+    *,
+    ontology_id: str,
+    graph_name: str | None,
+) -> None:
+    """Install ArangoDB Visualizer assets for a per-ontology graph.
+
+    Stream 7 PR 1 -- E.4. After ``ensure_ontology_graph`` succeeds,
+    the curator expects to open the Visualizer and see graph-aware
+    theme + canvas actions + saved queries pre-wired. Doing it by
+    hand (``scripts/setup/install_visualizer.py --graph ...``) was
+    the previous flow; this helper closes the loop so a fresh
+    extraction is immediately usable.
+
+    Contract:
+
+    * ``graph_name is None`` -> ``ensure_ontology_graph`` failed
+      earlier and there's nothing to install assets onto. Skip
+      silently (the upstream warning already surfaced the failure).
+    * Any exception from the visualizer install path is **caught and
+      logged**. The extraction write path must NEVER fail because a
+      visualizer asset file is missing or a registry write timed out
+      -- those are operator-facing problems the curator can fix
+      offline by re-running ``install_visualizer.py``.
+    """
+    if graph_name is None:
+        return
+
+    try:
+        install_for_ontology_graph = _load_visualizer_installer()
+        install_result = install_for_ontology_graph(db, graph_name)
+        log.info(
+            "installed visualizer assets for per-ontology graph",
+            extra={
+                "graph_name": graph_name,
+                "ontology_id": ontology_id,
+                "summary": install_result,
+            },
+        )
+    except Exception:
+        log.warning(
+            "visualizer auto-install failed; fall back to manual install_visualizer.py run",
+            extra={"graph_name": graph_name, "ontology_id": ontology_id},
+            exc_info=True,
+        )
 
 
 def _create_produced_by_edge(

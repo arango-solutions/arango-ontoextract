@@ -145,6 +145,22 @@ class Settings(BaseSettings):
     belief_revision_circuit_max_per_minute: int = 50
     belief_revision_circuit_window_seconds: float = 60.0
 
+    # -- Temporal Retention (Stream 7 PR 1 -- E.3) -------------------------
+    #: Default retention window for expired temporal versions. Every time a
+    #: vertex or edge is superseded (``expired`` set to a real timestamp),
+    #: we also stamp ``ttlExpireAt = expired + temporal_retention_seconds``.
+    #: ArangoDB's sparse TTL index (migration 006 + 026) garbage-collects
+    #: rows once their ``ttlExpireAt`` is reached, so the history stays
+    #: queryable for this many seconds before disappearing.
+    #:
+    #: 90 days (7,776,000 s) is the PRD default and matches the original
+    #: hardcoded value the temporal service used to carry. Tune downward
+    #: for cost-sensitive deployments (eg 30 days = 2,592,000 s) or
+    #: upward for compliance regimes that demand longer audit trails.
+    #: Setting it to 0 disables the stamp (history accumulates forever
+    #: -- only useful for dev / forensic captures).
+    temporal_retention_seconds: int = 7_776_000
+
     # -- Ontology Defaults ---------------------------------------------------
     default_ontology_uri: str = "http://example.org/ontology#"
 

@@ -12,11 +12,25 @@ from typing import Any, cast
 
 from arango.database import StandardDatabase
 
+from app.config import settings
 from app.db.client import get_db
 from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import run_aql
 
 log = logging.getLogger(__name__)
+
+
+def _default_ttl_seconds() -> int:
+    """Default retention window for expired temporal versions (seconds).
+
+    Read from ``Settings.temporal_retention_seconds`` so an operator can
+    tune it via env without touching code. Stream 7 PR 1 (E.3) replaced
+    the hard-coded ``7_776_000`` literal that previously lived in
+    ``re_create_edges`` -- callers that want a non-default window still
+    pass ``ttl_seconds=...`` explicitly to ``expire_entity``.
+    """
+    return settings.temporal_retention_seconds
+
 
 # ``NEVER_EXPIRES`` is re-exported from ``app.db.temporal_constants`` so
 # legacy callers that ``from app.services.temporal import NEVER_EXPIRES``
@@ -121,14 +135,34 @@ def expire_entity(
 ) -> dict[str, Any] | None:
     """Set ``expired=now`` on the current version of an entity.
 
+    Also stamps ``ttlExpireAt = now + ttl_seconds`` so the ArangoDB
+    sparse TTL index can garbage-collect this version after the
+    retention window. ``ttl_seconds`` defaults to
+    ``settings.temporal_retention_seconds`` (90 days; tune via env).
+
+    Stream 7 PR 1 fixed a real bug here: callers like ``update_entity``
+    were not passing ``ttl_seconds``, so superseded vertex versions
+    never got a ``ttlExpireAt`` -- the temporal history accumulated
+    forever even though the TTL index (migration 006) was sitting
+    ready to GC it. The new default closes that gap. Callers that
+    want to keep history indefinitely (eg forensic captures) can
+    still opt out by passing ``ttl_seconds=0``.
+
     Returns the expired document, or None if not found / already expired.
     """
     if db is None:
         db = get_db()
 
+    if ttl_seconds is None:
+        ttl_seconds = _default_ttl_seconds()
+
     now = _now()
     update_data: dict[str, Any] = {"expired": now}
-    if ttl_seconds is not None:
+    # ttl_seconds == 0 explicitly opts OUT of TTL stamping (forensic /
+    # dev mode where you want history to live forever). Negative values
+    # would set ttlExpireAt in the past and trip immediate GC; treat
+    # those as "opt out" too rather than risk surprising data loss.
+    if ttl_seconds > 0:
         update_data["ttlExpireAt"] = now + ttl_seconds
 
     try:
@@ -243,10 +277,12 @@ FOR e IN @@col
             bind_vars={"@col": edge_collection, "old_id": old_id, "never": NEVER_EXPIRES},
         )
     )
+    ttl_window = _default_ttl_seconds()
     for edge in outbound_edges:
-        db.collection(edge_collection).update(
-            {"_key": edge["_key"], "expired": now, "ttlExpireAt": now + 7776000}
-        )
+        edge_update: dict[str, Any] = {"_key": edge["_key"], "expired": now}
+        if ttl_window > 0:
+            edge_update["ttlExpireAt"] = now + ttl_window
+        db.collection(edge_collection).update(edge_update)
         new_edge = {
             k: v
             for k, v in edge.items()
@@ -272,9 +308,10 @@ FOR e IN @@col
         )
     )
     for edge in inbound_edges:
-        db.collection(edge_collection).update(
-            {"_key": edge["_key"], "expired": now, "ttlExpireAt": now + 7776000}
-        )
+        edge_update_in: dict[str, Any] = {"_key": edge["_key"], "expired": now}
+        if ttl_window > 0:
+            edge_update_in["ttlExpireAt"] = now + ttl_window
+        db.collection(edge_collection).update(edge_update_in)
         new_edge = {
             k: v
             for k, v in edge.items()

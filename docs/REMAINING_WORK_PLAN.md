@@ -852,11 +852,17 @@ unit. Stream 6 PR 1 closed.
 |---|------|------|----------|-------------|
 | E.1 | OpenTelemetry tracing | Backend | 6h | Instrument key services with `opentelemetry-api` + `opentelemetry-sdk`. Spans across ingestion → extraction → materialization → graph creation. Export to Jaeger or OTLP endpoint. |
 | E.2 | Alerting rules | DevOps | 3h | Define alerts for: extraction failure rate > 20%, API p95 > 2s, extraction queue depth > 10, database connection failures. |
-| E.3 | TTL garbage collection | Backend | 2h | Verify `ttlExpireAt` is set on expired entities. Configure ArangoDB TTL index for automatic cleanup of historical versions older than configurable retention period (default: 90 days). |
-| E.4 | Auto-install visualizer post-extraction | Backend | 2h | After `ensure_ontology_graph()`, call `install_for_ontology_graph()` to deploy theme/actions/queries for each new per-ontology graph. |
+| E.3 | TTL garbage collection | Backend | **DONE** | Stream 7 PR 1. Stamped configurable `ttlExpireAt` on every superseded version via `expire_entity` (90-day default; configurable via `temporal_retention_seconds`). Replaced hard-coded `7_776_000` magic numbers in `re_create_edges`. Added migration `026_ttl_indexes_extended.py` covering the four collections added after migration 006 (`ontology_object_properties`, `ontology_datatype_properties`, `rdfs_domain`, `rdfs_range_class`). Closed a real bug where `update_entity → expire_entity` never set `ttlExpireAt`, leaving historical vertex versions accumulating forever despite the TTL index sitting ready to GC them. |
+| E.4 | Auto-install visualizer post-extraction | Backend | **DONE** | Stream 7 PR 1. After `ensure_ontology_graph` succeeds in the extraction service, `_auto_install_visualizer_assets` calls `install_for_ontology_graph` so theme + canvas actions + saved queries are wired automatically. Failure-shielded: any visualizer install error (missing asset file, registry write timeout) logs a warning but never aborts the extraction write path. Resolver factored through `_load_visualizer_installer` for clean test isolation. |
 | E.5 | Performance benchmarks | Backend | 4h | Measure and document: extraction time per chunk, graph rendering time by node count, API p95 latency, concurrent extraction throughput. |
 | E.6 | Docker Compose production config | DevOps | 4h | Production-grade docker-compose with health checks, resource limits, log aggregation, and environment-specific config. |
 | E.7 | README update | Docs | 2h | Update README with current architecture, setup instructions, demo walkthrough, and API reference. |
+
+**PR plan (incremental):**
+- **PR 1 (DONE)** — E.3 TTL garbage collection + E.4 visualizer auto-install. Smallest contained slice, fixes a real history-accumulation bug + closes the manual visualizer-install loop. 21 new unit tests; full backend unit suite passes (1949 tests).
+- **PR 2 (pending)** — E.1 OpenTelemetry tracing. Chunkiest, standalone.
+- **PR 3 (pending)** — E.2 alerting + E.6 prod docker-compose. Operational story.
+- **PR 4 (pending)** — E.5 benchmarks + E.7 README. Final polish.
 
 **Exit Criteria:** Traces visible in observability platform. Alerts configured. Performance baselines documented. Production deployment guide complete.
 
