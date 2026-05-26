@@ -92,7 +92,7 @@ After startup:
 | ArangoDB Visualizer | Done | Custom themes, canvas actions, saved queries |
 | Auth (JWT + RBAC) | Done | 4 roles, org-scoped, API key auth for MCP |
 | Notifications | Done | In-app notification queue with WebSocket |
-| Observability | Partial | Structured logging (`structlog`) + Prometheus metrics; OpenTelemetry tracing not yet wired (see `docs/REMAINING_WORK_PLAN.md` E.1) |
+| Observability | Done | Structured logging (`structlog`), Prometheus metrics (`/api/v1/metrics`), OpenTelemetry tracing (default-off; flip `OTEL_ENABLED=true` + point at an OTLP collector), production alert rules in `infra/monitoring/alerts.yml` for extraction failure rate / API p95 / queue depth / DB connectivity. See [docs/operations/production-deployment.md](docs/operations/production-deployment.md). |
 
 ## Project Structure
 
@@ -335,6 +335,10 @@ All configuration is via environment variables (see [.env.example](.env.example)
 | `EXTRACTION_PASSES` | `3` | Number of LLM passes for consistency |
 | `ER_VECTOR_SIMILARITY_THRESHOLD` | `0.85` | Min similarity for merge candidates |
 | `TEST_DEPLOYMENT_MODE` | `local_docker` | Deployment mode (local_docker, self_managed_platform, managed_platform) |
+| `TEMPORAL_RETENTION_SECONDS` | `7776000` (90 days) | Retention window for expired temporal versions before TTL GC removes them. Set `0` to disable (history accumulates forever — dev / forensic only). |
+| `OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing. When on, the backend ships spans for ingest → extraction → materialize → graph-creation. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty)_ | OTLP/gRPC endpoint (eg `http://otel-collector:4317`). Empty + `OTEL_ENABLED=true` falls back to a stdout console exporter for local-dev smoke. |
+| `OTEL_TRACE_SAMPLE_RATE` | `1.0` | Root-span sample rate (clamped to `[0, 1]`). Use `0.1` for high-traffic prod to keep collector cost bounded. |
 
 ## Deployment
 
@@ -349,11 +353,23 @@ make frontend   # Next.js dev server
 ### Docker Compose (Production)
 
 ```bash
+# Core stack: caddy + backend + frontend + arangodb + redis
 docker compose -f docker-compose.prod.yml up -d
+
+# Optional MCP server
+docker compose -f docker-compose.prod.yml --profile mcp up -d
+
+# Optional monitoring stack: Prometheus + Alertmanager
+docker compose -f docker-compose.prod.yml --profile monitoring up -d
 ```
 
 The production Compose profile runs Caddy as the edge reverse proxy/TLS terminator,
 with backend, frontend, ArangoDB, Redis, and the optional MCP server behind it.
+Every service has `deploy.resources.limits` + `reservations` plus
+`json-file` log rotation (10MB × 5 files). See
+[docs/operations/production-deployment.md](docs/operations/production-deployment.md)
+for the full operations runbook (topology, resource sizing, metrics endpoint
+reference, per-alert remediation steps, Alertmanager customisation, backup/restore).
 
 ### Bring Your Own Container
 
@@ -384,11 +400,13 @@ target platform rather than treating them as application dependencies.
 | [docs/architecture.md](docs/architecture.md) | System architecture |
 | [docs/api-reference.md](docs/api-reference.md) | API endpoint catalog |
 | [docs/mcp-server.md](docs/mcp-server.md) | MCP server tool catalog |
-| [docs/benchmarks.md](docs/benchmarks.md) | Performance targets |
+| [docs/benchmarks.md](docs/benchmarks.md) | Performance targets + how to run the benchmark harness |
+| [docs/operations/production-deployment.md](docs/operations/production-deployment.md) | Production operations runbook (topology, resource limits, monitoring stack, alert remediation, backup/restore) |
 | [docs/adr/](docs/adr/) | Architecture Decision Records |
 | [docs/visualizer/](docs/visualizer/) | ArangoDB Visualizer customizations |
 | [samples/corpora/README.md](samples/corpora/README.md) | Synthetic + real test corpora for the extraction pipeline |
-| [benchmarks/ontology_extraction/README.md](benchmarks/ontology_extraction/README.md) | Ontology-extraction benchmark harness (Re-DocRED, WebNLG) |
+| [benchmarks/operations/README.md](benchmarks/operations/README.md) | Ops benchmarks (API latency, materialization, temporal snapshot) + committed baseline numbers |
+| [benchmarks/ontology_extraction/README.md](benchmarks/ontology_extraction/README.md) | Ontology-extraction quality benchmarks (Re-DocRED, WebNLG) |
 
 ## Contributing
 

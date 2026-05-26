@@ -127,15 +127,25 @@ Sparse TTL indexes on `ttlExpireAt` for automatic historical version cleanup:
 
 ### Prometheus Metrics
 
-| Metric | Type | Alert Threshold |
-|--------|------|-----------------|
-| `aoe_api_request_duration_seconds` | Histogram | p95 > 500ms |
-| `aoe_extraction_duration_seconds` | Histogram | p95 > 300s |
-| `aoe_extraction_errors_total` | Counter | Rate > 10% |
-| `aoe_api_errors_total` | Counter | Rate > 1% |
-| `aoe_queue_depth` | Gauge | > 100 pending tasks |
-| `aoe_temporal_snapshot_duration_seconds` | Histogram | p95 > 1s |
-| `aoe_er_pipeline_duration_seconds` | Histogram | p95 > 60s |
+These are the series the backend actually emits (defined in
+`backend/app/api/metrics.py`). The alert rules that consume them
+live in `infra/monitoring/alerts.yml`; see
+[docs/operations/production-deployment.md](operations/production-deployment.md#alert-reference--runbooks)
+for the per-alert remediation runbook.
+
+| Metric | Type | Labels | Alert rule (`alerts.yml`) |
+|--------|------|--------|---------------------------|
+| `aoe_http_request_duration_seconds_*` | Histogram | method, path, status | `APILatencyP95High` (p95 > 2s / 5m) |
+| `aoe_http_requests_total` | Counter | method, path, status | — (used for ad-hoc dashboards) |
+| `aoe_http_errors_total` | Counter | method, path, status | — (rate spikes surface on dashboards) |
+| `aoe_extraction_runs_total` | Counter | status (`completed` / `completed_with_errors` / `failed`) | `ExtractionFailureRateHigh` (failed/total > 20% / 5m) |
+| `aoe_extraction_duration_seconds_*` | Histogram | (none) | — (referenced by runbooks for triage) |
+| `aoe_queue_depth` | Gauge | queue (`ingest` / `extraction`) | `ExtractionQueueBacklog` (> 10 / 5m) |
+| `aoe_db_connection_errors_total` | Counter | reason (`timeout` / `auth` / `unknown`) | `ArangoDBConnectionFailures` (any rate / 2m) |
+| `aoe_active_websocket_connections` | Gauge | endpoint | — (reserved, not yet wired) |
+
+Path labels use the matched route pattern (`/api/v1/ontology/{id}`),
+not raw URLs, to keep Prometheus cardinality bounded under load.
 
 ### Health Checks
 
@@ -150,30 +160,73 @@ Sparse TTL indexes on `ttlExpireAt` for automatic historical version cleanup:
 
 ### How to Run Benchmarks
 
+**Ops benchmarks** (Stream 7 PR 4 — E.5). Latency / throughput of
+the application code paths with DB and HTTP I/O mocked. Stable
+floor independent of host hardware; catches regressions in
+middleware, serialization, materialization, and temporal
+aggregation. Committed baseline lives at
+[`benchmarks/operations/baseline.md`](../benchmarks/operations/baseline.md).
+
 ```bash
-# API latency benchmarks (requires running backend)
-cd backend
-pytest tests/benchmarks/ -v --benchmark-only
+# Run all ops benchmarks, print results (safe for CI smoke checks)
+make bench
 
-# Load testing (requires k6 or locust)
-k6 run scripts/benchmarks/api_load_test.js
+# Run + overwrite baseline.md with the new numbers
+make bench-update
 
-# Graph rendering benchmark (frontend)
-cd frontend
-npx playwright test e2e/benchmarks/graph-render.spec.ts
+# Run a single benchmark in isolation
+python -m benchmarks.operations.bench_api_latency
+python -m benchmarks.operations.bench_materialize
+python -m benchmarks.operations.bench_temporal_snapshot
 ```
+
+See [`benchmarks/operations/README.md`](../benchmarks/operations/README.md)
+for the per-benchmark interpretation guide.
+
+**Ontology-extraction quality benchmarks**. Precision / recall
+against Re-DocRED and WebNLG; orthogonal to ops latency. Lives in
+[`benchmarks/ontology_extraction/`](../benchmarks/ontology_extraction/).
+
+```bash
+python -m benchmarks.ontology_extraction.run_benchmark --help
+```
+
+**Real-DB end-to-end benchmarks** (manual). For latency numbers
+that include Arango RTT + LLM provider latency, run against a
+real backend with a real ArangoDB. Use a load-testing tool like
+[`k6`](https://k6.io/) or [`locust`](https://locust.io/) and
+script representative workflows (upload → extract → curate).
+This is not part of the committed harness — those numbers depend
+on hardware, network, and Arango configuration in ways that make
+a committed baseline misleading.
 
 ### What to Measure
 
-1. **Cold start** — first request after server startup
-2. **Warm steady-state** — p50, p95, p99 under sustained load
-3. **Concurrent load** — response times at 10, 20, 50 concurrent users
-4. **Data scale** — response times as data volume grows (100, 1K, 10K, 50K entities)
+1. **Cold start** — first request after server startup. The ops
+   harness includes 5 warmup invocations to amortize Python lazy
+   imports; without that, the first sample can be 2-10× the
+   steady-state value.
+2. **Warm steady-state** — p50, p95, p99 under sustained load.
+   This is what `make bench` records.
+3. **Concurrent load** — response times at 10 / 20 / 50
+   concurrent users. Requires a real backend and `k6` / `locust`.
+4. **Data scale** — response times as data volume grows
+   (100, 1K, 10K, 50K entities). `bench_materialize` and
+   `bench_temporal_snapshot` already sweep three sizes;
+   real-DB sweep requires fixture data.
 
 ### Reporting
 
-Benchmark results should be recorded with:
-- Date and commit hash
+Ops benchmark baseline (`benchmarks/operations/baseline.md`)
+auto-records:
+
+- Date (UTC)
+- OS / machine / Python version / processor
+- Per-scenario p50 / p95 / p99 / min / max / mean
+
+For real-DB benchmarks, record additionally:
+
+- Commit hash
 - ArangoDB version and deployment mode
 - Hardware specs (CPU, RAM, disk type)
 - Data volume (number of entities, documents, chunks)

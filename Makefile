@@ -1,4 +1,4 @@
-.PHONY: help setup dev infra backend frontend test test-unit test-integration test-all test-infra-up test-infra-down lint format typecheck type-check clean migrate docker-build docker-up docker-down docker-unified-build docker-unified-run docker-unified-up docker-unified-down package-arango-manual package-arango-manual-all sync-requirements check-requirements install-git-hooks pre-commit-run-all pre-commit-run-pre-push smoke-test setup-branch-protection setup-dual-push-remotes release-to-org sync-from-org
+.PHONY: help setup dev infra backend frontend test test-unit test-integration test-all test-infra-up test-infra-down lint format typecheck type-check clean migrate docker-build docker-up docker-down docker-unified-build docker-unified-run docker-unified-up docker-unified-down package-arango-manual package-arango-manual-all sync-requirements check-requirements install-git-hooks pre-commit-run-all pre-commit-run-pre-push smoke-test setup-branch-protection setup-dual-push-remotes release-to-org sync-from-org bench bench-update
 
 # Optional repo-root .env (BACKEND_PORT, etc.). Safe if missing.
 -include .env
@@ -114,6 +114,16 @@ benchmark: ## Run Re-DocRED benchmark with the mock adapter (CI-friendly, requir
 benchmark-full: ## Run WebNLG benchmark with the real AOE adapter (requires backend + infra + LLM keys)
 	backend/.venv/bin/python -m benchmarks.ontology_extraction.run_benchmark \
 		--dataset webnlg --adapter aoe --limit 100
+
+# ---------------------------------------------------------------------------
+# Benchmarks (Ops: API latency / materialization / temporal snapshot)
+# ---------------------------------------------------------------------------
+
+bench: ## Run all ops benchmarks (DB mocked); print results, leave baseline.md untouched
+	backend/.venv/bin/python -m benchmarks.operations.run_baselines
+
+bench-update: ## Run all ops benchmarks AND overwrite benchmarks/operations/baseline.md
+	backend/.venv/bin/python -m benchmarks.operations.run_baselines --update-baseline
 
 # ---------------------------------------------------------------------------
 # Docker (Production)
