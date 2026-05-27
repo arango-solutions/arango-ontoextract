@@ -10,6 +10,7 @@ import OntologyReleaseDialog from "@/components/workspace/OntologyReleaseDialog"
 import CreateOntologyDialog from "@/components/workspace/CreateOntologyDialog";
 import CatalogBrowserOverlay from "@/components/workspace/CatalogBrowserOverlay";
 import SchemaExtractionOverlay from "@/components/workspace/SchemaExtractionOverlay";
+import SchemaDiffOverlay from "@/components/workspace/SchemaDiffOverlay";
 import ImportsDependencyOverlay from "@/components/workspace/ImportsDependencyOverlay";
 import ConfirmDialog from "@/components/workspace/ConfirmDialog";
 import OntologyDeleteDialog from "@/components/workspace/OntologyDeleteDialog";
@@ -170,6 +171,10 @@ function WorkspacePageInner() {
   // selection.
   const [showSchemaExtraction, setShowSchemaExtraction] = useState(false);
   const [dependencyOverlay, setDependencyOverlay] = useState<{
+    key: string;
+    name: string;
+  } | null>(null);
+  const [schemaDiffOverlay, setSchemaDiffOverlay] = useState<{
     key: string;
     name: string;
   } | null>(null);
@@ -1185,6 +1190,7 @@ function WorkspacePageInner() {
     setShowSchemaExtraction,
     setManageImports,
     setDependencyOverlay,
+    setSchemaDiffOverlay,
     setFeedbackLearning,
     setEdgeRepair,
     setRevisionsInbox,
@@ -1205,6 +1211,7 @@ function WorkspacePageInner() {
     centerPipelineView: () => dagApiRef.current?.centerView(),
     closeContextMenu,
     selectedOntologyId,
+    selectedOntologyName: ontologyName ?? undefined,
   });
 
   function getContextMenuItems(): ContextMenuItem[] {
@@ -1539,6 +1546,14 @@ function WorkspacePageInner() {
             setDependencyOverlay(null);
             handleSelectOntology(id, name);
           }}
+        />
+      )}
+
+      {schemaDiffOverlay && (
+        <SchemaDiffOverlay
+          ontologyAKey={schemaDiffOverlay.key}
+          ontologyAName={schemaDiffOverlay.name}
+          onClose={() => setSchemaDiffOverlay(null)}
         />
       )}
 

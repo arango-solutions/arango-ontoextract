@@ -62,16 +62,16 @@ make setup                     # Python venv + npm install
 # 2. Start infrastructure
 make infra                     # ArangoDB + Redis via Docker
 
-# 3. Run the backend
-make backend                   # FastAPI on :8000
+# 3. Run the backend (default port 8010 — override with BACKEND_PORT=8000 in .env)
+make backend
 ```
 
 After startup:
 
 | Service | URL |
 |---------|-----|
-| Backend API | http://localhost:8000 |
-| API Docs (Swagger) | http://localhost:8000/docs |
+| Backend API | http://localhost:8010 (default; set `BACKEND_PORT` in `.env`) |
+| API Docs (Swagger) | http://localhost:8010/docs |
 | Frontend | http://localhost:3000 |
 | ArangoDB UI | http://localhost:8530 (host port; container listens on 8529) |
 
@@ -81,9 +81,9 @@ After startup:
 |---------|--------|-------------|
 | Document Ingestion | Done | Upload PDF/DOCX/Markdown → parse → chunk → embed |
 | LLM Extraction | Done | N-pass extraction with self-correction via LangGraph |
-| Visual Curation | Done | React Flow graph canvas with approve/reject/edit/merge |
+| Visual Curation | Done | Object-centric `/workspace` canvas (Sigma.js + box-arrow UML view) with context-menu actions, lenses, and floating detail panels |
 | VCR Timeline | Done | Temporal time travel with point-in-time snapshots |
-| Entity Resolution | Partial | Blocking/scoring implemented; full pipeline in progress |
+| Entity Resolution | Partial | Hand-rolled blocking/scoring + workspace **Find Duplicates…** overlay; full `arango-entity-resolution` library integration deferred |
 | Cross-Tier ER | Partial | Find overlaps between local and domain ontologies |
 | Staging → Production | Done | Promote approved entities with temporal versioning |
 | Import/Export | Done | OWL/TTL import and TTL/JSON-LD/CSV export |
@@ -157,7 +157,7 @@ make infra-down        # Stop infrastructure
 make infra-reset       # Stop and delete volumes
 
 # Run
-make backend           # Backend dev server (hot-reload, port 8000)
+make backend           # Backend dev server (hot-reload, default port 8010)
 make frontend          # Frontend dev server (port 3000)
 make migrate           # Apply pending database migrations
 

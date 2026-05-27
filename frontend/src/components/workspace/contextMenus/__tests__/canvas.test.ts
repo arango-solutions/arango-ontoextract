@@ -37,6 +37,7 @@ function makeActions(
     setShowSchemaExtraction: jest.fn(),
     setManageImports: jest.fn(),
     setDependencyOverlay: jest.fn(),
+    setSchemaDiffOverlay: jest.fn(),
     setFeedbackLearning: jest.fn(),
     setEdgeRepair: jest.fn(),
     setRevisionsInbox: jest.fn(),
@@ -286,6 +287,34 @@ describe("buildCanvasContextMenu", () => {
     expect(actions.setMergeCandidates).toHaveBeenCalledWith({
       key: "ont-er-target",
       name: "ont-er-target",
+    });
+  });
+
+  it("hides Compare Schema Evolution… when no ontology is selected", () => {
+    const actions = makeActions({ selectedOntologyId: null });
+    const items = buildCanvasContextMenu({}, actions);
+
+    const visibleLabels = items
+      .filter((it) => !it.separator)
+      .map((it) => it.label);
+
+    expect(visibleLabels).not.toContain("Compare Schema Evolution…");
+  });
+
+  it("shows Compare Schema Evolution… when an ontology is selected and dispatches with key + name", () => {
+    const actions = makeActions({
+      selectedOntologyId: "ont-diff-a",
+      selectedOntologyName: "Ontology Alpha",
+    });
+    const items = buildCanvasContextMenu({}, actions);
+
+    const diffItem = items.find((it) => it.label === "Compare Schema Evolution…");
+    expect(diffItem).toBeDefined();
+
+    diffItem!.onClick!();
+    expect(actions.setSchemaDiffOverlay).toHaveBeenCalledWith({
+      key: "ont-diff-a",
+      name: "Ontology Alpha",
     });
   });
 });

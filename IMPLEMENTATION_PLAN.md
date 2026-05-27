@@ -42,7 +42,7 @@
 | # | Task | Files | Depends On | Acceptance Criteria |
 |---|------|-------|------------|---------------------|
 | 2.1 | Document repository (DB layer) | `backend/app/db/documents_repo.py` | W1 | CRUD for `documents` and `chunks` collections; typed functions, no raw AQL in other modules |
-| 2.2 | Document parsing service (PDF/DOCX/Markdown) | `backend/app/services/ingestion.py` | — | Parses PDF (via `pymupdf` or `pdfplumber`), DOCX (via `python-docx`), and Markdown; extracts text preserving structure |
+| 2.2 | Document parsing service (PDF/DOCX/PPTX/Markdown) | `backend/app/services/ingestion.py` | — | Parses PDF (via `pymupdf`), DOCX (via `python-docx`), PPTX (via `python-pptx`), and Markdown; extracts text preserving structure |
 | 2.3 | Semantic chunking | `backend/app/services/ingestion.py` | 2.2 | Chunks text at section/paragraph boundaries; respects `max_tokens` config; preserves source page/section metadata |
 | 2.4 | Vector embedding service | `backend/app/services/embedding.py` | — | Calls OpenAI `text-embedding-3-small` (or configurable model); returns embeddings for text chunks |
 | 2.5 | Async pipeline orchestration (Celery/ARQ) | `backend/app/services/ingestion.py`, `backend/app/tasks.py` | 2.2, 2.3, 2.4 | Document upload triggers async task: parse → chunk → embed → store; status updates to `documents.status` |
@@ -53,8 +53,11 @@
 | 2.10 | Unit tests: parsing, chunking, embedding | `backend/tests/unit/test_ingestion.py`, `backend/tests/unit/test_embedding.py` | 2.2–2.4 | Mocked LLM/embedding calls; tests for PDF/DOCX/Markdown parsing; edge cases (empty doc, huge doc) |
 | 2.11 | Integration tests: document API | `backend/tests/integration/test_documents_api.py` | 2.6, 1.13 | Upload sample PDF → verify chunks created → verify status transitions |
 | 2.12 | Add backend dependencies | `backend/pyproject.toml` | — | Add `pymupdf`, `python-docx`, `langchain`, `openai`, `celery`/`arq`, `redis` |
+| 2.13 | Visual asset inventory for PDF/PPTX | `backend/app/services/ingestion.py`, `backend/app/models/documents.py` | 2.2 | Parser counts embedded pictures, screenshots, charts/diagrams, scanned/image-only pages, and records placeholder visual chunks when extraction is disabled |
+| 2.14 | OCR / vision-caption integration point | `backend/app/services/ingestion.py`, `backend/app/config.py` | 2.13 | Config flags select disabled / OCR / vision-caption modes. Visual outputs are labeled separately from body text and carry method + confidence metadata |
+| 2.15 | Visual extraction tests | `backend/tests/unit/test_ingestion.py`, `backend/tests/fixtures/sample_documents/` | 2.13–2.14 | Synthetic PPTX/PDF fixtures prove image inventory, OCR/caption injection, visual provenance, and graceful fallback when OCR/vision dependencies are absent |
 
-**Week 2 exit:** Can upload a PDF via API and retrieve semantically chunked, embedded content. Duplicate detection works. Pagination and error format established.
+**Week 2 exit:** Can upload PDF/DOCX/PPTX/Markdown via API and retrieve semantically chunked, embedded content. Duplicate detection works. Visual evidence is either extracted or explicitly represented as omitted/disabled with diagnostics. Pagination and error format established.
 
 ### Week 3: Dev-time MCP Server & Ontology Registry
 
@@ -105,6 +108,8 @@
 | 5.5 | Structured agent logging | `backend/app/extraction/agents/` (all) | 4.1 | Every agent step emits structured log with `run_id`, step name, duration, tokens, errors |
 | 5.6 | Record LLM response fixtures | `backend/tests/fixtures/llm_responses/` | 5.1 | 3-5 recorded extraction responses for deterministic testing |
 | 5.7 | Unit tests: extractor, consistency checker | `backend/tests/unit/test_extraction_parser.py`, `backend/tests/unit/test_consistency.py` | 5.1, 5.2, 5.6 | Mocked LLM responses; tests for validation failure + retry; tests for cross-pass agreement filtering |
+| 5.8 | Visual-context-aware extraction prompt | `backend/app/extraction/prompts/`, `backend/app/extraction/agents/extractor.py` | 2.13, 5.1 | Prompt receives text chunks and labeled visual context; requires visual evidence citations for hierarchy/relationship claims inferred from diagrams |
+| 5.9 | Presentation-heavy strategy selector | `backend/app/extraction/agents/strategy.py` | 2.13, 4.3 | Detect PPTX / low-text high-visual documents and select visual-aware prompt, smaller batches, and orphan-risk diagnostics |
 
 ### Week 6: ArangoRDF Integration & Staging Graphs
 
@@ -763,9 +768,11 @@ All PRD §6 features are tracked in the implementation plan:
 | §6.1 FR-1.6 | Upload status + auto-extract | Phase 1 + L.7 | **IMPLEMENTED** |
 | §6.1 FR-1.7–1.8 | Multi-doc ontologies, add doc | Sprint G | **IMPLEMENTED** |
 | §6.1 FR-1.9–1.10 | Full CRUD, many-to-many | Sprint J | **IMPLEMENTED** |
+| §6.1 FR-1.11–1.15 | Visual image/OCR extraction | Sprint IMG | PLANNED |
 | §6.2 FR-2.1–2.6 | Core extraction pipeline | Phase 2 | **IMPLEMENTED** (parallel fork/join, object property detection, deferred relationship resolution, `related_to` edge materialization) |
 | §6.2 FR-2.7–2.11 | Materialization, graphs, visualizer | Phase 2 + L.18–L.22 | **IMPLEMENTED** |
 | §6.2 FR-2.12–2.13 | Incremental + multi-doc extraction | Sprint G | **IMPLEMENTED** |
+| §6.2 FR-2.16–2.17 | Visual-context-aware extraction + orphan-risk diagnostics | Sprint IMG | PLANNED |
 | §6.3 FR-3.1–3.5 | Tier 2 local extensions | Sprint B | **IMPLEMENTED** |
 | §6.4 FR-4.1–4.9 | Visual curation dashboard | Phase 3 + Sprint A (complete) | **IMPLEMENTED** (VCR, EntityHistory, DiffOverlay, WS pipeline events, schema extract status — see Sprint A verification) |
 | §6.4 FR-4.10–4.13 | Standalone ontology editor | Sprint K | **IMPLEMENTED** |
@@ -777,6 +784,7 @@ All PRD §6 features are tracked in the implementation plan:
 | §6.9 FR-9.1–9.7 | Schema extraction from ArangoDB | Phase 6 | STUB |
 | §6.10 FR-10.1–10.5 | MCP server (runtime) | Phase 5 | **IMPLEMENTED** |
 | §6.11 FR-11.1–11.10 | Agentic extraction pipeline | Phase 2 + quality judge | **IMPLEMENTED** (6-agent parallel pipeline, async `ainvoke`, concurrent extraction, `Annotated` reducers for state merging) |
+| §6.11 FR-11.17 | Visual-heavy document strategy | Sprint IMG | PLANNED |
 | §6.12 FR-12.1–12.10 | Pipeline monitor dashboard | Phase 2 + L + fixes | **IMPLEMENTED** (polling, step DAG, metrics, errors) |
 | §6.13 FR-13.1–13.13 | Ontology quality metrics | Sprint F + confidence fixes + Q.1 | **MOSTLY IMPLEMENTED** (7-signal confidence, health score, quality panel, unified `/dashboard`, per-ontology live radar tab, recharts radar on scorecard detail, audited OntoQA panel, connectivity metric; missing: `/quality/history`, gold-standard recall API, RAG benchmark comparison) |
 | §6.14 FR-14.1–14.7 | OWL restrictions + SHACL | Sprint I | NOT STARTED |
@@ -800,14 +808,36 @@ All PRD §6 features are tracked in the implementation plan:
 | Q: Quality Dashboard + History | 3 days | 5 | **P1** | PRD §6.13 completeness | PARTIALLY DONE (Q.1 radar dashboard done; Q.2–Q.5 pending) |
 | I: Constraints (OWL + SHACL) | 1 week | 9 | **P2** | Formal constraints | PENDING |
 | S: Schema Extraction | 1 week | 6 | **P2** | Reverse engineering | PENDING |
+| IMG: Image-Aware Extraction | 1 week | 8 | **P1** | PPTX/PDF ontology quality | PENDING |
 | D: Test Coverage & CI | 1 week | 7 | **P2** | Quality gate | PENDING |
 | E: Production Polish | 1 week | 7 | **P2** | v1.0.0 readiness | PENDING |
 | PGT: Property Collection Alignment | 1.5 weeks | 12 | **P0** | Schema alignment (ADR-006) | PENDING — on `object-centric-ux` branch |
 | OWL: Foundation Layer (Metamodel) | 1 week | 7 | **P1** | Formal OWL completeness (depends on PGT) | PENDING |
 | V: Sigma.js Migration | 2–3 weeks | 11 | **P1** (post-v1.0) | Scalability | PENDING |
-| **Total remaining** | **~8–9 weeks** | **~70 tasks** | | |
+| **Total remaining** | **~9–10 weeks** | **~78 tasks** | | |
 
 See `docs/REMAINING_WORK_PLAN.md` for detailed task breakdowns per stream.
+
+---
+
+### Sprint IMG: Image-Aware Document Extraction (1 week)
+
+**Goal:** Close the PPTX/PDF visual-evidence gap. Many business decks encode taxonomies, process flows, and parent-child relationships in diagrams or screenshots; silently dropping those images leads to flat ontologies and orphan classes. This sprint makes visual evidence observable, extracts it when configured, and feeds it to the extraction agent with provenance.
+
+**PRD Reference:** §6.1 FR-1.11–FR-1.15, §6.2 FR-2.16–FR-2.17, §6.11 FR-11.17
+
+| # | Task | Files | Description |
+|---|------|-------|-------------|
+| IMG.1 | Visual asset model + diagnostics | `backend/app/services/ingestion.py`, `backend/app/models/documents.py`, `backend/app/db/documents_repo.py` | Add parsed-document metadata for visual assets found/processed/failed, visual-only pages/slides, method (`placeholder`, `alt_text`, `ocr`, `vision_caption`), confidence, and source page/slide. |
+| IMG.2 | PPTX image inventory | `backend/app/services/ingestion.py` | Walk picture/chart/diagram shapes (including grouped shapes), count them per slide, preserve alt text where available, and emit `[Visual omitted: ...]` placeholders when extraction is disabled. |
+| IMG.3 | PDF image/scanned-page inventory | `backend/app/services/ingestion.py` | Detect non-text image blocks and image-only pages; add diagnostics so scanned PDFs no longer look like "empty documents" without explanation. |
+| IMG.4 | OCR / vision extraction adapter | `backend/app/services/ingestion.py`, `backend/app/config.py`, `backend/pyproject.toml` | Add configurable adapter boundary for OCR and multimodal captions. Keep provider optional; fail soft per asset and hard only on invalid config. |
+| IMG.5 | Chunking with visual context | `backend/app/services/ingestion.py`, `backend/app/tasks.py` | Store visual descriptions as labeled chunk text with page/slide provenance. Keep visual context distinct from body text for prompt safety and evidence traceability. |
+| IMG.6 | Visual-aware extraction prompt + strategy | `backend/app/extraction/prompts/`, `backend/app/extraction/agents/strategy.py`, `backend/app/extraction/agents/extractor.py` | Include slide titles and visual context in prompt batches; for presentation-heavy docs, instruct the model to infer hierarchy from title/body/diagram evidence only when cited. |
+| IMG.7 | Orphan-risk diagnostics | `backend/app/services/extraction.py`, `backend/app/services/quality_metrics.py` | If a deck yields high orphan count or many title/visual chunks with no parent links, write a non-blocking warning to the run stats for curation review. |
+| IMG.8 | Regression tests and fixtures | `backend/tests/unit/test_ingestion.py`, `backend/tests/unit/test_strategy_selector.py`, `backend/tests/unit/test_extraction_parser.py`, `backend/tests/fixtures/sample_documents/` | Synthetic deck with image-only taxonomy and title-only hierarchy proves visual chunks reach the prompt; scanned-PDF fixture proves diagnostics; extraction fixture asserts visual evidence can support `parent_uri`. |
+
+**Sprint IMG exit:** PPTX/PDF image loss is visible in diagnostics; configured OCR/vision output reaches chunks and extraction prompts with provenance; synthetic deck regression no longer produces avoidable orphan classes when the hierarchy is present only in visual evidence.
 
 ---
 

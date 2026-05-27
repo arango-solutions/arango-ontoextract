@@ -112,6 +112,14 @@ class Settings(BaseSettings):
     #: preserving most of the speed-up from concurrency.
     qualitative_eval_max_concurrency: int = 5
 
+    # -- Visual extraction (Stream 13) -------------------------------------
+    #: Inventory embedded images/charts and emit labeled placeholders when
+    #: OCR/vision is not configured. Disabling skips visual asset walks.
+    visual_extraction_enabled: bool = True
+    #: When True, non-text visuals become ``[Visual omitted: …]`` lines in
+    #: chunk text; when False, visuals are counted in metadata only.
+    visual_extraction_placeholders: bool = True
+
     # -- Entity Resolution -------------------------------------------------
     er_vector_similarity_threshold: float = 0.85
     er_vector_weight: float = 0.6

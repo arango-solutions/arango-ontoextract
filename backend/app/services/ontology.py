@@ -123,26 +123,3 @@ def get_staging_graph(
         "properties": properties,
         "edges": edges,
     }
-
-
-def promote_staging(
-    db: StandardDatabase | None = None,
-    *,
-    run_id: str,
-) -> dict[str, Any]:
-    """Promote approved staging entities to production.
-
-    Stub for Phase 3 — will move approved entities from staging graph to
-    production graph using temporal versioning.
-    """
-    if db is None:
-        db = get_db()
-
-    log.info("promote_staging called (Phase 3 stub)", extra={"run_id": run_id})
-
-    return {
-        "run_id": run_id,
-        "promoted": 0,
-        "status": "not_implemented",
-        "message": "Promotion logic will be implemented in Phase 3 (curation workflow).",
-    }

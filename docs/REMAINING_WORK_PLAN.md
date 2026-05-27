@@ -46,7 +46,7 @@ The full belief-revision substrate (`revision_meta` collection, evidence-age + e
 
 | Area | Status | Key Capabilities |
 |------|--------|-----------------|
-| Document Ingestion (§6.1) | **Complete** | Upload (PDF, DOCX, MD), chunking, auto-extraction trigger, multi-doc, CRUD |
+| Document Ingestion (§6.1) | **Mostly Complete** | Upload (PDF, DOCX, PPTX, MD), chunking, auto-extraction trigger, multi-doc, CRUD. **Gap:** embedded images / scanned pages are currently text-only or omitted; image-aware extraction tracked in Stream 13. |
 | Extraction Pipeline (§6.2, §6.11) | **Complete** | 6-agent LangGraph pipeline (strategy, extractor, consistency, quality judge, ER stub, filter), async/concurrent, 7-signal confidence scoring |
 | Tier 2 Extensions (§6.3) | **Complete** | Domain context injection, tier2 prompts, strategy auto-detection |
 | Visual Curation (§6.4) | **Complete** | Graph canvas (React Flow), node/edge actions, VCR timeline, diff view, provenance, standalone editor with CRUD |
@@ -67,11 +67,12 @@ The full belief-revision substrate (`revision_meta` collection, evidence-age + e
 | Imports, Composition & Dependencies (§6.15, §6.8.8–8.16) | **COMPLETE (Phase 0 + Phase 1 + Phase 2a + Phase 2b shipped in v0.4.0-dev)** | `owl:imports` edge tracking, imports CRUD, `ontology_imports` named graph, standard ontology catalog (`/ontology/catalog` + bundled DCMI sample), `GET /imports-graph` DAG endpoint, cascade-on-delete impact, base-ontology selector on extraction, OWL exports preserving `owl:imports`, workspace catalog-browser overlay, workspace imports-dependency overlay (DAG canvas + library deep-link), three Visualizer saved queries, effective-graph API (`GET /{id}/effective` with inline conflicts + ETag), merge-conflict detection (duplicate URI / duplicate label / subclass cycle via import), canvas rendering of imported entities (dashed slate border + dimmed fill on Sigma + box-arrow + "Open Source Ontology" context-menu deep-link, with the legend swatch surfacing only when imports are present), drag-and-drop import composition (drag any ontology row onto the canvas to add an `imports` edge, with self/duplicate pre-check, cycle detection on the backend, undo-toast on success, and per-entity "Remove Import (<source name>)" context-menu entries — all routed through a new module-level toast surface), and import-aware extraction prompts (the effective ontology — own + transitive imports — is serialized as a tree-shaped header + reuse guidelines and prepended to `domain_context` for every extraction targeting a composed ontology, so the LLM is told which classes already exist and instructed to reuse via `rdfs:subClassOf` / `owl:equivalentClass` rather than minting duplicates the conflict detector will later flag) are all shipped. |
 | Belief Revision UX (§6.16, Stream 11 Phase 3) | **Complete (v0.4.0-dev)** | Revisions Inbox overlay (IBR.14), inline detail panel (IBR.15), accept/reject/modify REST + service (IBR.16), background consolidation + admin endpoints (IBR.17), four safety guards (IBR.18), Quality Dashboard "Revisions Activity" tile (IBR.19), six MCP tools (IBR.20), and docs cross-link (IBR.21) all shipped. See ADR-008 implementation status appendix. |
 | Constraints (§6.14) | **PR 1–PR 5 shipped (v0.4.0-dev)** | Extraction (PR 1) → OWL restriction import (PR 2) → SHACL shapes import (PR 3) → materialization → API → temporal → rule engine alignment + workspace UI display (PR 4) + OWL Turtle restriction export & new SHACL shapes export (PR 5) all shipped (I.1–I.6, I.8, I.9, plus rule-engine schema reconciliation and SHACL/OWL cross-vocab combination). Stream 3 v1 complete. Remaining only: curator approve / reject mutation actions (I.7 → blocked on mutation API). |
-| Schema Extraction (§6.9) | **Backend complete (v0.4.0-dev)** | Stream 5 PR 1 (backend extraction with named-graph awareness + per-class provenance + auto-imports) + PR 2 (workspace overlay UI) + PR 3 sub-A (S.9 constraint mapping into SHACL) + PR 3 sub-B (S.5 schema diff endpoint) all shipped. Frontend overlays for diff + constraint-aware preview are tracked under Stream 7. |
+| Schema Extraction (§6.9) | **Complete (v0.4.0-dev)** | Stream 5 PR 1 (backend extraction) + PR 2 (schema-extraction overlay) + PR 3 sub-A (S.9 constraint mapping) + PR 3 sub-B backend (S.5 schema diff endpoint) + **S.5 frontend overlay** (`SchemaDiffOverlay` on `/workspace`, context menus) all shipped. |
 | Quality Dashboard (§6.13.7) | **Mostly Done (v0.4.0-dev)** | Unified `/dashboard`, `/quality` → per-ontology tab, recharts radar, audited OntoQA metrics, connectivity metric, qualitative evaluation, live per-ontology six-dimension view, **event-tagged history tracking (Q.2)**, **trend sparklines (Q.3)**, **gold-standard recall (Q.4)**, **curation throughput timer (Q.5)**. Remaining: RAG benchmark comparison. |
 | Workspace Performance (Stream 12) | **Mostly Done in v0.3.0** | T1+T2+T3+T4+T5 shipped (projections, single-item endpoints, client cache, FLATTEN consolidation, telemetry, format sniffer, UI race fixes). Remaining: T6 WTW switch profile, T7 `/runs/{id}/cost` cache, T8 `/runs` join. |
 | Testing & CI (§8) | **Partial** | ~500 unit tests exist but no CI pipeline, no coverage enforcement |
 | Production Ops (§8.5) | **Stream 7 complete (v0.4.0-dev)** | Stream 7 PR 1 (TTL GC + visualizer auto-install), PR 2 (OpenTelemetry tracing), PR 3 (alerting + prod docker-compose hardening + monitoring profile), PR 4 (ops benchmarks harness + README/docs refresh). All four PRs shipped. |
+| Image-Aware Extraction (§6.1, §6.2, §6.11) | **Not Started** | PPTX/PDF embedded images, screenshot diagrams, scanned pages, and visual hierarchy are not OCR/captioned or sent to the extraction prompt. This can produce flat ontologies and orphan classes when decks encode taxonomy visually. |
 | Visualizer Migration | **Not Started** | React Flow → Sigma.js/graphology (PRD target architecture) |
 
 ### Recently Fixed (since v1.0 of this plan)
@@ -119,6 +120,7 @@ underlying gap that the Belief Revision Agent must learn to catch.
 | Q.3a | Financial Services Domain (`225351740`) | Of nine account-related classes, only `CheckingAccount` has `subClassOf Account`. Five clear banking subtypes are orphaned: `EscrowAccount` (also Q.1), `MerchantSettlementAccount`, `NostroAccount`, `VostroAccount`, plus the implicit `MuleAccount` parent (see Q.3b). | All five should have `subClassOf Account` (Nostro and Vostro are formal banking terms; Merchant Settlement and Escrow are functional account types). | `GAP-FILLING` (batch) — exercises the rule engine's ability to propose **multiple** edges in a single revision pass (FR-16.6) without N independent LLM calls. Touchpoint signals: name suffix `*Account` + structural similarity to `CheckingAccount`. | IBR.13 |
 | Q.3b | Financial Services Domain (`225351740`) | `ThirdPartyMuleAccount` exists as a leaf class but its implied parent `MuleAccount` was never extracted, so the taxonomy has a hole. The name itself encodes a two-level hierarchy: `ThirdPartyMuleAccount → MuleAccount → Account`. | The pipeline should **propose a new intermediate class** `MuleAccount subClassOf Account`, then attach `ThirdPartyMuleAccount subClassOf MuleAccount`. | `REFINED` with class **creation** (not just edge creation) — this is the hardest verdict because it requires the LLM Revision Agent (IBR.8) to propose new vertices, not just new edges. Source-text evidence required; in absence of it, action is `FLAG_FOR_CURATION`. | IBR.13 (extension) |
 | Q.3c | Financial Services Domain (`225351740`) | `AccountStatus` and `MuleAccountActivity` share the `Account` name prefix but are **not** account subtypes. `AccountStatus` is an enum/vocabulary (it has a `value` property); `MuleAccountActivity` is an activity observed on a mule account. A naive prefix-match rule would wrongly classify both as `subClassOf Account`. | `Account --status--> AccountStatus` (relationship, like Q.2c). `MuleAccountActivity` should reference an account (`MuleAccountActivity --observedOn--> MuleAccount`), not be a subtype of one. | **Negative test:** Mechanical Verdict (IBR.7) must **NOT** emit `GAP-FILLING(subClassOf)` here despite the name overlap. The `*Status`/`*Activity` suffix and the presence of independent attributes are disambiguating signals the rule engine must learn. Critical regression test for false-positive prevention. | IBR.13 (negative) |
+| Q.4 | PPTX deck with visual hierarchy | PowerPoint decks that encode class hierarchy in screenshots, diagrams, SmartArt-as-image, or title-only slides can yield orphan classes because the current parser extracts text boxes/tables/notes only. Embedded images and scanned pages are omitted from chunks; slide headings are stored as metadata but not always visible to the LLM. | PPTX/PDF ingestion should inventory visual assets, OCR/caption them when configured, feed labeled visual context to extraction prompts, and preserve slide/page provenance. The extraction run should warn when high orphan count correlates with visual-heavy input. | `GAP-FILLING` + ingestion remediation — first fix evidence capture (Stream 13), then let belief revision repair residual hierarchy gaps with visual evidence citations. | Stream 13 + IBR.13 |
 
 When a new gap is observed in the demo, append a new row here rather than
 patching the live data. The growing list becomes the acceptance suite for
@@ -715,12 +717,11 @@ Stream 5 is split into three PRs:
   directly, add a fourth bucket without changing the existing
   shape.
 
-  **Frontend UI is a follow-up PR**: this commit closes the S.5
-  backend deliverable per the plan's "Backend" task type. A
-  workspace overlay that calls `GET /schema/diff` and renders
-  the three buckets as collapsible accordions (with the
-  `provenance.warning` banner up top) is the natural next step
-  -- tracked under Stream 7 polish.
+  **Frontend UI (DONE, v0.4.0-dev follow-up)**: `SchemaDiffOverlay` on
+  `/workspace` calls `GET /schema/diff`, renders accordion buckets for
+  classes / properties / constraints, and surfaces `provenance.warning`.
+  Opened from ontology explorer + canvas context menus ("Compare Schema
+  Evolution…").
 
 #### Tasks
 
@@ -730,7 +731,7 @@ Stream 5 is split into three PRs:
 | S.2 | OWL export from schema | Backend | **DONE (pre-existing)** | TTL fed into `import_from_file` -> standard ArangoRDF PGT pipeline. |
 | S.3 | Schema extraction API | Backend | **DONE (pre-existing)** | `POST /api/v1/ontology/schema/extract` + `GET /api/v1/ontology/schema/extract/{run_id}`. |
 | S.4 | Provenance tracking for schema sources | Backend | **DONE (PR 1, v0.4.0-dev)** | `_stamp_per_class_provenance` -- per-class `source_db` / `source_collection` / `source_host`. Bulk AQL, no N+1. Failure swallowed so provenance bugs never break extraction. TTL also carries the same triples via the `aoe:` vocab so exports round-trip. |
-| S.5 | Schema diff for evolution tracking | Backend | **DONE (PR 3 sub-B, v0.4.0-dev)** | New `app/services/schema_diff.py` + `GET /api/v1/ontology/schema/diff?a=<ontology>&b=<ontology>` endpoint. Computes `{added, removed, changed}` for classes (by `uri`), properties (by `uri` across all three PGT collections), and constraints (by composite `(class_uri, property_uri, restriction_type)` key, joined server-side via AQL because constraints store `_key` references and `_key`s are disjoint across ontologies). `changed` rows wrap `{before, after}` so the curator UI can render side-by-side without re-joining. Self-diff (`a == b`) raises `ValueError -> 400`. Provenance compatibility (`source_db` + `source_host` from class-level stamping in S.4) is surfaced as a **warning**, not a refusal -- the diff is still computed when ontologies have different source DBs or weren't created via schema extraction at all; `provenance.compatible` + `provenance.warning` carry the verdict. Reuses the temporal "skip metadata fields" pattern from `temporal._has_data_changed` but tuned for schema semantics: provenance fields (`source_db` / `source_collection` / `source_field`) are intentionally IN the comparison so a re-extraction repointed at a different source DB shows up as `changed`. Edges (`subclass_of`, `has_property`, `rdfs_domain`, etc.) are deliberately out of scope for v1 -- their changes are nearly always implicit consequences of class / property add / remove that the diff already surfaces. |
+| S.5 | Schema diff for evolution tracking | Backend + Frontend | **DONE (PR 3 sub-B backend + frontend overlay, v0.4.0-dev)** | Backend: `app/services/schema_diff.py` + `GET /api/v1/ontology/schema/diff?a=&b=`. Frontend: `SchemaDiffOverlay` + context-menu wiring on `/workspace`. Computes `{added, removed, changed}` for classes, properties, and constraints; self-diff → 400; provenance mismatch → warning banner. Edges out of scope for v1. |
 | S.6 | Named graph discovery API | Backend | **DONE (PR 1, v0.4.0-dev)** | `POST /api/v1/ontology/schema/graphs` -- returns named graphs + edge definitions + loose collections. POST (not GET) so credentials don't leak via URL. Errors mapped to 400 (bad config) / 502 (upstream Arango unreachable) / 422 (validation). |
 | S.7 | Named graph-aware extraction | Backend | **DONE (PR 1, v0.4.0-dev)** | `_direct_extract_schema` walks `db.graphs()`, emits `owl:ObjectProperty` with `rdfs:domain` / `rdfs:range` resolved from edge definitions. Multi-from / multi-to edge defs emit one triple per vertex collection. `graph_names` config restricts the walk; `include_loose` controls fallthrough to non-graph collections. |
 | S.8 | Direct graph-to-ontology mapping (no `schema_analyzer`) | Backend | **DONE (PR 1, v0.4.0-dev)** | Same `_direct_extract_schema` path: (a) document collection → `owl:Class`, (b) edge collection → `owl:ObjectProperty` with domain/range from edge def, (c) sampled scalar fields → `owl:DatatypeProperty` with XSD type inferred from value. Field URIs are scoped to the source collection (`{Col}.{field}`) so two collections with a `name` field don't collide. Heterogeneous types fall back to `xsd:string`. Nested objects + arrays skipped for v1 (logged limitation; can recurse in PR 3). |
@@ -785,7 +786,7 @@ plan estimates (e.g. ~500 backend tests, ~60 frontend tests) are stale by
 | Backend integration tests | **11 suites** | n/a | ✅ ArangoDB + Redis service containers |
 | Backend E2E tests | **4 suites** | n/a | ✅ in CI (Tier 4) |
 | Frontend unit tests | **591** | 57.77%S / 76.35%B / 72.66%F / 57.77%L | ✅ no-regression gate (PR 1) |
-| Frontend E2E (Playwright) | **3 specs** | n/a | ❌ exist locally, not in CI |
+| Frontend E2E (Playwright) | **4 specs** (workspace smoke in CI) | n/a | ✅ `e2e/workspace.spec.ts` in CI; legacy `/curation` + `/entity-resolution` specs remain local-only |
 | CI structure | 5-tier | — | ✅ lint → unit → integration → E2E → unified-image+WS smoke |
 
 Stream 6 is being closed as two PRs:
@@ -810,13 +811,10 @@ Stream 6 is being closed as two PRs:
     test (`waitFor` block so both `getByTestId` + `getByText` must hold
     simultaneously, not as serial assertions across an unstable DOM).
 
-- **PR 2 — Playwright E2E in CI (D.5, deferred)**: 3 specs exist locally
-  (`timeline.spec.ts`, `curation.spec.ts`, `entity-resolution.spec.ts`)
-  but 2 of 3 target the deprecated `/curation` + `/entity-resolution`
-  routes which the `ui-architecture.mdc` rule says not to extend. Scope
-  decision needed: drop the legacy specs + write workspace smoke specs,
-  vs patch the legacy specs against real APIs. Re-open this section
-  when the workspace UI settles after Stream 8 (canvas migration).
+- **PR 2 — Playwright E2E in CI (D.5, DONE)**: `e2e/workspace.spec.ts`
+  (workspace smoke with mocked APIs) runs in the `test-e2e-frontend` CI
+  job. Legacy specs (`timeline`, `curation`, `entity-resolution`) remain
+  local-only — two target deprecated routes per `ui-architecture.mdc`.
 
 #### Tasks
 
@@ -826,7 +824,7 @@ Stream 6 is being closed as two PRs:
 | D.2 | Coverage gates | DevOps | **DONE (PR 1, v0.4.0-dev)** | Backend has `--cov-fail-under=80` on the unit job. Frontend now has `coverageThreshold` (55/70/70/55 floor; ratchet-up policy). Codecov uploads via `codecov/codecov-action@v4` on both layers; `fail_ci_if_error: false` so a Codecov outage does not block PRs — the in-repo `--cov-fail-under` + `coverageThreshold` are the source of truth. |
 | D.3 | Missing backend integration tests | Backend | **DONE (v0.3.0)** | 11 integration suites: ArangoRDF import, belief revision Q fixtures, curation workflow, documents API, ER pipeline, import/export round-trip, MCP tools, migrations, orgs API, temporal queries, visualizer install. |
 | D.4 | Missing frontend component tests | Frontend | **DONE 10x (v0.4.0-dev)** | 591 Jest tests across components, hooks, lib, and workspace contextMenus (plan said ~60). Coverage: statements 57.8% / branches 76.4% / functions 72.7% / lines 57.8%. |
-| D.5 | Playwright E2E tests | Frontend | **DEFERRED (PR 2)** | 3 specs exist (`timeline`, `curation`, `entity-resolution`) but not in CI; 2/3 bind to deprecated routes. Decision pending on workspace-smoke rewrite vs legacy-spec rescue. |
+| D.5 | Playwright E2E tests | Frontend | **DONE (PR 2, v0.4.0-dev)** | `test-e2e-frontend` CI job runs `e2e/workspace.spec.ts` (asset explorer + ontology deep-link smoke with mocked APIs). Legacy `/curation` + `/entity-resolution` specs kept local-only. |
 | D.6 | `.env.example` completion | DevOps | **DONE (v0.3.x)** | Covers all three deployment modes (`local_docker`, `self_managed_platform`, `managed_platform`), CORS, Redis, LLM providers, ER thresholds, rate limiting, path-prefix routing. |
 | D.7 | Root `AGENTS.md` | Docs | **DONE (v0.3.x)** | Module map + conventions + system dependencies + deeper-doc index. |
 
@@ -835,7 +833,8 @@ frontend coverage ≥ 55%S / 70%B / 70%F / 55%L on every PR via in-repo
 gates; Codecov captures trends. Python 3.11 + 3.12 matrix on lint +
 unit. Stream 6 PR 1 closed.
 
-**Outstanding (PR 2):** wire Playwright into CI. Re-open after Stream 8.
+**Exit Criteria (PR 2 — MET):** Playwright workspace smoke in CI.
+Stream 6 closed.
 
 ---
 
@@ -1091,10 +1090,38 @@ We have most of the substrate already (temporal versioning, provenance, multi-si
 
 | # | Task | Type | Estimate | Description |
 |---|------|------|----------|-------------|
-| T9 | Remove `?include=full` from canvas paths | Frontend | 2h | Audit the workspace's canvas-load fetches to confirm they all use `?include=summary`. The few that still need full payloads (provenance overlay, version history) should switch to single-item endpoints (T1.2 pattern). |
+| T9 | Remove `?include=full` from canvas paths | Frontend | **DONE (v0.4.0-dev)** | Audited workspace canvas loads: `fetchGraphData` uses `GET /{id}/effective?include=summary` only; AssetExplorer class/edge previews use `?include=summary`. No live `include=full` fetches on canvas paths — detail panels use single-item endpoints per T1.2. |
 | T10 | Pagination cursor on `/classes` and `/edges` | Backend + Frontend | 1 day | For ontologies with > 5K entities, ship a cursor-based page so the workspace can render the visible viewport first and lazy-load the rest. |
 
 **Exit Criteria:** Workspace switch on a 1000+ class ontology stays under 2s end-to-end; no API endpoint exceeds 1s p95 on demo data; per-stage telemetry remains in the logs as a permanent diagnostic surface.
+
+---
+
+### Stream 13: Image-Aware Document Extraction
+**PRD:** §6.1 FR-1.11–FR-1.15, §6.2 FR-2.16–FR-2.17, §6.11 FR-11.17
+**Duration:** 1 week
+**Priority:** P1 — directly addresses observed PPTX orphan-class quality gap
+**Dependencies:** Existing ingestion (`parse_pptx`, `parse_pdf`), chunk storage, extraction prompt/batching, quality orphan metrics
+
+#### Objectives
+- Make visual evidence loss observable: every PPTX/PDF run should report visual assets found, processed, skipped, and failed.
+- Extract useful text/structure from embedded images, diagrams, screenshots, and scanned pages via configurable OCR or vision-caption providers.
+- Preserve provenance for visual evidence so extracted classes, `parent_uri`, attributes, relationships, and constraints can cite slide/page + visual asset IDs.
+- Feed visual context to the LLM separately from body text, with prompt guidance that visual hierarchy can support subclass/object-property extraction only when cited.
+- Reduce avoidable orphan classes from presentation decks by preserving slide titles, title-only slides, and diagram-derived hierarchy.
+
+| # | Task | Type | Estimate | Description |
+|---|------|------|----------|-------------|
+| IMG.1 | Visual asset metadata model | Backend | 0.5 day | Extend parsed-document/chunk metadata to include visual asset counts, source page/slide, asset index, method (`placeholder`, `alt_text`, `ocr`, `vision_caption`), confidence, and failure reason. Persist diagnostics on document/extraction run stats. |
+| IMG.2 | PPTX visual inventory | Backend | 0.5 day | Walk picture/chart/diagram shapes, including grouped shapes. Preserve available alt text. Emit `[Visual omitted: slide N image M]` placeholders when image extraction is disabled. Title-only slides must produce chunk text that includes the slide title. |
+| IMG.3 | PDF image/scanned-page inventory | Backend | 0.5 day | Detect non-text image blocks and image-only pages with PyMuPDF. Mark scanned pages distinctly so operators know OCR is needed rather than seeing an apparently empty document. |
+| IMG.4 | OCR / vision-caption adapter | Backend | 1 day | Add config-driven provider boundary for OCR and multimodal captions. Provider failures are per-asset warnings, not document failures, unless config is invalid. Avoid hard host dependencies in the default path. |
+| IMG.5 | Visual-aware chunking | Backend | 0.5 day | Store visual descriptions as labeled chunks or labeled sections within slide/page chunks. Keep visual text separate from body text for prompt safety and citation clarity. |
+| IMG.6 | Visual-aware extraction strategy | Backend | 1 day | Strategy selector detects PPTX / low-text high-visual inputs and selects prompt/batch settings that preserve slide context. Prompt includes slide headings and visual context and asks for hierarchy/object-property evidence citations. |
+| IMG.7 | Orphan-risk warning | Backend | 0.5 day | If a visual-heavy run produces many top-level/orphan classes, write a non-blocking run warning with links to visual-heavy source slides/pages for curator review. |
+| IMG.8 | Regression fixtures and tests | Backend | 1 day | Synthetic PPTX with image-only taxonomy and title-only hierarchy; scanned/image-only PDF fixture; tests for inventory, placeholder mode, OCR/caption injection, prompt rendering, and orphan-risk warning. |
+
+**Exit Criteria:** A PPTX/PDF with visual hierarchy no longer loses image evidence silently; visual context reaches extraction prompts with provenance; configured OCR/vision output can support `parent_uri` and object-property evidence; visual-heavy orphan risk is surfaced before curation.
 
 ---
 
@@ -1107,6 +1134,7 @@ Sprint C:       Stream 1 Phase 2 (Composition: effective graph, conflict detecti
 Sprint D:       Stream 5 (Schema Extraction) + remaining Stream 12 follow-ups from telemetry — in parallel
 Sprint E:       Stream 6 (Testing & CI)
 Sprint F:       Stream 7 (Production Polish)
+Sprint G:       Stream 13 (Image-Aware Extraction) before additional PPTX-heavy ontology work
                 → v1.0.0 Release
 Post-v1.0:      Stream 8 (Sigma.js Migration) + Stream 9 (Unified Storage spike)
 ```

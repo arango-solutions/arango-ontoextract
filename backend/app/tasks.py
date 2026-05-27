@@ -79,6 +79,14 @@ async def process_document(doc_id: str, file_bytes: bytes, mime_type: str) -> No
                 documents_repo.update_document_status(doc_id, DocumentStatus.PARSING)
                 parsed = await _parse(file_bytes, mime_type)
                 parse_span.set_attribute("sections", len(parsed.sections))
+                parse_span.set_attribute(
+                    "visual_assets", parsed.visual_diagnostics.visual_asset_count
+                )
+                if parsed.visual_diagnostics.visual_asset_count:
+                    documents_repo.merge_document_user_metadata(
+                        doc_id,
+                        {"visual_extraction": parsed.visual_diagnostics.to_metadata_dict()},
+                    )
                 log.info("[ingest:%s] parsing done, sections=%d", doc_id, len(parsed.sections))
 
             with tracer.start_as_current_span("ingest.chunk") as chunk_span:

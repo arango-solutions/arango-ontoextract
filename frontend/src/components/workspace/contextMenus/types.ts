@@ -56,9 +56,17 @@ export type ManageImportsArg = {
 } | null;
 
 /** Argument shape for ``setDependencyOverlay`` (``null`` closes the overlay).
- *  Drives the H.7 ``ImportsDependencyOverlay`` -- DAG visualisation of
+ *  Drives the H.7 ``ImportsDependencyOverlay`` — DAG visualisation of
  *  ``owl:imports`` ancestors + dependents anchored at one ontology. */
 export type DependencyOverlayArg = {
+  key: string;
+  name: string;
+} | null;
+
+/** Argument shape for ``setSchemaDiffOverlay`` (``null`` closes the overlay).
+ *  Drives the Stream 5 S.5 ``SchemaDiffOverlay`` — cross-ontology schema
+ *  evolution diff between two registry ontologies. */
+export type SchemaDiffOverlayArg = {
   key: string;
   name: string;
 } | null;
@@ -210,6 +218,9 @@ export interface WorkspaceContextMenuActions {
    *  re-roots the graph and (when the user accepts the navigation hint)
    *  switches the workspace selection. ``null`` closes the overlay. */
   setDependencyOverlay: (arg: DependencyOverlayArg) => void;
+  /** Opens the Stream 5 S.5 ``SchemaDiffOverlay`` — compare schema evolution
+   *  between two ontologies via ``GET /schema/diff``. ``null`` closes. */
+  setSchemaDiffOverlay: (arg: SchemaDiffOverlayArg) => void;
   setFeedbackLearning: (arg: FeedbackLearningArg) => void;
   /** Opens the ``EdgeRepairOverlay`` for one ontology -- preview +
    *  apply for orphan ``ontology_object_properties`` (R3 violations).
@@ -270,4 +281,7 @@ export interface WorkspaceContextMenuActions {
    *  to a sensible default ``ontology_id`` when the property row is missing
    *  one (e.g. legacy rows). */
   selectedOntologyId: string | null;
+  /** Display name of the open ontology — used by canvas menu actions that
+   *  seed overlay state (schema diff, revisions inbox, etc.). */
+  selectedOntologyName?: string | null;
 }

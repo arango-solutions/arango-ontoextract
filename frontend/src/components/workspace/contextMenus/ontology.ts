@@ -89,6 +89,15 @@ export function buildOntologyContextMenu(
       },
     },
     {
+      label: "Compare Schema Evolution…",
+      icon: "📊",
+      onClick: () => {
+        if (!ontKey) return;
+        const n = String(data.name ?? data.label ?? ontKey).trim();
+        actions.setSchemaDiffOverlay({ key: ontKey, name: n || ontKey });
+      },
+    },
+    {
       label: "View Quality Report",
       icon: "📊",
       onClick: () => actions.fetchOntologyQualityReport(data),

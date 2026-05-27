@@ -164,6 +164,18 @@ export function buildCanvasContextMenu(
         actions.setMergeCandidates({ key: ontKey, name: ontKey });
       },
     });
+    items.push({
+      label: "Compare Schema Evolution…",
+      icon: "📊",
+      onClick: () => {
+        const ontKey = actions.selectedOntologyId;
+        if (!ontKey) return;
+        actions.setSchemaDiffOverlay({
+          key: ontKey,
+          name: actions.selectedOntologyName ?? ontKey,
+        });
+      },
+    });
   }
 
   return items;

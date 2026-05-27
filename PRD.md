@@ -19,7 +19,7 @@
    - 5.2 Ontology Library Architecture
    - 5.3 Temporal Ontology Versioning (Edge-Interval Time Travel)
 6. [Core Features & Functional Requirements](#6-core-features--functional-requirements)
-   - 6.1 Document Ingestion & Chunking
+   - 6.1 Document Ingestion, Visual Extraction & Chunking
    - 6.2 Domain Ontology Extraction (Tier 1)
    - 6.3 Localized Ontology Extension (Tier 2)
    - 6.4 Visual Curation Dashboard (Human-in-the-Loop)
@@ -60,7 +60,7 @@
 
 ## 1. Executive Summary
 
-Arango-OntoExtract (AOE) is an LLM-driven ontology extraction and curation platform built on ArangoDB. The system ingests unstructured text (PDF, DOCX, Markdown), automatically generates formal domain ontologies expressed in OWL 2 / RDFS (with optional SKOS vocabulary support), and provides a visual curation interface for domain experts to review, refine, and promote extracted knowledge. Ontologies are stored in ArangoDB via ArangoRDF's PGT transformation, which preserves OWL metamodel semantics while leveraging ArangoDB's multi-model capabilities.
+Arango-OntoExtract (AOE) is an LLM-driven ontology extraction and curation platform built on ArangoDB. The system ingests unstructured documents (PDF, DOCX, PPTX, Markdown) including embedded visual evidence such as slide diagrams, screenshots, and scanned pages; it automatically generates formal domain ontologies expressed in OWL 2 / RDFS (with optional SKOS vocabulary support), and provides a visual curation interface for domain experts to review, refine, and promote extracted knowledge. Ontologies are stored in ArangoDB via ArangoRDF's PGT transformation, which preserves OWL metamodel semantics while leveraging ArangoDB's multi-model capabilities.
 
 The platform supports a **two-tier architecture**:
 
@@ -162,7 +162,7 @@ This section defines the end-to-end workflows performed by each role. These work
 **Main Flow:**
 1. User navigates to `/upload`
 2. User optionally selects a target ontology ("Create New" or existing) and base ontologies for context
-3. User drops a PDF/DOCX/Markdown file onto the upload zone
+3. User drops a PDF/DOCX/PPTX/Markdown file onto the upload zone
 4. System parses the document, creates chunks, generates embeddings
 5. System auto-triggers the extraction pipeline (6-agent LangGraph)
 6. User is redirected to `/pipeline` to monitor progress
@@ -915,15 +915,15 @@ RETURN { before, after }
 
 ## 6. Core Features & Functional Requirements
 
-### 6.1 Document Ingestion & Chunking
+### 6.1 Document Ingestion, Visual Extraction & Chunking
 
-**Description:** Upload pipeline for PDF, DOCX, and Markdown files with semantic chunking and vector embedding.
+**Description:** Upload pipeline for PDF, DOCX, PPTX, and Markdown files with semantic chunking, visual-content extraction, provenance tracking, and vector embedding. Visual extraction is required because many domain decks and scanned PDFs encode taxonomies, containment, and process flow in diagrams rather than selectable text.
 
 **Requirements:**
 
 | ID | Requirement | Acceptance Criteria |
 |----|-------------|-------------------|
-| FR-1.1 | Support PDF, DOCX, and Markdown upload | Each format parsed without data loss; tables and headings preserved |
+| FR-1.1 | Support PDF, DOCX, PPTX, and Markdown upload | Each format parsed without data loss for supported textual structures; tables, headings, slide titles, grouped text, and speaker notes are preserved |
 | FR-1.2 | Semantic chunking that respects document structure | Chunks align with section/paragraph boundaries; no mid-sentence splits |
 | FR-1.3 | Vector embeddings generated per chunk | Each chunk has a stored embedding; similarity search returns relevant chunks |
 | FR-1.4 | Chunk metadata preserves provenance | Each chunk links back to source document, page number, section heading |
@@ -933,6 +933,11 @@ RETURN { before, after }
 | FR-1.8 | Add document to existing ontology | UI provides an "Add Document" action on an existing ontology in the library. This triggers extraction with the existing ontology passed as context (like Tier 2), classifying new concepts as EXISTING (already present), EXTENSION (refines existing), or NEW (novel). Results go through curation before merging into the target ontology. |
 | FR-1.9 | Full CRUD on documents | Documents support: create (upload), read (metadata + chunks), update (re-upload with versioning — old version soft-deleted, new version linked), and hard-delete. Hard-delete of a document removes its chunks and marks `extracted_from` provenance edges as expired but does **not** automatically delete the ontology classes — they may have been curated, promoted, or referenced by other ontologies. A warning is displayed listing affected ontologies. |
 | FR-1.10 | Document–ontology relationship is many-to-many | A document can contribute to multiple ontologies (extracted separately into each). An ontology can be built from multiple documents. The `extracted_from` edge tracks which specific document produced which class, maintaining provenance even in multi-document ontologies. |
+| FR-1.11 | Embedded visual evidence extraction | For PPTX and PDF, the parser detects embedded images, screenshots, charts, diagrams, and scanned/image-only pages. Each visual asset is counted and represented in the parsed document even when OCR/vision extraction is disabled, so omitted visual evidence is observable rather than silent. |
+| FR-1.12 | OCR and vision-caption pipeline | Configurable OCR and/or multimodal vision captioning extracts text and structural descriptions from visual assets. Outputs are appended to chunks as clearly labeled visual context (e.g. `[Visual: slide 4 image 2] ...`) and never mixed indistinguishably with body text. |
+| FR-1.13 | Visual provenance | Every OCR/caption result preserves document id, page/slide number, asset index, extraction method (`ocr`, `vision_caption`, `alt_text`, `placeholder`), confidence, and optional bounding-box metadata. Extracted ontology evidence may cite visual chunks using the same evidence schema as text chunks. |
+| FR-1.14 | Deck-structure preservation | PPTX parsing preserves slide titles, title-only slides, bullet hierarchy, speaker notes, and title-vs-body relationships in the chunk text sent to the LLM. Title-only taxonomy slides must not disappear merely because the slide body is empty. |
+| FR-1.15 | Visual extraction diagnostics | Ingestion records per-document counts for text chunks, visual assets found, visual assets processed, OCR/caption failures, and visual-only pages/slides. These diagnostics are visible on document/extraction status surfaces and are emitted in structured logs/metrics. |
 
 ### 6.2 Domain Ontology Extraction (Tier 1)
 
@@ -957,6 +962,8 @@ RETURN { before, after }
 | FR-2.13 | Multi-document extraction run | The extraction API accepts `doc_ids: list[str]` (multiple documents) and an optional `target_ontology_id`. Chunks from all documents are batched and processed together. All extracted concepts share the target ontology_id. |
 | FR-2.14 | Evidence-grounded extraction schema | Every extracted class, parent link, datatype attribute, and object relationship includes source evidence: `source_chunk_ids`, optional `source_spans`, `evidence_text`, `evidence_confidence`, and `extraction_rationale`. The extraction prompt exposes stable `source_chunk_id` values in chunk headers, and Pydantic validation preserves evidence through parsing, consistency merging, result storage, and graph materialization. |
 | FR-2.15 | Multi-domain document detection | When a document set targeted at a single ontology contains content from more than one distinguishable domain (e.g. a curator uploads a regulatory filing that mixes financial-services and supply-chain concepts), the extraction pipeline detects the multi-domain signal and surfaces it as a non-blocking warning on the run record. The detection signal MUST be available before the curator commits the run to the target ontology, so they can choose how to proceed. Three resolution strategies are supported (final selection mechanism is Q13 below): (a) accept the mixed extraction into the single target ontology with a `domain_tag` annotation per class, (b) split the extraction into one staging ontology per detected domain, (c) create an umbrella ontology that `owl:imports` one per-domain ontology. The signal itself, the per-class `domain_tag`, and the run-level `detected_domains: list[str]` field are produced regardless of which strategy is chosen so that downstream queries can always identify which classes came from which domain. |
+| FR-2.16 | Visual-context-aware ontology extraction | Extraction prompts include labeled visual context alongside text chunks when visual evidence exists. The strategy selector recognizes presentation-heavy / diagram-heavy documents and instructs the extraction agent to infer `parent_uri`, object relationships, and constraints from explicit visual hierarchy only when the visual description provides sufficient evidence. |
+| FR-2.17 | Orphan-class prevention from deck structure | For PPTX decks, the pipeline treats slide title + bullet/body structure as potential taxonomy evidence. If extraction yields many top-level classes from one deck, the run surfaces an orphan-risk warning with links to the source slides/visual chunks so the curator can review likely missing hierarchy edges. |
 
 **ArangoRDF Import Detail:**
 
@@ -1765,7 +1772,7 @@ Ontology Classes:        Ontology Object Properties:
 | Agent | Responsibility | Inputs | Outputs |
 |-------|---------------|--------|---------|
 | **Strategy Selector** | Analyzes document type, length, domain; picks extraction model, prompt template, and chunking strategy | Document metadata, first N chunks | Extraction config (model, prompt, chunk params) |
-| **Extraction Agent** | Runs N-pass LLM extraction with self-correction; retries on parse failures; validates output against Pydantic schemas | Chunks, extraction config, domain ontology context (for Tier 2) | Raw extracted classes + properties per pass |
+| **Extraction Agent** | Runs N-pass LLM extraction with self-correction; retries on parse failures; validates output against Pydantic schemas | Text chunks, visual context chunks, extraction config, domain ontology context (for Tier 2) | Raw extracted classes + properties per pass with text/visual evidence |
 | **Consistency Checker** | Compares results across passes; keeps only concepts appearing in ≥ M of N passes; assigns confidence scores | Multi-pass extraction results | Filtered, scored extraction result |
 | **Quality Judge** | Runs LLM-as-Judge faithfulness evaluation and semantic validation in parallel (`asyncio.gather`). Rates each class as EXPLICIT/INFERRED/PLAUSIBLE/HALLUCINATED. Checks for domain/range mismatches and disjointness violations. | Consistency result + source chunks | Per-class faithfulness + semantic validity scores |
 | **Entity Resolution Agent** | Invokes `arango-entity-resolution` pipeline (`ConfigurableERPipeline`) for vector + field similarity + topological scoring against existing ontologies; flags merge candidates via WCC clustering; auto-links EXTENSION classes to domain parents using `CrossCollectionMatchingService` | Filtered extraction, domain ontology, local ontology | Extraction + merge candidates + `extends_domain` edges |
@@ -1835,6 +1842,7 @@ class ExtractionPipelineState(TypedDict):
 | FR-11.14 | Belief Revision Agent runs after ER, before Quality Judge | The Belief Revision Agent is a LangGraph node positioned between Entity Resolution and the Quality Judge. It populates `revision_actions[]` in pipeline state and emits `step_started`/`step_completed` WebSocket events visible in the Pipeline Monitor. See §6.16 for full behavior. |
 | FR-11.15 | Conditional skip when no contested verdicts | If Phase 2 of the Belief Revision Agent produces zero CONTRADICTED + UNCERTAIN verdicts, Phase 3 (LLM revision agent) is skipped via a LangGraph conditional edge. Cost telemetry records `llm_calls = 0` for that run. |
 | FR-11.16 | Pipeline state persists `revision_actions[]` for staging | Pre-curation filter receives `revision_actions[]` from pipeline state and uses it to (a) hydrate staging with per-class revision provenance, and (b) ensure FLAG_FOR_CURATION revisions land in the Revisions Inbox alongside the staging graph. |
+| FR-11.17 | Strategy selector handles visual-heavy documents | The strategy selector detects PPTX decks, scanned/image-only PDFs, and low-text/high-visual documents from ingestion diagnostics. It chooses a visual-aware prompt template, appropriate batch sizing, and warns when visual extraction is disabled for a document that appears to require it. |
 
 ### 6.12 Pipeline Monitor Dashboard (Agentic Workflow Visualizer)
 

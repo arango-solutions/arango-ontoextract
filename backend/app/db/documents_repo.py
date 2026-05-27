@@ -147,6 +147,26 @@ def update_document_metadata(
     return cast(dict[str, Any], result["new"])
 
 
+def merge_document_user_metadata(
+    doc_id: str,
+    metadata_patch: dict[str, Any],
+    *,
+    db: StandardDatabase | None = None,
+) -> dict[str, Any] | None:
+    """Shallow-merge ``metadata_patch`` into ``documents.metadata``."""
+    db = db or get_db()
+    col = db.collection(DOCUMENTS_COLLECTION)
+    doc = doc_get(col, doc_id)
+    if doc is None:
+        return None
+    merged = {**(doc.get("metadata") or {}), **metadata_patch}
+    result = cast(
+        "dict[str, Any]",
+        col.update({"_key": doc_id, "metadata": merged}, return_new=True),
+    )
+    return cast(dict[str, Any], result["new"])
+
+
 def delete_chunks_for_document(doc_id: str, *, db: StandardDatabase | None = None) -> int:
     """Hard-delete all chunks belonging to a document. Returns count removed."""
     db = db or get_db()

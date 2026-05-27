@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from app.models.ontology import ExtractionResult
-from app.services.ontology import create_staging_graph, get_staging_graph, promote_staging
+from app.services.ontology import create_staging_graph, get_staging_graph
 
 # ---------------------------------------------------------------------------
 # create_staging_graph
@@ -104,18 +104,3 @@ class TestGetStagingGraph:
         assert result["properties"] == []
         assert result["edges"] == []
         mock_aql.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# promote_staging (stub)
-# ---------------------------------------------------------------------------
-
-
-class TestPromoteStaging:
-    def test_returns_not_implemented_stub(self):
-        db = MagicMock()
-        result = promote_staging(db, run_id="r1")
-
-        assert result["run_id"] == "r1"
-        assert result["status"] == "not_implemented"
-        assert result["promoted"] == 0

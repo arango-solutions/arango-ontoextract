@@ -241,10 +241,27 @@ class TestChunkDocument:
         chunks = chunk_document(parsed, max_tokens=15)
         assert len(chunks) >= 2
 
+    def test_title_only_slide_produces_chunk(self, _mock_tc: MagicMock):
+        parsed = ParsedDocument(
+            format="pptx",
+            sections=[Section(heading="Root Taxonomy", text="", page_number=3)],
+        )
+        chunks = chunk_document(parsed)
+        assert len(chunks) == 1
+        assert "Root Taxonomy" in chunks[0].text
+        assert "[Slide 3: Root Taxonomy]" in chunks[0].text
+
 
 # ---------------------------------------------------------------------------
 # parse_pptx (real round-trip with python-pptx)
 # ---------------------------------------------------------------------------
+
+_MINIMAL_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0"
+    b"\x00\x00\x00\x03\x00\x01\x00\x05\xfe\x02\xfe\xdc\xcc\x59\xe7\x00\x00"
+    b"\x00\x00IEND\xaeB`\x82"
+)
 
 
 def _build_synthetic_pptx() -> bytes:
@@ -283,6 +300,36 @@ def _build_synthetic_pptx() -> bytes:
     # and we add no shapes) -> should be skipped by parse_pptx.
     prs.slides.add_slide(prs.slide_layouts[6])  # "Blank"
 
+    buf = _io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
+
+
+def _build_title_only_pptx() -> bytes:
+    import io as _io
+
+    from pptx import Presentation as _Pres
+
+    prs = _Pres()
+    layout = prs.slide_layouts[5]  # Title Only
+    slide = prs.slides.add_slide(layout)
+    slide.shapes.title.text = "Orphan Root Class"
+    buf = _io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
+
+
+def _build_pptx_with_picture() -> bytes:
+    import io as _io
+
+    from pptx import Presentation as _Pres
+    from pptx.util import Inches as _In
+
+    prs = _Pres()
+    blank = prs.slide_layouts[6]
+    slide = prs.slides.add_slide(blank)
+    image_stream = _io.BytesIO(_MINIMAL_PNG)
+    slide.shapes.add_picture(image_stream, _In(1), _In(1), width=_In(2))
     buf = _io.BytesIO()
     prs.save(buf)
     return buf.getvalue()
@@ -345,6 +392,22 @@ class TestParsePptx:
         # Slide 3 produced no heading and no body -> not in sections.
         page_numbers = {s.page_number for s in parsed.sections}
         assert 3 not in page_numbers
+
+    def test_title_only_slide_kept_as_section(self):
+        from app.services.ingestion import parse_pptx
+
+        parsed = parse_pptx(_build_title_only_pptx())
+        assert len(parsed.sections) == 1
+        assert parsed.sections[0].heading == "Orphan Root Class"
+        assert parsed.sections[0].text == ""
+
+    def test_picture_slide_inventories_visual_asset(self):
+        from app.services.ingestion import parse_pptx
+
+        parsed = parse_pptx(_build_pptx_with_picture())
+        assert parsed.visual_diagnostics.visual_asset_count == 1
+        assert parsed.visual_diagnostics.alt_text_count == 1
+        assert "[Visual (alt text):" in parsed.sections[0].text
 
     def test_invalid_bytes_raises(self):
         """Garbage bytes -> the underlying zipfile layer rejects it.

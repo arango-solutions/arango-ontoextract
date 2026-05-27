@@ -29,8 +29,10 @@ function makeActions(): WorkspaceContextMenuActions {
     setReleaseOntology: jest.fn(),
     setShowCreateOntology: jest.fn(),
     setShowCatalogBrowser: jest.fn(),
+    setShowSchemaExtraction: jest.fn(),
     setManageImports: jest.fn(),
     setDependencyOverlay: jest.fn(),
+    setSchemaDiffOverlay: jest.fn(),
     setFeedbackLearning: jest.fn(),
     setEdgeRepair: jest.fn(),
     setRevisionsInbox: jest.fn(),
@@ -75,6 +77,7 @@ describe("buildOntologyContextMenu", () => {
       "Release",
       "Manage Imports",
       "View Dependency Graph…",
+      "Compare Schema Evolution…",
       "View Quality Report",
       "View Feedback Learning",
       "Repair Orphan Properties…",
@@ -82,6 +85,20 @@ describe("buildOntologyContextMenu", () => {
       "Export",
       "Delete",
     ]);
+  });
+
+  it("Compare Schema Evolution… seeds the schema diff overlay with key + name", () => {
+    const actions = makeActions();
+    const items = buildOntologyContextMenu(
+      { _key: "ont-1", name: "WTW Ontology" },
+      actions,
+    );
+
+    items.find((it) => it.label === "Compare Schema Evolution…")!.onClick!();
+    expect(actions.setSchemaDiffOverlay).toHaveBeenCalledWith({
+      key: "ont-1",
+      name: "WTW Ontology",
+    });
   });
 
   it("View Dependency Graph… seeds the dependency overlay with key + name", () => {

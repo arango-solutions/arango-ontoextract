@@ -249,6 +249,40 @@ class TestProcessDocument:
     @patch("app.tasks.embedding_svc")
     @patch("app.tasks.documents_repo")
     @patch("app.tasks.chunk_document")
+    @patch("app.tasks.parse_pdf")
+    async def test_visual_diagnostics_persisted_after_parse(
+        self, mock_parse_pdf, mock_chunk, mock_docs_repo, mock_embed_svc, mock_vec_idx
+    ):
+        from app.services.visual_extraction import VisualAsset, VisualExtractionDiagnostics
+
+        diag = VisualExtractionDiagnostics()
+        diag.register_asset(
+            VisualAsset(page_number=1, asset_index=1, asset_type="picture", method="placeholder")
+        )
+        parsed = ParsedDocument(
+            format="pdf",
+            sections=[Section(heading="S", text="content", page_number=1)],
+            visual_diagnostics=diag,
+        )
+        mock_parse_pdf.return_value = parsed
+        mock_chunk.return_value = [
+            Chunk(text="content", chunk_index=0, source_page=1, section_heading="S", token_count=3),
+        ]
+        mock_embed_svc.embed_texts = AsyncMock(return_value=[[0.5]])
+        mock_docs_repo.create_chunks.return_value = [{"_key": "c1"}]
+
+        await process_document("doc1", b"pdf-bytes", "application/pdf")
+
+        mock_docs_repo.merge_document_user_metadata.assert_called_once_with(
+            "doc1",
+            {"visual_extraction": diag.to_metadata_dict()},
+        )
+
+    @pytest.mark.asyncio
+    @patch("app.tasks._ensure_vector_index")
+    @patch("app.tasks.embedding_svc")
+    @patch("app.tasks.documents_repo")
+    @patch("app.tasks.chunk_document")
     @patch("app.tasks.parse_markdown")
     async def test_empty_chunks_marks_ready_with_warning(
         self, mock_parse_md, mock_chunk, mock_docs_repo, mock_embed_svc, mock_vec_idx

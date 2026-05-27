@@ -32,6 +32,15 @@ import tiktoken
 from docx import Document
 from pptx import Presentation
 
+from app.config import settings
+from app.services.visual_extraction import (
+    VisualAsset,
+    VisualExtractionDiagnostics,
+    collect_pptx_visual_assets,
+    format_section_chunk_text,
+    visual_placeholder_line,
+)
+
 log = logging.getLogger(__name__)
 
 # Subprocess timeout for the LibreOffice .doc -> .docx conversion.
@@ -55,6 +64,10 @@ class ParsedDocument:
     title: str = ""
     author: str = ""
     page_count: int = 0
+    format: str = ""
+    visual_diagnostics: VisualExtractionDiagnostics = field(
+        default_factory=VisualExtractionDiagnostics
+    )
 
 
 @dataclass
@@ -84,7 +97,10 @@ def _token_count(text: str) -> int:
 def parse_pdf(file_bytes: bytes) -> ParsedDocument:
     """Extract sections from a PDF using pymupdf (fitz)."""
     doc = fitz.open(stream=file_bytes, filetype="pdf")
-    parsed = ParsedDocument(page_count=len(doc))
+    parsed = ParsedDocument(page_count=len(doc), format="pdf")
+    emit_placeholders = (
+        settings.visual_extraction_enabled and settings.visual_extraction_placeholders
+    )
 
     metadata = doc.metadata or {}
     parsed.title = metadata.get("title", "") or ""
@@ -94,9 +110,12 @@ def parse_pdf(file_bytes: bytes) -> ParsedDocument:
         blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
         current_heading = ""
         current_text_parts: list[str] = []
+        image_blocks_on_page = 0
+        page_section_start = len(parsed.sections)
 
         for block in blocks:
             if block.get("type") != 0:
+                image_blocks_on_page += 1
                 continue
             for line in block.get("lines", []):
                 line_text = "".join(span["text"] for span in line.get("spans", []))
@@ -134,6 +153,43 @@ def parse_pdf(file_bytes: bytes) -> ParsedDocument:
                 )
             )
 
+        if settings.visual_extraction_enabled and image_blocks_on_page:
+            visual_lines: list[str] = []
+            for idx in range(1, image_blocks_on_page + 1):
+                parsed.visual_diagnostics.register_asset(
+                    VisualAsset(
+                        page_number=page_num,
+                        asset_index=idx,
+                        asset_type="image_block",
+                        method="placeholder",
+                    )
+                )
+                if emit_placeholders:
+                    visual_lines.append(
+                        visual_placeholder_line(
+                            page_number=page_num,
+                            asset_index=idx,
+                            asset_type="image_block",
+                            doc_format="pdf",
+                        )
+                    )
+
+            page_has_text = len(parsed.sections) > page_section_start
+            if not page_has_text and image_blocks_on_page:
+                parsed.visual_diagnostics.scanned_page_count += 1
+                if emit_placeholders:
+                    visual_lines.insert(
+                        0,
+                        f"[Scanned or image-only page {page_num}: OCR not configured]",
+                    )
+                parsed.sections.append(
+                    Section(heading="", text="\n".join(visual_lines), page_number=page_num)
+                )
+            elif visual_lines:
+                target = parsed.sections[-1]
+                extra = "\n".join(visual_lines)
+                target.text = f"{target.text}\n\n{extra}".strip() if target.text else extra
+
     doc.close()
 
     if not parsed.sections:
@@ -156,6 +212,7 @@ def parse_docx(file_bytes: bytes) -> ParsedDocument:
     core = doc.core_properties
     parsed.title = core.title or ""
     parsed.author = core.author or ""
+    parsed.format = "docx"
 
     current_heading = ""
     current_text_parts: list[str] = []
@@ -199,7 +256,10 @@ def parse_pptx(file_bytes: bytes) -> ParsedDocument:
     chunk counts honest.
     """
     prs = Presentation(io.BytesIO(file_bytes))
-    parsed = ParsedDocument(page_count=len(prs.slides))
+    parsed = ParsedDocument(page_count=len(prs.slides), format="pptx")
+    emit_placeholders = (
+        settings.visual_extraction_enabled and settings.visual_extraction_placeholders
+    )
 
     core = prs.core_properties
     parsed.title = (core.title or "") if core else ""
@@ -208,6 +268,16 @@ def parse_pptx(file_bytes: bytes) -> ParsedDocument:
     for slide_index, slide in enumerate(prs.slides, start=1):
         heading = _pptx_slide_title(slide)
         body_parts = _pptx_collect_text(slide.shapes, exclude_title=True)
+
+        if settings.visual_extraction_enabled:
+            body_parts.extend(
+                collect_pptx_visual_assets(
+                    slide.shapes,
+                    slide_index=slide_index,
+                    diagnostics=parsed.visual_diagnostics,
+                    emit_placeholders=emit_placeholders,
+                )
+            )
 
         # Speaker notes: powerful provenance signal, often where the
         # actual narrative lives in survey decks.
@@ -381,7 +451,7 @@ _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)", re.MULTILINE)
 
 def parse_markdown(text: str) -> ParsedDocument:
     """Extract sections from Markdown text using heading boundaries."""
-    parsed = ParsedDocument()
+    parsed = ParsedDocument(format="markdown")
 
     lines = text.split("\n")
     first_heading = ""
@@ -434,12 +504,22 @@ def chunk_document(
 
     Each chunk respects ``max_tokens`` (counted via tiktoken ``cl100k_base``).
     Chunks preserve source page and section heading metadata.
+    Title-only slides/pages produce a chunk whose text includes the heading.
     """
     chunks: list[Chunk] = []
     idx = 0
+    doc_format = parsed.format or "unknown"
 
     for section in parsed.sections:
-        paragraphs = _split_into_paragraphs(section.text)
+        section_text = format_section_chunk_text(
+            heading=section.heading,
+            body=section.text,
+            page_number=section.page_number,
+            doc_format=doc_format,
+        )
+        paragraphs = _split_into_paragraphs(section_text)
+        if not paragraphs and section_text.strip():
+            paragraphs = [section_text.strip()]
         if not paragraphs:
             continue
 
