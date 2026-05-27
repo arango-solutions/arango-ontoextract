@@ -265,9 +265,7 @@ class TestRateLimitMiddleware:
 
         import asyncio
 
-        response = asyncio.get_event_loop().run_until_complete(
-            middleware.dispatch(request, MagicMock())
-        )
+        response = asyncio.run(middleware.dispatch(request, MagicMock()))
 
         assert response.status_code == 429
         assert response.headers["Retry-After"] == "31"
@@ -290,9 +288,7 @@ class TestRateLimitMiddleware:
         async def fake_next(req):
             return mock_response
 
-        response = asyncio.get_event_loop().run_until_complete(
-            middleware.dispatch(request, fake_next)
-        )
+        response = asyncio.run(middleware.dispatch(request, fake_next))
 
         assert response is mock_response
 
@@ -313,9 +309,7 @@ class TestRateLimitMiddleware:
         async def fake_next(req):
             return mock_response
 
-        response = asyncio.get_event_loop().run_until_complete(
-            middleware.dispatch(request, fake_next)
-        )
+        response = asyncio.run(middleware.dispatch(request, fake_next))
 
         assert response is mock_response
 
@@ -343,9 +337,7 @@ class TestRateLimitMiddleware:
         async def fake_next(req):
             return mock_response
 
-        response = asyncio.get_event_loop().run_until_complete(
-            middleware.dispatch(request, fake_next)
-        )
+        response = asyncio.run(middleware.dispatch(request, fake_next))
 
         assert response.headers["X-RateLimit-Limit"] == "100"
         assert response.headers["X-RateLimit-Remaining"] == "95"
@@ -373,9 +365,7 @@ class TestRateLimitMiddleware:
         async def fake_next(req):
             return mock_response
 
-        response = asyncio.get_event_loop().run_until_complete(
-            middleware.dispatch(request, fake_next)
-        )
+        response = asyncio.run(middleware.dispatch(request, fake_next))
 
         assert response is mock_response
 

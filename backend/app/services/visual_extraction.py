@@ -139,7 +139,7 @@ def format_section_chunk_text(
 def pptx_shape_alt_text(shape: Any) -> str:
     """Read OpenXML ``descr`` / ``title`` from a shape when present."""
     try:
-        elements = shape._element.xpath(".//p:cNvPr")  # type: ignore[attr-defined]
+        elements = shape._element.xpath(".//p:cNvPr")
         if not elements:
             return ""
         el = elements[0]
