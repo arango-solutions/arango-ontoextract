@@ -1149,6 +1149,169 @@ class TestPersistsBeliefRevisionSummary:
 
 
 # ---------------------------------------------------------------------------
+# execute_run -- IMG.7 visual-heavy orphan-risk warning (Stream 13)
+# ---------------------------------------------------------------------------
+
+
+class TestVisualOrphanWarning:
+    """Stream 13 IMG.7: when a run produces many orphan classes from a
+    visual-heavy input, a non-blocking warning must be appended to
+    ``stats.warnings`` so curators can review the highlighted slides.
+    """
+
+    def _setup_run(self, *, orphans: int, with_parent: int):
+        mock_db = MagicMock()
+        mock_col = MagicMock()
+        run_record = {
+            "_key": "run_img",
+            "doc_ids": ["doc_pptx"],
+            "status": "running",
+            "stats": {
+                "passes": 1,
+                "consistency_threshold": 0.7,
+                "token_usage": {},
+                "errors": [],
+                "step_logs": [],
+            },
+        }
+        class_specs: list[dict[str, Any]] = []
+        for i in range(orphans):
+            class_specs.append({"label": f"Orphan{i}", "uri": f"http://ex.org#O{i}"})
+        for i in range(with_parent):
+            class_specs.append({"label": f"Sub{i}", "uri": f"http://ex.org#S{i}"})
+        consistency = _make_result(class_specs)
+        # Orphans: parent_uri=None; the rest get a real parent
+        for i, cls in enumerate(consistency.classes):
+            cls.parent_uri = None if i < orphans else "http://ex.org#Root"
+
+        pipeline_state: dict[str, Any] = {
+            "consistency_result": consistency,
+            "errors": [],
+            "step_logs": [],
+            "token_usage": {},
+            "extraction_passes": [],
+        }
+        return mock_db, mock_col, run_record, pipeline_state
+
+    @patch("app.db.documents_repo.get_document")
+    @patch("app.services.extraction._create_produced_by_edge")
+    @patch("app.services.extraction._auto_register_ontology", return_value="onto_x")
+    @patch("app.services.extraction._materialize_to_graph")
+    @patch("app.services.extraction._store_results")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "h"}])
+    @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
+    @patch("app.services.extraction.doc_get")
+    @patch("app.services.extraction._get_collection")
+    @patch("app.services.extraction.get_db")
+    @pytest.mark.asyncio
+    async def test_appends_warning_when_visual_heavy_and_many_orphans(
+        self,
+        mock_get_db,
+        mock_get_col,
+        mock_doc_get,
+        mock_run_pipeline,
+        _mock_load_chunks,
+        _mock_store,
+        _mock_materialize,
+        _mock_auto_reg,
+        _mock_produced_by,
+        mock_get_document,
+    ):
+        from app.services.extraction import execute_run
+
+        mock_db, mock_col, run_record, pipeline_state = self._setup_run(orphans=4, with_parent=1)
+        mock_get_db.return_value = mock_db
+        mock_get_col.return_value = mock_col
+        mock_doc_get.side_effect = [run_record, {"_key": "run_img", "status": "completed"}]
+        mock_run_pipeline.return_value = pipeline_state
+        mock_get_document.return_value = {
+            "_key": "doc_pptx",
+            "filename": "deck.pptx",
+            "metadata": {
+                "visual_extraction": {
+                    "visual_asset_count": 12,
+                    "placeholder_count": 12,
+                    "alt_text_count": 0,
+                    "scanned_page_count": 0,
+                    "pages_with_visuals": [2, 3, 4],
+                }
+            },
+        }
+
+        await execute_run(
+            run_id="run_img",
+            document_ids=["doc_pptx"],
+            event_callback=MagicMock(),
+        )
+
+        stats_writes = _stats_update_args(mock_col)
+        assert stats_writes, "expected a stats update"
+        terminal = stats_writes[-1]["stats"]
+        assert terminal["visual_extraction_summary"]["visual_asset_count"] == 12
+        warnings = terminal.get("warnings") or []
+        kinds = {w.get("type") for w in warnings}
+        assert "visual_heavy_orphans" in kinds
+        warning = next(w for w in warnings if w["type"] == "visual_heavy_orphans")
+        assert warning["orphan_class_count"] == 4
+        assert warning["total_classes"] == 5
+        assert warning["visual_asset_count"] == 12
+
+    @patch("app.db.documents_repo.get_document")
+    @patch("app.services.extraction._create_produced_by_edge")
+    @patch("app.services.extraction._auto_register_ontology", return_value="onto_x")
+    @patch("app.services.extraction._materialize_to_graph")
+    @patch("app.services.extraction._store_results")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "h"}])
+    @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
+    @patch("app.services.extraction.doc_get")
+    @patch("app.services.extraction._get_collection")
+    @patch("app.services.extraction.get_db")
+    @pytest.mark.asyncio
+    async def test_no_warning_when_orphan_ratio_low(
+        self,
+        mock_get_db,
+        mock_get_col,
+        mock_doc_get,
+        mock_run_pipeline,
+        _mock_load_chunks,
+        _mock_store,
+        _mock_materialize,
+        _mock_auto_reg,
+        _mock_produced_by,
+        mock_get_document,
+    ):
+        from app.services.extraction import execute_run
+
+        mock_db, mock_col, run_record, pipeline_state = self._setup_run(orphans=1, with_parent=9)
+        mock_get_db.return_value = mock_db
+        mock_get_col.return_value = mock_col
+        mock_doc_get.side_effect = [run_record, {"_key": "run_img", "status": "completed"}]
+        mock_run_pipeline.return_value = pipeline_state
+        mock_get_document.return_value = {
+            "_key": "doc_pptx",
+            "filename": "deck.pptx",
+            "metadata": {
+                "visual_extraction": {
+                    "visual_asset_count": 12,
+                    "pages_with_visuals": [2, 3],
+                }
+            },
+        }
+
+        await execute_run(
+            run_id="run_img",
+            document_ids=["doc_pptx"],
+            event_callback=MagicMock(),
+        )
+
+        stats_writes = _stats_update_args(mock_col)
+        terminal = stats_writes[-1]["stats"]
+        warnings = terminal.get("warnings") or []
+        kinds = {w.get("type") for w in warnings}
+        assert "visual_heavy_orphans" not in kinds
+
+
+# ---------------------------------------------------------------------------
 # execute_run -- domain context / tier2
 # ---------------------------------------------------------------------------
 

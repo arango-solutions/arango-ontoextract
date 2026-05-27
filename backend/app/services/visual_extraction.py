@@ -1,14 +1,19 @@
 """Visual asset inventory and placeholder helpers for document ingestion.
 
-Stream 13 (IMG.1-IMG.3): track embedded images/charts in PPTX and PDF,
-emit labeled placeholders when OCR/vision is not configured, and expose
-diagnostics for document metadata and downstream orphan-risk warnings.
+Stream 13 (IMG.1-IMG.4): track embedded images/charts in PPTX and PDF,
+emit labeled placeholders when OCR/vision is not configured, expose
+diagnostics for document metadata and downstream orphan-risk warnings,
+and define a provider boundary for OCR / multimodal caption adapters.
 """
 
 from __future__ import annotations
 
+import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Literal
+
+log = logging.getLogger(__name__)
 
 VisualAssetType = Literal["picture", "chart", "image_block"]
 VisualExtractionMethod = Literal["placeholder", "alt_text", "ocr", "vision_caption"]
@@ -146,6 +151,163 @@ def pptx_shape_alt_text(shape: Any) -> str:
         return (el.get("descr") or el.get("title") or "").strip()
     except Exception:
         return ""
+
+
+@dataclass
+class CaptionResult:
+    success: bool
+    text: str = ""
+    confidence: float | None = None
+    failure_reason: str | None = None
+
+
+class VisualCaptionProvider(ABC):
+    """Boundary for OCR / multimodal-caption providers.
+
+    Implementations turn a single image asset into a short text caption.
+    Failures must surface as ``CaptionResult(success=False, ...)`` rather
+    than raising — a single bad asset must never fail an ingestion run.
+    """
+
+    name: str = "base"
+
+    @abstractmethod
+    def caption(self, image_bytes: bytes, *, mime_type: str = "image/png") -> CaptionResult:
+        """Return a caption for one image asset."""
+
+
+class NoOpCaptionProvider(VisualCaptionProvider):
+    """Default provider — never produces captions, never fails.
+
+    Selected when ``settings.visual_caption_provider == 'none'`` so the
+    default install has zero host dependencies (no OCR engine, no extra
+    LLM calls per asset).
+    """
+
+    name = "none"
+
+    def caption(self, image_bytes: bytes, *, mime_type: str = "image/png") -> CaptionResult:
+        return CaptionResult(success=False, failure_reason="provider_disabled")
+
+
+_PROVIDERS: dict[str, type[VisualCaptionProvider]] = {
+    "none": NoOpCaptionProvider,
+}
+
+
+def register_caption_provider(name: str, provider_cls: type[VisualCaptionProvider]) -> None:
+    """Register an additional caption provider (e.g. tesseract, openai_vision).
+
+    Kept open so optional adapters can be registered at app start by
+    plugins or by future ingestion-side modules without modifying this
+    file.
+    """
+    _PROVIDERS[name] = provider_cls
+
+
+def get_caption_provider(name: str) -> VisualCaptionProvider:
+    """Return an instance of the requested provider, falling back to no-op.
+
+    Unknown provider names log a warning and fall back to NoOp rather
+    than raising — invalid config should not crash ingestion.
+    """
+    cls = _PROVIDERS.get(name)
+    if cls is None:
+        log.warning("unknown visual caption provider %r; falling back to no-op", name)
+        cls = NoOpCaptionProvider
+    return cls()
+
+
+def aggregate_document_visual_diagnostics(
+    documents: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Aggregate ``metadata.visual_extraction`` across a run's documents.
+
+    Returns a flat summary plus a per-document breakdown so the orphan-
+    risk warning can link curators back to the specific slides/pages
+    that need review.
+    """
+    total_assets = 0
+    total_placeholders = 0
+    total_alt_text = 0
+    total_scanned_pages = 0
+    per_doc: list[dict[str, Any]] = []
+
+    for doc in documents:
+        meta = (doc or {}).get("metadata") or {}
+        vis = meta.get("visual_extraction") or {}
+        if not vis:
+            continue
+        count = int(vis.get("visual_asset_count") or 0)
+        if count == 0 and not vis.get("scanned_page_count"):
+            continue
+        total_assets += count
+        total_placeholders += int(vis.get("placeholder_count") or 0)
+        total_alt_text += int(vis.get("alt_text_count") or 0)
+        total_scanned_pages += int(vis.get("scanned_page_count") or 0)
+        per_doc.append(
+            {
+                "doc_id": doc.get("_key"),
+                "filename": doc.get("filename"),
+                "visual_asset_count": count,
+                "pages_with_visuals": list(vis.get("pages_with_visuals") or []),
+                "scanned_page_count": int(vis.get("scanned_page_count") or 0),
+            }
+        )
+
+    return {
+        "visual_asset_count": total_assets,
+        "placeholder_count": total_placeholders,
+        "alt_text_count": total_alt_text,
+        "scanned_page_count": total_scanned_pages,
+        "documents": per_doc,
+    }
+
+
+def build_orphan_risk_warning(
+    *,
+    orphan_class_count: int,
+    total_classes: int,
+    visual_summary: dict[str, Any],
+    orphan_ratio_threshold: float,
+    min_visual_assets: int,
+) -> dict[str, Any] | None:
+    """Return a non-blocking warning when orphans correlate with visuals.
+
+    The warning is written to ``extraction_runs.stats.warnings`` so the
+    curator UI can surface a link back to the visual-heavy source
+    pages/slides for review (IMG.7). Returns ``None`` when either
+    threshold is not met -- callers should not append a warning in that
+    case so the UI stays quiet on healthy runs.
+    """
+    if total_classes <= 0:
+        return None
+    visual_asset_count = int(visual_summary.get("visual_asset_count") or 0)
+    scanned_pages = int(visual_summary.get("scanned_page_count") or 0)
+    if visual_asset_count < min_visual_assets and scanned_pages == 0:
+        return None
+
+    orphan_ratio = orphan_class_count / total_classes
+    if orphan_ratio < orphan_ratio_threshold and scanned_pages == 0:
+        return None
+
+    return {
+        "type": "visual_heavy_orphans",
+        "severity": "warning",
+        "message": (
+            f"{orphan_class_count} of {total_classes} extracted classes have no parent "
+            f"({orphan_ratio:.0%}) on a run with {visual_asset_count} visual "
+            f"asset(s) and {scanned_pages} scanned page(s). Visual hierarchy may "
+            "not have reached the LLM -- review highlighted slides/pages or "
+            "enable an OCR/vision provider."
+        ),
+        "orphan_class_count": orphan_class_count,
+        "total_classes": total_classes,
+        "orphan_ratio": orphan_ratio,
+        "visual_asset_count": visual_asset_count,
+        "scanned_page_count": scanned_pages,
+        "documents": visual_summary.get("documents", []),
+    }
 
 
 def collect_pptx_visual_assets(

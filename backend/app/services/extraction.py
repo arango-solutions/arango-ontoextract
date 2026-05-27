@@ -33,6 +33,10 @@ from app.models.common import PaginatedResponse
 from app.observability import get_tracer
 from app.services.confidence import compute_class_confidence
 from app.services.edge_repair import resolve_range_class
+from app.services.visual_extraction import (
+    aggregate_document_visual_diagnostics,
+    build_orphan_risk_warning,
+)
 
 log = logging.getLogger(__name__)
 tracer = get_tracer(__name__)
@@ -342,6 +346,53 @@ async def execute_run(
         # than zeros.
         belief_revision_summary = final_state.get("belief_revision_summary")
 
+        # IMG.7: surface a non-blocking warning when visual-heavy inputs
+        # produce many parent-less classes. Skip entirely when no
+        # consistency_result was produced (failed run) -- no classes to
+        # judge orphan-ness against, and the failed-run path is handled
+        # separately below.
+        warnings_list: list[dict[str, Any]] = list(run_record["stats"].get("warnings") or [])
+        visual_summary: dict[str, Any] = {}
+        if consistency is not None:
+            try:
+                # Use documents_repo so we don't go through the symbol
+                # mocked by extraction-service tests (``app.services
+                # .extraction.doc_get``). Each test that wants warning
+                # coverage can mock ``documents_repo.get_document``
+                # explicitly.
+                from app.db import documents_repo
+
+                run_documents: list[dict[str, Any]] = []
+                for did in doc_ids:
+                    doc = documents_repo.get_document(did, db=db)
+                    if doc:
+                        run_documents.append(doc)
+                visual_summary = aggregate_document_visual_diagnostics(run_documents)
+                orphan_count = sum(1 for c in consistency.classes if not c.parent_uri)
+                warning = build_orphan_risk_warning(
+                    orphan_class_count=orphan_count,
+                    total_classes=classes_extracted,
+                    visual_summary=visual_summary,
+                    orphan_ratio_threshold=settings.visual_orphan_warning_orphan_ratio,
+                    min_visual_assets=settings.visual_orphan_warning_min_assets,
+                )
+                if warning is not None:
+                    warnings_list.append(warning)
+                    log.info(
+                        "visual-heavy orphan warning attached to run %s "
+                        "(orphans=%d/%d, visual_assets=%d)",
+                        run_id,
+                        orphan_count,
+                        classes_extracted,
+                        warning["visual_asset_count"],
+                    )
+            except Exception:
+                log.warning(
+                    "failed to compute visual-extraction summary for run %s",
+                    run_id,
+                    exc_info=True,
+                )
+
         update_data: dict[str, Any] = {
             "completed_at": completed_at,
             "status": status,
@@ -354,6 +405,8 @@ async def execute_run(
                 "properties_extracted": properties_extracted,
                 "pass_agreement_rate": pass_agreement_rate,
                 "belief_revision": belief_revision_summary,
+                "visual_extraction_summary": visual_summary,
+                "warnings": warnings_list,
             },
         }
         col.update({"_key": run_id, **update_data})

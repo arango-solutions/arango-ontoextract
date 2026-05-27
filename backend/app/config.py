@@ -119,6 +119,20 @@ class Settings(BaseSettings):
     #: When True, non-text visuals become ``[Visual omitted: …]`` lines in
     #: chunk text; when False, visuals are counted in metadata only.
     visual_extraction_placeholders: bool = True
+    #: Provider id for OCR/vision caption generation. ``"none"`` (default)
+    #: produces no captions; ingestion remains text-only with placeholders.
+    #: Future values include ``"openai_vision"`` / ``"tesseract"``.
+    visual_caption_provider: str = "none"
+    #: Per-document cap on caption calls so a slide deck cannot run away
+    #: with provider cost. Captions beyond this point fall back to
+    #: placeholders and are recorded with ``failure_reason="cap_exceeded"``.
+    visual_caption_max_assets_per_doc: int = 25
+    #: Visual-heavy + orphan-class warning threshold (IMG.7). Orphan ratio
+    #: must exceed this to trigger a non-blocking run warning.
+    visual_orphan_warning_orphan_ratio: float = 0.5
+    #: Visual-heavy + orphan-class warning threshold (IMG.7). Total visual
+    #: asset count across run documents must exceed this to trigger.
+    visual_orphan_warning_min_assets: int = 5
 
     # -- Entity Resolution -------------------------------------------------
     er_vector_similarity_threshold: float = 0.85
