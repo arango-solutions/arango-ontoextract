@@ -103,6 +103,7 @@ class TestParsePdf:
 
         mock_fitz.open.return_value = mock_doc
         mock_fitz.TEXT_PRESERVE_WHITESPACE = 1
+        mock_fitz.TEXT_PRESERVE_IMAGES = 4
 
         from app.services.ingestion import parse_pdf
 
@@ -126,6 +127,7 @@ class TestParsePdf:
 
         mock_fitz.open.side_effect = [mock_doc, reopened_doc]
         mock_fitz.TEXT_PRESERVE_WHITESPACE = 1
+        mock_fitz.TEXT_PRESERVE_IMAGES = 4
 
         from app.services.ingestion import parse_pdf
 

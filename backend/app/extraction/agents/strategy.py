@@ -94,7 +94,12 @@ def _is_visual_heavy(chunks: list[dict[str, Any]]) -> bool:
             visual_chunks += 1
         elif kind is None:
             text = chunk.get("text", "") or ""
-            if "[Visual omitted:" in text or "[Visual (alt text):" in text or "[Scanned" in text:
+            if (
+                "[Visual omitted:" in text
+                or "[Visual (alt text):" in text
+                or "[Visual (caption):" in text
+                or "[Scanned" in text
+            ):
                 visual_chunks += 1
         doc_format = (chunk.get("doc_format") or chunk.get("format") or "").lower()
         if doc_format in _VISUAL_PRESENTATION_FORMATS:

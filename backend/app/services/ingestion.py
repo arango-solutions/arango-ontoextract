@@ -38,6 +38,7 @@ from app.services.visual_extraction import (
     VisualExtractionDiagnostics,
     collect_pptx_visual_assets,
     format_section_chunk_text,
+    get_caption_provider,
     visual_placeholder_line,
 )
 
@@ -118,8 +119,14 @@ def parse_pdf(file_bytes: bytes) -> ParsedDocument:
     parsed.title = metadata.get("title", "") or ""
     parsed.author = metadata.get("author", "") or ""
 
+    # ``TEXT_PRESERVE_IMAGES`` is required for image-only pages: without
+    # it, ``get_text("dict")`` returns zero blocks for a page whose only
+    # content is an XObject image, and the scanned-page branch below
+    # never fires (IMG.8 regression: scanned PDFs silently produced no
+    # placeholders and ``scanned_page_count == 0``).
+    pdf_text_flags = fitz.TEXT_PRESERVE_WHITESPACE | fitz.TEXT_PRESERVE_IMAGES
     for page_num, page in enumerate(doc, start=1):
-        blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+        blocks = page.get_text("dict", flags=pdf_text_flags)["blocks"]
         current_heading = ""
         current_text_parts: list[str] = []
         image_blocks_on_page = 0
@@ -280,6 +287,11 @@ def parse_pptx(file_bytes: bytes) -> ParsedDocument:
     emit_placeholders = (
         settings.visual_extraction_enabled and settings.visual_extraction_placeholders
     )
+    caption_provider = (
+        get_caption_provider(settings.visual_caption_provider)
+        if settings.visual_extraction_enabled
+        else None
+    )
 
     core = prs.core_properties
     parsed.title = (core.title or "") if core else ""
@@ -297,6 +309,8 @@ def parse_pptx(file_bytes: bytes) -> ParsedDocument:
                     slide_index=slide_index,
                     diagnostics=parsed.visual_diagnostics,
                     emit_placeholders=emit_placeholders,
+                    caption_provider=caption_provider,
+                    max_caption_calls=settings.visual_caption_max_assets_per_doc,
                 )
             )
         slide_asset_indexes = list(
@@ -623,13 +637,13 @@ def chunk_document(
     return chunks
 
 
-_VISUAL_MARKER_PREFIXES = (
+_VISUAL_BODY_PREFIXES = (
     "[Visual omitted:",
     "[Visual (alt text):",
+    "[Visual (caption):",
     "[Scanned",
-    "[Slide ",
-    "[Page ",
 )
+_VISUAL_MARKER_PREFIXES = (*_VISUAL_BODY_PREFIXES, "[Slide ", "[Page ")
 
 
 def _classify_chunk_kind(text: str) -> str:
@@ -637,9 +651,7 @@ def _classify_chunk_kind(text: str) -> str:
     lines = [ln for ln in (s.strip() for s in text.splitlines()) if ln]
     if not lines:
         return "text"
-    visual_lines = sum(
-        1 for ln in lines if ln.startswith(("[Visual omitted:", "[Visual (alt text):", "[Scanned"))
-    )
+    visual_lines = sum(1 for ln in lines if ln.startswith(_VISUAL_BODY_PREFIXES))
     body_lines = sum(1 for ln in lines if not ln.startswith(_VISUAL_MARKER_PREFIXES))
     if visual_lines and body_lines == 0:
         return "visual"

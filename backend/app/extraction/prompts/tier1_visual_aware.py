@@ -43,6 +43,11 @@ Visual markers in the chunked text:
   an image / chart. Alt text IS reliable evidence and may be cited as \
   ``parent_evidence`` for a subclass relation or as ``evidence`` for an \
   attribute / relationship.
+- ``[Visual (caption): ...]`` carries an OCR- or vision-model-generated \
+  caption for an image / chart. Captions are also reliable evidence and \
+  may be cited as ``parent_evidence`` or ``evidence``. When the only \
+  available evidence for a class is a caption, set ``evidence_confidence`` \
+  no higher than 0.7 (the caption is a derived artifact).
 - ``[Scanned or image-only page N: OCR not configured]`` means the page \
   has no extractable text. Do NOT invent content for those pages. If the \
   ontology is missing hierarchy that obviously belongs to a scanned \

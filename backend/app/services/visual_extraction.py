@@ -55,6 +55,7 @@ class VisualExtractionDiagnostics:
     visual_asset_count: int = 0
     placeholder_count: int = 0
     alt_text_count: int = 0
+    caption_count: int = 0
     scanned_page_count: int = 0
     pages_with_visuals: list[int] = field(default_factory=list)
     assets: list[VisualAsset] = field(default_factory=list)
@@ -66,6 +67,8 @@ class VisualExtractionDiagnostics:
             self.placeholder_count += 1
         elif asset.method == "alt_text":
             self.alt_text_count += 1
+        elif asset.method in ("vision_caption", "ocr"):
+            self.caption_count += 1
         if asset.page_number not in self.pages_with_visuals:
             self.pages_with_visuals.append(asset.page_number)
 
@@ -74,6 +77,7 @@ class VisualExtractionDiagnostics:
             "visual_asset_count": self.visual_asset_count,
             "placeholder_count": self.placeholder_count,
             "alt_text_count": self.alt_text_count,
+            "caption_count": self.caption_count,
             "scanned_page_count": self.scanned_page_count,
             "pages_with_visuals": sorted(self.pages_with_visuals),
             "assets": [a.to_dict() for a in self.assets],
@@ -310,17 +314,48 @@ def build_orphan_risk_warning(
     }
 
 
+def visual_caption_line(text: str) -> str:
+    return f"[Visual (caption): {text.strip()}]"
+
+
+def _try_get_image_bytes(shape: Any) -> tuple[bytes, str] | None:
+    """Best-effort extraction of (bytes, mime_type) from a PPTX picture shape.
+
+    Returns ``None`` when the shape does not expose ``image.blob`` (e.g.,
+    chart shapes, programmatically-built shapes in tests where the
+    backing image isn't a normal PNG/JPEG).
+    """
+    try:
+        blob = shape.image.blob
+        mime = getattr(shape.image, "content_type", "") or "image/png"
+        return blob, mime
+    except Exception:
+        return None
+
+
 def collect_pptx_visual_assets(
     shapes: Any,
     *,
     slide_index: int,
     diagnostics: VisualExtractionDiagnostics,
     emit_placeholders: bool,
+    caption_provider: VisualCaptionProvider | None = None,
+    max_caption_calls: int | None = None,
 ) -> list[str]:
-    """Walk PPTX shapes (including groups) and return body placeholder lines."""
+    """Walk PPTX shapes (including groups) and return body placeholder lines.
+
+    When ``caption_provider`` is provided and not the no-op, the provider
+    is invoked for each picture shape that lacks alt text. A successful
+    caption replaces the placeholder line and the asset's ``method`` is
+    recorded as ``"vision_caption"``. Provider failures fall back to the
+    placeholder path and record ``failure_reason`` on the asset — they
+    never abort ingestion.
+    """
     lines: list[str] = []
+    captions_used = 0
 
     def _walk(shape_collection: Any) -> None:
+        nonlocal captions_used
         for shape in shape_collection:
             shape_type = getattr(shape, "shape_type", None)
             if shape_type == _PPTX_SHAPE_GROUP:
@@ -336,19 +371,54 @@ def collect_pptx_visual_assets(
 
             asset_index = diagnostics.visual_asset_count + 1
             alt_text = pptx_shape_alt_text(shape)
+            caption_text: str | None = None
+            caption_confidence: float | None = None
+            failure_reason: str | None = None
+
             if alt_text:
                 method: VisualExtractionMethod = "alt_text"
                 line = visual_alt_text_line(alt_text)
-            elif emit_placeholders:
-                method = "placeholder"
-                line = visual_placeholder_line(
-                    page_number=slide_index,
-                    asset_index=asset_index,
-                    asset_type=asset_type,
-                    doc_format="pptx",
-                )
             else:
-                continue
+                # Try the caption provider before falling back to a
+                # placeholder. Only PICTURE shapes have image bytes we
+                # can hand to a provider; charts always go to placeholder.
+                if (
+                    caption_provider is not None
+                    and not isinstance(caption_provider, NoOpCaptionProvider)
+                    and asset_type == "picture"
+                    and (max_caption_calls is None or captions_used < max_caption_calls)
+                ):
+                    img = _try_get_image_bytes(shape)
+                    if img is not None:
+                        bytes_, mime = img
+                        try:
+                            result = caption_provider.caption(bytes_, mime_type=mime)
+                        except Exception as exc:
+                            result = CaptionResult(
+                                success=False, failure_reason=f"provider_error:{exc}"
+                            )
+                        captions_used += 1
+                        if result.success and result.text.strip():
+                            caption_text = result.text.strip()
+                            caption_confidence = result.confidence
+                        else:
+                            failure_reason = result.failure_reason or "no_caption"
+                    else:
+                        failure_reason = "no_image_bytes"
+
+                if caption_text:
+                    method = "vision_caption"
+                    line = visual_caption_line(caption_text)
+                elif emit_placeholders:
+                    method = "placeholder"
+                    line = visual_placeholder_line(
+                        page_number=slide_index,
+                        asset_index=asset_index,
+                        asset_type=asset_type,
+                        doc_format="pptx",
+                    )
+                else:
+                    continue
 
             diagnostics.register_asset(
                 VisualAsset(
@@ -357,6 +427,8 @@ def collect_pptx_visual_assets(
                     asset_type=asset_type,
                     method=method,
                     alt_text=alt_text or None,
+                    confidence=caption_confidence,
+                    failure_reason=failure_reason,
                 )
             )
             lines.append(line)
