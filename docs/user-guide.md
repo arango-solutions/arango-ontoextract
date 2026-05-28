@@ -49,7 +49,7 @@ make setup
 # Start ArangoDB and Redis
 make infra
 
-# Start the backend (port 8000)
+# Start the backend (default port 8010; override with BACKEND_PORT in .env)
 make backend
 
 # In a second terminal, start the frontend (port 3000)
@@ -62,8 +62,8 @@ After startup, verify each service is accessible:
 
 | Service | URL | Expected |
 |---------|-----|----------|
-| Backend API | http://localhost:8000/health | `{"status": "ok"}` |
-| API Docs (Swagger) | http://localhost:8000/docs | Interactive OpenAPI UI |
+| Backend API | http://localhost:8010/health | `{"status": "ok"}` |
+| API Docs (Swagger) | http://localhost:8010/docs | Interactive OpenAPI UI |
 | Frontend | http://localhost:3000 | Landing page with system status |
 | ArangoDB UI | http://localhost:8530 | ArangoDB web interface (host port; container listens on 8529) |
 
@@ -88,7 +88,7 @@ AOE ingests PDF, DOCX, and Markdown files. Each upload triggers an async process
 1. **Via API** — upload a file with `POST /api/v1/documents/upload`:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/documents/upload \
+curl -X POST http://localhost:8010/api/v1/documents/upload \
   -F "file=@my_document.pdf" \
   -F "org_id=my_org"
 ```
@@ -118,7 +118,7 @@ If any step fails, the status becomes `error` with a descriptive `error_message`
 ### Check Document Status
 
 ```bash
-curl http://localhost:8000/api/v1/documents/abc123
+curl http://localhost:8010/api/v1/documents/abc123
 ```
 
 Response includes `status`, `chunk_count`, and `error_message` (if applicable).
@@ -126,7 +126,7 @@ Response includes `status`, `chunk_count`, and `error_message` (if applicable).
 ### View Chunks
 
 ```bash
-curl "http://localhost:8000/api/v1/documents/abc123/chunks?limit=10"
+curl "http://localhost:8010/api/v1/documents/abc123/chunks?limit=10"
 ```
 
 Returns paginated chunks with text content, token counts, and chunk indexes.
@@ -144,7 +144,7 @@ Once a document is in `ready` status, trigger LLM-driven ontology extraction.
 ### Trigger Extraction
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/extraction/run \
+curl -X POST http://localhost:8010/api/v1/extraction/run \
   -H "Content-Type: application/json" \
   -d '{"document_id": "abc123"}'
 ```
@@ -164,13 +164,13 @@ Response:
 **Via API** — poll the run status:
 
 ```bash
-curl http://localhost:8000/api/v1/extraction/runs/run_456
+curl http://localhost:8010/api/v1/extraction/runs/run_456
 ```
 
 **Via WebSocket** — connect for real-time updates:
 
 ```
-ws://localhost:8000/ws/extraction/run_456
+ws://localhost:8010/ws/extraction/run_456
 ```
 
 Events emitted: `step_started`, `step_completed`, `step_failed`, `pipeline_paused`, `completed`.
@@ -194,19 +194,19 @@ The LangGraph extraction pipeline runs these agents in sequence:
 
 ```bash
 # Extracted entities
-curl http://localhost:8000/api/v1/extraction/runs/run_456/results
+curl http://localhost:8010/api/v1/extraction/runs/run_456/results
 
 # Per-agent step details (tokens, duration, errors)
-curl http://localhost:8000/api/v1/extraction/runs/run_456/steps
+curl http://localhost:8010/api/v1/extraction/runs/run_456/steps
 
 # LLM cost breakdown
-curl http://localhost:8000/api/v1/extraction/runs/run_456/cost
+curl http://localhost:8010/api/v1/extraction/runs/run_456/cost
 ```
 
 ### Retry a Failed Run
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/extraction/runs/run_456/retry
+curl -X POST http://localhost:8010/api/v1/extraction/runs/run_456/retry
 ```
 
 ---
@@ -228,7 +228,7 @@ Navigate to `/curation/{runId}` in the frontend. The dashboard shows:
 Record a decision via API:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/curation/decide \
+curl -X POST http://localhost:8010/api/v1/curation/decide \
   -H "Content-Type: application/json" \
   -d '{
     "run_id": "run_456",
@@ -247,7 +247,7 @@ Available actions: `approve`, `reject`, `edit`, `merge`.
 Select multiple entities in the graph canvas and apply bulk actions:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/curation/batch \
+curl -X POST http://localhost:8010/api/v1/curation/batch \
   -H "Content-Type: application/json" \
   -d '{
     "run_id": "run_456",
@@ -264,7 +264,7 @@ curl -X POST http://localhost:8000/api/v1/curation/batch \
 When editing, pass `edited_data` with the fields to update:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/curation/decide \
+curl -X POST http://localhost:8010/api/v1/curation/decide \
   -H "Content-Type: application/json" \
   -d '{
     "run_id": "run_456",
@@ -281,7 +281,7 @@ curl -X POST http://localhost:8000/api/v1/curation/decide \
 When two entities represent the same concept:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/curation/merge \
+curl -X POST http://localhost:8010/api/v1/curation/merge \
   -H "Content-Type: application/json" \
   -d '{
     "source_keys": ["cls_duplicate_1"],
@@ -294,7 +294,7 @@ curl -X POST http://localhost:8000/api/v1/curation/merge \
 ### Review Decision History
 
 ```bash
-curl "http://localhost:8000/api/v1/curation/decisions?run_id=run_456&limit=50"
+curl "http://localhost:8010/api/v1/curation/decisions?run_id=run_456&limit=50"
 ```
 
 Every decision is recorded as an audit trail entry with timestamps and curator IDs.
@@ -378,20 +378,20 @@ violations or stale beliefs. Always start with `dry_run=true` to preview:
 
 ```bash
 # Dry-run: report only, no writes
-curl -X POST "http://localhost:8000/api/v1/admin/ontology/onto_xyz/consolidate?dry_run=true"
+curl -X POST "http://localhost:8010/api/v1/admin/ontology/onto_xyz/consolidate?dry_run=true"
 
 # Real pass with default thresholds
-curl -X POST "http://localhost:8000/api/v1/admin/ontology/onto_xyz/consolidate"
+curl -X POST "http://localhost:8010/api/v1/admin/ontology/onto_xyz/consolidate"
 
 # Resume an interrupted job
-curl -X POST "http://localhost:8000/api/v1/admin/ontology/onto_xyz/consolidate?job_key=job_abc"
+curl -X POST "http://localhost:8010/api/v1/admin/ontology/onto_xyz/consolidate?job_key=job_abc"
 ```
 
 List recent jobs and inspect a specific cursor:
 
 ```bash
-curl "http://localhost:8000/api/v1/admin/consolidation-jobs?ontology_id=onto_xyz&limit=10"
-curl "http://localhost:8000/api/v1/admin/consolidation-jobs/job_abc"
+curl "http://localhost:8010/api/v1/admin/consolidation-jobs?ontology_id=onto_xyz&limit=10"
+curl "http://localhost:8010/api/v1/admin/consolidation-jobs/job_abc"
 ```
 
 ### Check the LLM circuit breaker
@@ -401,7 +401,7 @@ If the per-document revision agent exceeds its configured rate
 rows are flagged for curation rather than sent to the LLM. To inspect:
 
 ```bash
-curl http://localhost:8000/api/v1/admin/belief-revision/circuit-breaker
+curl http://localhost:8010/api/v1/admin/belief-revision/circuit-breaker
 ```
 
 Reset is automatic as the rolling window slides forward; there is no manual
@@ -429,7 +429,7 @@ After curation, approved entities move from the staging graph to the production 
 ### Promote via API
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/curation/promote/run_456 \
+curl -X POST http://localhost:8010/api/v1/curation/promote/run_456 \
   -H "Content-Type: application/json" \
   -d '{"ontology_id": "my_ontology"}'
 ```
@@ -451,7 +451,7 @@ Response includes a promotion report:
 ### Check Promotion Status
 
 ```bash
-curl http://localhost:8000/api/v1/curation/promote/run_456/status
+curl http://localhost:8010/api/v1/curation/promote/run_456/status
 ```
 
 ### What Happens During Promotion
@@ -480,7 +480,7 @@ In the frontend at `/curation/{runId}`, the VCR Timeline slider appears below th
 ### Point-in-Time Snapshot
 
 ```bash
-curl "http://localhost:8000/api/v1/ontology/my_ontology/snapshot?at=1711500000.0"
+curl "http://localhost:8010/api/v1/ontology/my_ontology/snapshot?at=1711500000.0"
 ```
 
 Returns the full graph state (classes, properties, edges) as they were at that timestamp.
@@ -488,7 +488,7 @@ Returns the full graph state (classes, properties, edges) as they were at that t
 ### Version History for a Class
 
 ```bash
-curl http://localhost:8000/api/v1/ontology/class/cls_001/history
+curl http://localhost:8010/api/v1/ontology/class/cls_001/history
 ```
 
 Returns all versions sorted by `created` DESC, showing what changed in each version.
@@ -496,7 +496,7 @@ Returns all versions sorted by `created` DESC, showing what changed in each vers
 ### Compare Two Points in Time
 
 ```bash
-curl "http://localhost:8000/api/v1/ontology/my_ontology/diff?t1=1711500000.0&t2=1711600000.0"
+curl "http://localhost:8010/api/v1/ontology/my_ontology/diff?t1=1711500000.0&t2=1711600000.0"
 ```
 
 Returns added, removed, and changed entities between the two timestamps.
@@ -504,7 +504,7 @@ Returns added, removed, and changed entities between the two timestamps.
 ### Timeline Events
 
 ```bash
-curl http://localhost:8000/api/v1/ontology/my_ontology/timeline
+curl http://localhost:8010/api/v1/ontology/my_ontology/timeline
 ```
 
 Returns discrete change events for the VCR slider tick marks.
@@ -512,7 +512,7 @@ Returns discrete change events for the VCR slider tick marks.
 ### Revert to a Previous Version
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/ontology/class/cls_001/revert?to_version=1711400000.0"
+curl -X POST "http://localhost:8010/api/v1/ontology/class/cls_001/revert?to_version=1711400000.0"
 ```
 
 Creates a new current version that restores the historical state. The revert itself becomes a new entry in the version history.
@@ -526,7 +526,7 @@ Entity Resolution (ER) detects and merges duplicate or overlapping concepts acro
 ### Run the ER Pipeline
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/er/run \
+curl -X POST http://localhost:8010/api/v1/er/run \
   -H "Content-Type: application/json" \
   -d '{"ontology_id": "my_ontology"}'
 ```
@@ -536,7 +536,7 @@ The pipeline runs blocking (ArangoSearch BM25), scoring (field-by-field similari
 ### Review Merge Candidates
 
 ```bash
-curl "http://localhost:8000/api/v1/er/runs/{run_id}/candidates?min_score=0.7&limit=20"
+curl "http://localhost:8010/api/v1/er/runs/{run_id}/candidates?min_score=0.7&limit=20"
 ```
 
 Each candidate pair includes a similarity score and field-level breakdown.
@@ -544,7 +544,7 @@ Each candidate pair includes a similarity score and field-level breakdown.
 ### Explain a Match
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/er/explain \
+curl -X POST http://localhost:8010/api/v1/er/explain \
   -H "Content-Type: application/json" \
   -d '{"key1": "cls_001", "key2": "cls_002"}'
 ```
@@ -554,7 +554,7 @@ Returns detailed field-by-field similarity breakdown (label, description, URI, t
 ### Execute a Merge
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/er/merge \
+curl -X POST http://localhost:8010/api/v1/er/merge \
   -H "Content-Type: application/json" \
   -d '{"source_key": "cls_duplicate", "target_key": "cls_canonical", "strategy": "most_complete"}'
 ```
@@ -564,7 +564,7 @@ curl -X POST http://localhost:8000/api/v1/er/merge \
 Find duplicates between a local ontology and a domain ontology:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/er/cross-tier \
+curl -X POST http://localhost:8010/api/v1/er/cross-tier \
   -H "Content-Type: application/json" \
   -d '{"local_ontology_id": "org_acme_local", "domain_ontology_id": "financial_services", "min_score": 0.6}'
 ```
@@ -572,17 +572,17 @@ curl -X POST http://localhost:8000/api/v1/er/cross-tier \
 ### View Entity Clusters
 
 ```bash
-curl http://localhost:8000/api/v1/er/runs/{run_id}/clusters
+curl http://localhost:8010/api/v1/er/runs/{run_id}/clusters
 ```
 
 ### Configure the Pipeline
 
 ```bash
 # View current config
-curl http://localhost:8000/api/v1/er/config
+curl http://localhost:8010/api/v1/er/config
 
 # Update config
-curl -X PUT http://localhost:8000/api/v1/er/config \
+curl -X PUT http://localhost:8010/api/v1/er/config \
   -H "Content-Type: application/json" \
   -d '{"similarity_threshold": 0.8, "topological_weight": 0.3}'
 ```
@@ -596,7 +596,7 @@ curl -X PUT http://localhost:8000/api/v1/er/config \
 Upload an OWL/TTL (or RDF-XML, JSON-LD) file to add it to the ontology library. You must pass a unique **`ontology_id`** (this becomes the registry `_key`). Optionally pass **`ontology_label`** for the display name; otherwise the server derives a name from the OWL ontology `rdfs:label`, the filename, or the id.
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/ontology/import?ontology_id=my_imported_onto&ontology_label=My%20Schema" \
+curl -X POST "http://localhost:8010/api/v1/ontology/import?ontology_id=my_imported_onto&ontology_label=My%20Schema" \
   -F "file=@my_ontology.ttl"
 ```
 
@@ -613,13 +613,13 @@ Exports are **per ontology** (replace `my_ontology` with the registry `_key`):
 
 ```bash
 # Turtle (default)
-curl "http://localhost:8000/api/v1/ontology/my_ontology/export?format=turtle"
+curl "http://localhost:8010/api/v1/ontology/my_ontology/export?format=turtle"
 
 # JSON-LD
-curl "http://localhost:8000/api/v1/ontology/my_ontology/export?format=jsonld"
+curl "http://localhost:8010/api/v1/ontology/my_ontology/export?format=jsonld"
 
 # CSV
-curl "http://localhost:8000/api/v1/ontology/my_ontology/export?format=csv"
+curl "http://localhost:8010/api/v1/ontology/my_ontology/export?format=csv"
 ```
 
 Supported `format` values: `turtle`, `jsonld`, `csv`.
@@ -627,7 +627,7 @@ Supported `format` values: `turtle`, `jsonld`, `csv`.
 ### Rename or describe an ontology (registry)
 
 ```bash
-curl -X PUT http://localhost:8000/api/v1/ontology/library/my_ontology \
+curl -X PUT http://localhost:8010/api/v1/ontology/library/my_ontology \
   -H "Content-Type: application/json" \
   -d '{"name": "Human Readable Name", "description": "Optional description"}'
 ```
@@ -639,7 +639,7 @@ In the **Workspace** UI, right-click an ontology in the asset explorer → **Edi
 Extract an ontology from an existing ArangoDB database schema:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/ontology/schema/extract \
+curl -X POST http://localhost:8010/api/v1/ontology/schema/extract \
   -H "Content-Type: application/json" \
   -d '{"connection": {"host": "http://remote-arango:8529", "db": "target_db"}}'
 ```
@@ -729,13 +729,13 @@ The Ontology Library is a managed registry of all ontologies in the system — b
 **Via API:**
 
 ```bash
-curl "http://localhost:8000/api/v1/ontology/library?limit=25"
+curl "http://localhost:8010/api/v1/ontology/library?limit=25"
 ```
 
 ### View Ontology Details
 
 ```bash
-curl http://localhost:8000/api/v1/ontology/library/financial_services
+curl http://localhost:8010/api/v1/ontology/library/financial_services
 ```
 
 Returns the registry entry plus stats (class count, property count).
@@ -752,12 +752,12 @@ Organizations select which domain ontologies serve as base context for Tier 2 ex
 
 ```bash
 # Set base ontologies for an organization
-curl -X PUT http://localhost:8000/api/v1/ontology/orgs/org_acme/ontologies \
+curl -X PUT http://localhost:8010/api/v1/ontology/orgs/org_acme/ontologies \
   -H "Content-Type: application/json" \
   -d '{"ontology_ids": ["financial_services", "compliance"]}'
 
 # View selected ontologies
-curl http://localhost:8000/api/v1/ontology/orgs/org_acme/ontologies
+curl http://localhost:8010/api/v1/ontology/orgs/org_acme/ontologies
 ```
 
 ### Two-Tier Model
@@ -771,7 +771,7 @@ When Tier 2 extraction runs, the selected domain ontologies are injected as cont
 
 ## 12. API Reference
 
-Full interactive API documentation is available at http://localhost:8000/docs when the backend is running (Swagger UI auto-generated from FastAPI).
+Full interactive API documentation is available at http://localhost:8010/docs when the backend is running (Swagger UI auto-generated from FastAPI).
 
 For a static endpoint catalog, see [docs/api-reference.md](api-reference.md).
 
