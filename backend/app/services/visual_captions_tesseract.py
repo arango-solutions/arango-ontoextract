@@ -93,10 +93,10 @@ class TesseractCaptionProvider(VisualCaptionProvider):
 
     def caption(self, image_bytes: bytes, *, mime_type: str = "image/png") -> CaptionResult:
         try:
-            # ``pytesseract`` is an optional extra (``pip install -e .[ocr]``);
-            # mypy/CI installs do not include it by default, so silence the
-            # missing-stub diagnostic here rather than gating the whole module.
-            import pytesseract  # type: ignore[import-not-found]
+            # ``pytesseract`` is an optional extra (``pip install -e .[ocr]``).
+            # The except clause below tells mypy this import is handled, so
+            # the strict-mode missing-stub diagnostic does not fire here.
+            import pytesseract
             from PIL import Image
         except ImportError as exc:
             return CaptionResult(
