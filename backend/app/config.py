@@ -123,8 +123,9 @@ class Settings(BaseSettings):
     #: produces no captions; ingestion remains text-only with placeholders.
     #: ``"openai_vision"`` activates the OpenAI Vision adapter in
     #: ``app.services.visual_captions_openai`` (requires
-    #: ``openai_api_key``); ``"tesseract"`` is reserved for a future
-    #: on-prem OCR adapter.
+    #: ``openai_api_key``). ``"tesseract"`` activates the on-prem OCR
+    #: adapter in ``app.services.visual_captions_tesseract`` (requires
+    #: ``pip install pytesseract`` + the ``tesseract`` host binary).
     visual_caption_provider: str = "none"
     #: Per-document cap on caption calls so a slide deck cannot run away
     #: with provider cost. Captions beyond this point fall back to

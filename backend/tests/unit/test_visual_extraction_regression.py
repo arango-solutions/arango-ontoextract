@@ -411,6 +411,76 @@ class TestCaptionInjection:
         _PROVIDERS.pop("openai_vision", None)
         sys.modules.pop("app.services.visual_captions_openai", None)
 
+    def test_tesseract_provider_is_selectable_via_config(self, monkeypatch):
+        """End-to-end: ``visual_caption_provider="tesseract"`` + a stubbed
+        pytesseract / PIL stack produces ``[Visual (caption): ...]`` markers
+        and ``method="vision_caption"`` assets in the parsed PPTX.
+
+        Pairs with ``test_openai_vision_provider_is_selectable_via_config``
+        to lock in the second half of the IMG.4 follow-up.
+        """
+        import sys as _sys
+        import types
+        from unittest.mock import patch
+
+        # Drop prior provider state so the lazy load fires fresh.
+        from app.services.visual_extraction import _PROVIDERS
+
+        _PROVIDERS.pop("tesseract", None)
+        _sys.modules.pop("app.services.visual_captions_tesseract", None)
+
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "visual_caption_provider", "tesseract")
+
+        # Build the same minimal stubs the tesseract adapter tests use.
+        fake_pytesseract = types.ModuleType("pytesseract")
+        fake_pytesseract.Output = types.SimpleNamespace(DICT="dict")  # type: ignore[attr-defined]
+
+        def _image_to_data(_img, output_type=None):
+            return {"text": ["Vehicle", "Hierarchy"], "conf": [91, 87]}
+
+        fake_pytesseract.image_to_data = _image_to_data  # type: ignore[attr-defined]
+
+        fake_pil = types.ModuleType("PIL")
+        fake_image_mod = types.ModuleType("PIL.Image")
+
+        class _FakePILImage:
+            def load(self) -> None:
+                return None
+
+        fake_image_mod.open = lambda _buf: _FakePILImage()  # type: ignore[attr-defined]
+        fake_pil.Image = fake_image_mod  # type: ignore[attr-defined]
+
+        with (
+            patch.dict(
+                _sys.modules,
+                {
+                    "pytesseract": fake_pytesseract,
+                    "PIL": fake_pil,
+                    "PIL.Image": fake_image_mod,
+                },
+            ),
+            patch(
+                "app.services.visual_captions_tesseract.shutil.which",
+                return_value="/usr/local/bin/tesseract",
+            ),
+        ):
+            from app.services.ingestion import parse_pptx
+
+            parsed = parse_pptx(build_visual_taxonomy_pptx())
+
+        captioned = [a for a in parsed.visual_diagnostics.assets if a.method == "vision_caption"]
+        assert len(captioned) == 1
+        assert captioned[0].page_number == 8
+        assert parsed.visual_diagnostics.caption_count == 1
+
+        slide_8 = next(s for s in parsed.sections if s.page_number == 8)
+        assert "[Visual (caption): Vehicle Hierarchy]" in slide_8.text
+
+        _PROVIDERS.pop("tesseract", None)
+        _sys.modules.pop("app.services.visual_captions_tesseract", None)
+
 
 # ---------------------------------------------------------------------------
 # 4. Prompt rendering through the strategy selector

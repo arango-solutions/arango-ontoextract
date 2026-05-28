@@ -45,6 +45,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# On-prem OCR provider (Stream 13 IMG.4). Activated by
+# `settings.visual_caption_provider = "tesseract"`. Requires the
+# `tesseract` host binary in addition to the Python package -- see
+# AGENTS.md "System dependencies" table for install commands.
+ocr = [
+    "pytesseract>=0.3.10",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",

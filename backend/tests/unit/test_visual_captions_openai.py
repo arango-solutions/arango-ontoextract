@@ -293,7 +293,9 @@ class TestLazyRegistration:
         )
 
     def test_unknown_provider_still_warns(self, fresh_adapter_module, caplog):
-        provider = get_caption_provider("tesseract")  # not registered, not lazy
+        # Use a clearly-fictional name -- both ``openai_vision`` and
+        # ``tesseract`` are real lazy providers now.
+        provider = get_caption_provider("definitely_not_a_real_provider")
         assert isinstance(provider, NoOpCaptionProvider)
         assert any("unknown visual caption provider" in rec.message for rec in caplog.records)
 

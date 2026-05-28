@@ -204,6 +204,7 @@ _PROVIDERS: dict[str, type[VisualCaptionProvider]] = {
 #: (e.g., the OpenAI SDK) until the user actually selects the provider.
 _LAZY_PROVIDERS: dict[str, str] = {
     "openai_vision": "app.services.visual_captions_openai",
+    "tesseract": "app.services.visual_captions_tesseract",
 }
 
 
