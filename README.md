@@ -410,12 +410,24 @@ target platform rather than treating them as application dependencies.
 
 ## Contributing
 
-1. Create a feature branch from `main`
-2. Follow existing code patterns (see `.cursor/rules/`)
-3. Write tests for all changes (unit + integration)
-4. Run `make lint` and `make typecheck` before committing
-5. Use conventional commit messages: `feat(scope): description`
-6. Open a PR with a summary of changes and test plan
+Bug reports, questions, documentation fixes, and code contributions
+are all welcome — including from people whose primary skill isn't
+programming. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full
+guide; the short version:
+
+- **Report a bug or ask a question** → file an issue on
+  [GitHub](https://github.com/arango-solutions/arango-ontoextract/issues).
+- **Submit a fix or feature** → open an issue first so we can
+  confirm scope, then branch from `main`, follow the conventions
+  in [`.cursor/rules/`](.cursor/rules/), add tests
+  (`make test-unit` must pass), and open a PR using conventional-
+  commit format (`feat(scope): …` / `fix(scope): …`).
+- **Improve the docs** → PRs against `docs/` and `README.md` are
+  reviewed on the same path as code.
+
+The project is currently distributed under a private,
+all-rights-reserved license (see [License](#license)); please open
+an issue before investing time in a substantial code contribution.
 
 ## License
 
