@@ -23,6 +23,7 @@ exact failure mode IMG.7 / IMG.8 were written to catch.
 from __future__ import annotations
 
 import io
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -353,6 +354,62 @@ class TestCaptionInjection:
         assert len(alt) == 2
         # caption_count stays at zero on provider failure.
         assert parsed.visual_diagnostics.caption_count == 0
+
+    def test_openai_vision_provider_is_selectable_via_config(self, monkeypatch):
+        """End-to-end: setting ``visual_caption_provider="openai_vision"`` plus
+        a stubbed OpenAI client produces ``[Visual (caption): ...]`` markers
+        and ``method="vision_caption"`` assets in the parsed document.
+
+        This exercises the IMG.4 follow-up wiring: config flag -> lazy
+        provider load -> parse_pptx caption invocation -> chunk text.
+        """
+        from unittest.mock import MagicMock, patch
+
+        # Drop any prior provider state so lazy load fires fresh.
+        from app.services.visual_extraction import _PROVIDERS
+
+        _PROVIDERS.pop("openai_vision", None)
+        # Also drop the module so the next import re-registers.
+        import sys
+
+        sys.modules.pop("app.services.visual_captions_openai", None)
+
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+        monkeypatch.setattr(settings, "visual_caption_provider", "openai_vision")
+
+        with patch("app.services.visual_captions_openai.OpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="Org chart showing vehicle subclasses.")
+                    )
+                ]
+            )
+            mock_client_cls.return_value = mock_client
+
+            from app.services.ingestion import parse_pptx
+
+            parsed = parse_pptx(build_visual_taxonomy_pptx())
+
+        captioned = [a for a in parsed.visual_diagnostics.assets if a.method == "vision_caption"]
+        # The single no-alt-text picture (slide 8) was captioned.
+        assert len(captioned) == 1
+        assert captioned[0].page_number == 8
+        assert parsed.visual_diagnostics.caption_count == 1
+
+        slide_8 = next(s for s in parsed.sections if s.page_number == 8)
+        assert "[Visual (caption): Org chart showing vehicle subclasses.]" in slide_8.text
+
+        # The stubbed OpenAI client was invoked exactly once -- one
+        # captionable picture, no retries on success.
+        assert mock_client.chat.completions.create.call_count == 1
+
+        # Cleanup so other tests that may want a fresh state get one.
+        _PROVIDERS.pop("openai_vision", None)
+        sys.modules.pop("app.services.visual_captions_openai", None)
 
 
 # ---------------------------------------------------------------------------

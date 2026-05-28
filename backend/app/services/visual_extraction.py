@@ -198,6 +198,14 @@ _PROVIDERS: dict[str, type[VisualCaptionProvider]] = {
     "none": NoOpCaptionProvider,
 }
 
+#: Names that resolve via lazy import. Mapping name -> dotted module
+#: path. The module must call :func:`register_caption_provider` on
+#: import. Default installs avoid importing optional dependencies
+#: (e.g., the OpenAI SDK) until the user actually selects the provider.
+_LAZY_PROVIDERS: dict[str, str] = {
+    "openai_vision": "app.services.visual_captions_openai",
+}
+
 
 def register_caption_provider(name: str, provider_cls: type[VisualCaptionProvider]) -> None:
     """Register an additional caption provider (e.g. tesseract, openai_vision).
@@ -213,9 +221,25 @@ def get_caption_provider(name: str) -> VisualCaptionProvider:
     """Return an instance of the requested provider, falling back to no-op.
 
     Unknown provider names log a warning and fall back to NoOp rather
-    than raising — invalid config should not crash ingestion.
+    than raising — invalid config should not crash ingestion. Known
+    optional providers are lazy-imported on first request so a default
+    install never pulls in their dependency trees.
     """
     cls = _PROVIDERS.get(name)
+    if cls is None and name in _LAZY_PROVIDERS:
+        module_path = _LAZY_PROVIDERS[name]
+        try:
+            import importlib
+
+            importlib.import_module(module_path)
+        except Exception as exc:
+            log.warning(
+                "failed to load visual caption provider %r from %s: %s",
+                name,
+                module_path,
+                exc,
+            )
+        cls = _PROVIDERS.get(name)
     if cls is None:
         log.warning("unknown visual caption provider %r; falling back to no-op", name)
         cls = NoOpCaptionProvider

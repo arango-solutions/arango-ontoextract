@@ -121,12 +121,20 @@ class Settings(BaseSettings):
     visual_extraction_placeholders: bool = True
     #: Provider id for OCR/vision caption generation. ``"none"`` (default)
     #: produces no captions; ingestion remains text-only with placeholders.
-    #: Future values include ``"openai_vision"`` / ``"tesseract"``.
+    #: ``"openai_vision"`` activates the OpenAI Vision adapter in
+    #: ``app.services.visual_captions_openai`` (requires
+    #: ``openai_api_key``); ``"tesseract"`` is reserved for a future
+    #: on-prem OCR adapter.
     visual_caption_provider: str = "none"
     #: Per-document cap on caption calls so a slide deck cannot run away
     #: with provider cost. Captions beyond this point fall back to
     #: placeholders and are recorded with ``failure_reason="cap_exceeded"``.
     visual_caption_max_assets_per_doc: int = 25
+    #: Model id used by ``OpenAIVisionCaptionProvider``. Must be a
+    #: vision-capable chat-completions model. ``gpt-4o-mini`` is the
+    #: cost/quality sweet spot for short alt-text-style captions; bump
+    #: to ``gpt-4o`` when caption fidelity outweighs per-image cost.
+    visual_caption_openai_model: str = "gpt-4o-mini"
     #: Visual-heavy + orphan-class warning threshold (IMG.7). Orphan ratio
     #: must exceed this to trigger a non-blocking run warning.
     visual_orphan_warning_orphan_ratio: float = 0.5
