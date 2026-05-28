@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { api, ApiError } from "@/lib/api-client";
+import { api, ApiError, fetchAllPages } from "@/lib/api-client";
 import type { OntologyClass, OntologyEdge } from "@/types/curation";
 
 interface ClassHierarchyProps {
@@ -131,15 +131,22 @@ export default function ClassHierarchy({
     setLoading(true);
     setError(null);
     try {
-      const [classRes, edgeRes] = await Promise.all([
-        api.get<{ data: OntologyClass[] }>(
-          `/api/v1/ontology/${ontologyId}/classes`,
+      // Classes are pulled with keyset pagination (Stream 12 T10) so a very
+      // large ontology never lands as one unbounded response; we still need
+      // the complete set here because the hierarchy tree must resolve every
+      // parent link, so we follow ``next_cursor`` to exhaustion. Edges remain
+      // a single fetch (the /edges endpoint is not yet paginated).
+      const [classes, edgeRes] = await Promise.all([
+        fetchAllPages<OntologyClass>(
+          (cursor) =>
+            `/api/v1/ontology/${ontologyId}/classes?limit=500` +
+            (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""),
         ),
         api.get<{ data: OntologyEdge[] }>(
           `/api/v1/ontology/${ontologyId}/edges`,
         ),
       ]);
-      setTree(buildTree(classRes.data, edgeRes.data));
+      setTree(buildTree(classes, edgeRes.data));
     } catch (err) {
       setError(
         err instanceof ApiError

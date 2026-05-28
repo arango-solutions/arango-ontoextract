@@ -203,6 +203,57 @@ class ApiClient {
 
 export const api = new ApiClient();
 
+/** Shape of a single keyset-paginated page returned by list endpoints that
+ *  opt into Stream 12 T10 pagination (e.g. `GET /ontology/{id}/classes?limit=`).
+ *  `next_cursor` is `null`/absent on the final page. */
+export interface PaginatedPage<T> {
+  data: T[];
+  next_cursor?: string | null;
+  has_more?: boolean;
+  total_count?: number;
+}
+
+/**
+ * Follow `next_cursor` across a keyset-paginated endpoint and return the
+ * concatenated rows.
+ *
+ * Callers build the path for each page from the current cursor (`null` on the
+ * first request). This keeps the helper agnostic to query-string shape
+ * (`include`, page size, extra filters) — the caller owns the URL.
+ *
+ * Safety rails:
+ * - `maxPages` (default 10_000) bounds the loop so a server bug that always
+ *   returns a cursor can't spin forever.
+ * - If a page returns the **same** cursor it was given (no forward progress),
+ *   the loop stops rather than re-requesting the same page indefinitely.
+ *
+ * An `AbortSignal` is threaded into every page request so an unmounting
+ * component can cancel an in-flight multi-page pull.
+ */
+export async function fetchAllPages<T>(
+  buildPath: (cursor: string | null) => string,
+  opts?: { signal?: AbortSignal; maxPages?: number },
+): Promise<T[]> {
+  const out: T[] = [];
+  const maxPages = opts?.maxPages ?? 10_000;
+  let cursor: string | null = null;
+
+  for (let page = 0; page < maxPages; page++) {
+    const res: PaginatedPage<T> = await api.get<PaginatedPage<T>>(
+      buildPath(cursor),
+      { signal: opts?.signal },
+    );
+    if (Array.isArray(res.data)) out.push(...res.data);
+
+    const next: string | null = res.next_cursor ?? null;
+    // Terminal page, or a non-advancing cursor (defensive): stop.
+    if (!next || next === cursor) return out;
+    cursor = next;
+  }
+
+  return out;
+}
+
 /**
  * Base URL prefix for browser `fetch(...)` to the API.
  *

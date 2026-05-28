@@ -1,4 +1,5 @@
 import asyncio
+import binascii
 import json
 import logging
 import re
@@ -20,6 +21,7 @@ from app.db import (
     releases_repo,
 )
 from app.db.client import get_db
+from app.db.pagination import paginate
 from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import doc_get, run_aql
 from app.models.curation import (
@@ -50,6 +52,7 @@ from app.services.ontology_projections import (
     LIVE_EDGE_COLLECTIONS,
     LIVE_PROP_COLLECTIONS,
     normalize_include,
+    summarize_class,
     summarize_edge,
 )
 from app.services.schema_extraction import (
@@ -1353,19 +1356,71 @@ async def list_ontology_classes(
             "``GET /{ontology_id}/classes/{class_key}`` for full-fidelity data."
         ),
     ),
+    limit: int | None = Query(
+        None,
+        ge=1,
+        le=500,
+        description=(
+            "Opt-in keyset pagination (Stream 12 T10). When omitted the "
+            "endpoint returns the full class list in one response (legacy, "
+            "back-compatible shape ``{data: [...]}``). When set, the response "
+            "is a single page of at most ``limit`` classes plus a "
+            "``next_cursor`` to fetch the following page (``null`` on the last "
+            "page). Pages are ordered by ``(label, _key)`` so they are stable "
+            "across requests even when labels collide."
+        ),
+    ),
+    cursor: str | None = Query(
+        None,
+        description=(
+            "Opaque cursor from a previous response's ``next_cursor``. Only "
+            "honoured when ``limit`` is also set. An invalid / corrupt cursor "
+            "returns ``400``."
+        ),
+    ),
 ) -> dict[str, Any]:
-    """List all classes belonging to an ontology.
+    """List classes belonging to an ontology.
 
-    The ``?include=summary`` profile projects fields **inside AQL** rather
-    than in Python, so the dropped bytes never leave Arango. On the WTW
-    Ontology this turns the ``/classes`` payload from 943 KB into ~280 KB
-    (mostly by dropping ``evidence[]`` arrays, which the canvas does not
-    render). See ``ontology_projections.py`` for the allow-list.
+    Two modes:
+
+    * **Full (default, no ``limit``)** -- returns every live class sorted by
+      label. The ``?include=summary`` profile projects fields **inside AQL**
+      rather than in Python, so the dropped bytes never leave Arango. On the
+      WTW Ontology this turns the payload from 943 KB into ~280 KB (mostly by
+      dropping ``evidence[]`` arrays the canvas does not render). This shape
+      is unchanged for every existing caller.
+
+    * **Paginated (``limit`` set)** -- keyset pagination via
+      :func:`app.db.pagination.paginate` over ``(label, _key)``, so a
+      5K+ class ontology can be pulled a bounded page at a time instead of in
+      one unbounded response. The page is projected to the summary allow-list
+      in Python when ``include=summary``; the per-page size makes the
+      post-projection cost negligible versus the AQL-side projection used by
+      the full path. Response adds ``next_cursor`` / ``has_more`` /
+      ``total_count``.
+
+    Why ``/classes`` and not the canvas: the workspace canvas loads through
+    ``GET /{id}/effective`` (target + transitive imports, with ETag/304),
+    not this endpoint. ``/classes`` backs the library ``ClassHierarchy`` and
+    the asset-explorer previews; those are the consumers pagination protects
+    from unbounded payloads on very large ontologies.
     """
     db = get_db()
     if not db.has_collection("ontology_classes"):
+        if limit is not None:
+            return {"data": [], "next_cursor": None, "has_more": False, "total_count": 0}
         return {"data": []}
     profile = normalize_include(include)
+
+    if limit is not None:
+        return _list_classes_paginated(
+            db,
+            ontology_id=ontology_id,
+            profile=profile,
+            limit=limit,
+            cursor=cursor,
+        )
+
     return_clause = CLASS_SUMMARY_RETURN if profile == INCLUDE_SUMMARY else "RETURN c"
     t0 = time.perf_counter()
     classes = list(
@@ -1389,6 +1444,62 @@ async def list_ontology_classes(
         },
     )
     return {"data": classes}
+
+
+def _list_classes_paginated(
+    db: Any,
+    *,
+    ontology_id: str,
+    profile: str,
+    limit: int,
+    cursor: str | None,
+) -> dict[str, Any]:
+    """Keyset-paginated branch of :func:`list_ontology_classes` (Stream 12 T10).
+
+    Delegates to the shared :func:`app.db.pagination.paginate` helper so the
+    cursor encoding, ``(sort_field, _key)`` tiebreak, ``has_more`` look-ahead,
+    and ``total_count`` all match every other paginated endpoint. A corrupt
+    cursor surfaces as ``400`` rather than a 500 so clients can distinguish a
+    bad request from a server fault.
+    """
+    t0 = time.perf_counter()
+    try:
+        page = paginate(
+            db,
+            collection="ontology_classes",
+            sort_field="label",
+            sort_order="asc",
+            limit=limit,
+            cursor=cursor,
+            filters={"ontology_id": ontology_id, "expired": NEVER_EXPIRES},
+        )
+    except (ValueError, KeyError, TypeError, binascii.Error) as exc:
+        raise HTTPException(status_code=400, detail="Invalid pagination cursor") from exc
+
+    data = page.data
+    if profile == INCLUDE_SUMMARY:
+        data = [summarize_class(c) for c in data]
+
+    ms_aql = round((time.perf_counter() - t0) * 1000, 1)
+    log.info(
+        f"list_ontology_classes paginated ont={ontology_id} "
+        f"page={len(data)} total={page.total_count} include={profile} "
+        f"has_more={page.has_more} aql={ms_aql}ms",
+        extra={
+            "ontology_id": ontology_id,
+            "page_count": len(data),
+            "total_count": page.total_count,
+            "include": profile,
+            "has_more": page.has_more,
+            "ms_aql": ms_aql,
+        },
+    )
+    return {
+        "data": data,
+        "next_cursor": page.cursor,
+        "has_more": page.has_more,
+        "total_count": page.total_count,
+    }
 
 
 @router.get("/{ontology_id}/classes/{class_key}")
