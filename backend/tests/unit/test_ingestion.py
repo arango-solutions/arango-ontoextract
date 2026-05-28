@@ -251,6 +251,60 @@ class TestChunkDocument:
         assert "Root Taxonomy" in chunks[0].text
         assert "[Slide 3: Root Taxonomy]" in chunks[0].text
 
+    def test_chunk_kind_text_when_no_visual_markers(self, _mock_tc: MagicMock):
+        parsed = ParsedDocument(
+            format="markdown",
+            sections=[Section(heading="A", text="Plain prose with no visuals.")],
+        )
+        chunks = chunk_document(parsed)
+        assert all(c.chunk_kind == "text" for c in chunks)
+        assert all(c.visual_assets == [] for c in chunks)
+
+    def test_chunk_kind_visual_for_placeholder_only(self, _mock_tc: MagicMock):
+        from app.services.visual_extraction import VisualAsset
+
+        parsed = ParsedDocument(
+            format="pptx",
+            sections=[
+                Section(
+                    heading="",
+                    text="[Visual omitted: slide 1 image 1]",
+                    page_number=1,
+                    visual_asset_indexes=[0],
+                )
+            ],
+        )
+        parsed.visual_diagnostics.register_asset(
+            VisualAsset(page_number=1, asset_index=1, asset_type="picture", method="placeholder")
+        )
+        chunks = chunk_document(parsed)
+        assert len(chunks) == 1
+        assert chunks[0].chunk_kind == "visual"
+        assert len(chunks[0].visual_assets) == 1
+        assert chunks[0].visual_assets[0]["asset_type"] == "picture"
+
+    def test_chunk_kind_mixed_for_body_plus_placeholder(self, _mock_tc: MagicMock):
+        from app.services.visual_extraction import VisualAsset
+
+        parsed = ParsedDocument(
+            format="pptx",
+            sections=[
+                Section(
+                    heading="Benefits",
+                    text="Body text describing benefits.\n[Visual omitted: slide 2 image 1]",
+                    page_number=2,
+                    visual_asset_indexes=[0],
+                )
+            ],
+        )
+        parsed.visual_diagnostics.register_asset(
+            VisualAsset(page_number=2, asset_index=1, asset_type="chart", method="placeholder")
+        )
+        chunks = chunk_document(parsed)
+        assert len(chunks) == 1
+        assert chunks[0].chunk_kind == "mixed"
+        assert chunks[0].visual_assets[0]["asset_type"] == "chart"
+
 
 # ---------------------------------------------------------------------------
 # parse_pptx (real round-trip with python-pptx)

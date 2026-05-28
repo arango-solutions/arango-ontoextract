@@ -264,15 +264,21 @@ def _build_chunk_dicts(
     """Convert Chunk dataclasses + embeddings into dicts for storage."""
     result: list[dict[str, Any]] = []
     for chunk, emb in zip(chunks, embeddings, strict=True):
-        result.append(
-            {
-                "doc_id": doc_id,
-                "text": chunk.text,
-                "chunk_index": chunk.chunk_index,
-                "source_page": chunk.source_page,
-                "section_heading": chunk.section_heading,
-                "token_count": chunk.token_count,
-                "embedding": emb,
-            }
-        )
+        entry: dict[str, Any] = {
+            "doc_id": doc_id,
+            "text": chunk.text,
+            "chunk_index": chunk.chunk_index,
+            "source_page": chunk.source_page,
+            "section_heading": chunk.section_heading,
+            "token_count": chunk.token_count,
+            "embedding": emb,
+        }
+        # IMG.5 -- only emit visual fields when present so legacy
+        # consumers and pre-Stream-13 chunks remain byte-for-byte
+        # identical in storage.
+        if chunk.chunk_kind and chunk.chunk_kind != "text":
+            entry["chunk_kind"] = chunk.chunk_kind
+        if chunk.visual_assets:
+            entry["visual_assets"] = chunk.visual_assets
+        result.append(entry)
     return result

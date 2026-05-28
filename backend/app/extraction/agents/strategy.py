@@ -14,6 +14,13 @@ log = logging.getLogger(__name__)
 _SHORT_DOC_THRESHOLD = 10
 _LONG_DOC_THRESHOLD = 50
 
+# IMG.6: thresholds for detecting visual-heavy decks. Tuned so a normal
+# narrative document with one diagram does not flip to the visual-aware
+# prompt, but a PPTX deck where most slides carry placeholders or
+# title-only chunks does.
+_VISUAL_CHUNK_RATIO_THRESHOLD = 0.3
+_VISUAL_PRESENTATION_FORMATS = {"pptx"}
+
 _STRATEGIES: dict[str, StrategyConfig] = {
     "short_technical": StrategyConfig(
         model_name=settings.llm_extraction_model,
@@ -39,6 +46,17 @@ _STRATEGIES: dict[str, StrategyConfig] = {
         consistency_threshold=settings.extraction_consistency_threshold,
         document_type="tabular_structured",
     ),
+    "visual_heavy_presentation": StrategyConfig(
+        model_name=settings.llm_extraction_model,
+        prompt_template_key="tier1_visual_aware",
+        # Smaller batches keep slide context tight so the LLM sees the
+        # full set of slide-title -> body markers for adjacent slides
+        # without overflowing into unrelated sections.
+        chunk_batch_size=3,
+        num_passes=settings.extraction_passes,
+        consistency_threshold=settings.extraction_consistency_threshold,
+        document_type="visual_heavy_presentation",
+    ),
     "default": StrategyConfig(
         model_name=settings.llm_extraction_model,
         prompt_template_key="tier1_standard",
@@ -50,9 +68,52 @@ _STRATEGIES: dict[str, StrategyConfig] = {
 }
 
 
+def _is_visual_heavy(chunks: list[dict[str, Any]]) -> bool:
+    """Return True when chunk metadata indicates a visual-heavy source.
+
+    Detects either:
+    - ``chunk_kind`` of ``"visual"`` or ``"mixed"`` on >= 30% of chunks
+      (the threshold ignores the case where one stray diagram lands in
+      an otherwise narrative document), OR
+    - source format == ``"pptx"`` with any visual chunks at all (slides
+      are inherently slide-by-slide so even a few visual chunks justify
+      the presentation prompt).
+
+    Falls back to scanning chunk text for visual markers when the
+    upstream pipeline did not propagate ``chunk_kind`` (legacy chunks
+    stored before Stream 13 IMG.5).
+    """
+    if not chunks:
+        return False
+
+    visual_chunks = 0
+    pptx_chunks = 0
+    for chunk in chunks:
+        kind = chunk.get("chunk_kind")
+        if kind in ("visual", "mixed"):
+            visual_chunks += 1
+        elif kind is None:
+            text = chunk.get("text", "") or ""
+            if "[Visual omitted:" in text or "[Visual (alt text):" in text or "[Scanned" in text:
+                visual_chunks += 1
+        doc_format = (chunk.get("doc_format") or chunk.get("format") or "").lower()
+        if doc_format in _VISUAL_PRESENTATION_FORMATS:
+            pptx_chunks += 1
+
+    if not visual_chunks:
+        return False
+    ratio = visual_chunks / len(chunks)
+    if ratio >= _VISUAL_CHUNK_RATIO_THRESHOLD:
+        return True
+    return pptx_chunks > 0
+
+
 def _classify_document(chunks: list[dict[str, Any]]) -> str:
     """Classify document type based on chunk content and count."""
     num_chunks = len(chunks)
+
+    if _is_visual_heavy(chunks):
+        return "visual_heavy_presentation"
 
     table_indicators = 0
     technical_indicators = 0

@@ -42,6 +42,40 @@ class TestClassifyDocument:
         result = _classify_document(chunks)
         assert result == "default"
 
+    def test_visual_heavy_presentation_via_chunk_kind(self):
+        chunks = [
+            {"text": "[Slide 1: Overview]", "chunk_kind": "visual"},
+            {"text": "[Slide 2: Benefits]\nBody text.", "chunk_kind": "mixed"},
+            {
+                "text": "[Slide 3: Charts]\n[Visual omitted: slide 3 image 1]",
+                "chunk_kind": "visual",
+            },
+            {"text": "More narrative content.", "chunk_kind": "text"},
+        ]
+        assert _classify_document(chunks) == "visual_heavy_presentation"
+
+    def test_visual_heavy_via_pptx_format_with_any_visuals(self):
+        chunks = [
+            {"text": "[Slide 1: Title]", "chunk_kind": "visual", "doc_format": "pptx"},
+            {"text": "Body text.", "chunk_kind": "text", "doc_format": "pptx"},
+        ]
+        assert _classify_document(chunks) == "visual_heavy_presentation"
+
+    def test_legacy_chunks_without_chunk_kind_still_detected(self):
+        chunks = [
+            {"text": "[Slide 1: Overview]\n[Visual omitted: slide 1 image 1]"},
+            {"text": "[Slide 2: Benefits]\n[Visual omitted: slide 2 image 1]"},
+            {"text": "[Slide 3: Programs]\n[Visual omitted: slide 3 image 1]"},
+            {"text": "Body text here."},
+        ]
+        assert _classify_document(chunks) == "visual_heavy_presentation"
+
+    def test_one_diagram_does_not_flip_narrative(self):
+        chunks = [{"text": f"Paragraph {i}.", "chunk_kind": "text"} for i in range(20)]
+        chunks.append({"text": "[Visual omitted: page 5 image 1]", "chunk_kind": "visual"})
+        # 1/21 = 0.048 < 0.3 threshold and no pptx format, so narrative wins
+        assert _classify_document(chunks) != "visual_heavy_presentation"
+
 
 class TestStrategySelectorNode:
     def test_returns_strategy_config(self):
@@ -131,3 +165,66 @@ class TestStrategySelectorNode:
             or tech_result["strategy_config"]["chunk_batch_size"]
             != narr_result["strategy_config"]["chunk_batch_size"]
         )
+
+
+class TestVisualHeavyStrategyEndToEnd:
+    def test_strategy_selector_picks_visual_aware_prompt(self):
+        state: ExtractionPipelineState = {
+            "run_id": "visual_run",
+            "document_id": "deck_1",
+            "document_chunks": [
+                {"text": "[Slide 1: Overview]", "chunk_kind": "visual"},
+                {
+                    "text": "[Slide 2: Benefits]\n[Visual omitted: slide 2 image 1]",
+                    "chunk_kind": "visual",
+                },
+                {
+                    "text": "[Slide 3: Programs]\n[Visual omitted: slide 3 image 1]",
+                    "chunk_kind": "visual",
+                },
+                {"text": "Some narrative body.", "chunk_kind": "text"},
+            ],
+            "extraction_passes": [],
+            "errors": [],
+            "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "step_logs": [],
+            "current_step": "initialized",
+            "metadata": {},
+        }
+
+        result = strategy_selector_node(state)
+
+        config = result["strategy_config"]
+        assert config["prompt_template_key"] == "tier1_visual_aware"
+        assert config["document_type"] == "visual_heavy_presentation"
+        assert config["chunk_batch_size"] == 3
+
+        step_log = result["step_logs"][0]
+        assert step_log["metadata"]["document_type"] == "visual_heavy_presentation"
+
+
+class TestVisualAwarePromptTemplate:
+    def test_template_registers_and_renders(self):
+        from app.extraction.prompts import get_template
+
+        template = get_template("tier1_visual_aware")
+        assert template.key == "tier1_visual_aware"
+
+        system, user = template.render(
+            chunks_text="[Chunk 1 | source_chunk_id=c1]\n[Slide 1: Overview]",
+            domain_context="",
+            extra_vars={"pass_number": 1, "model_name": "test-model"},
+        )
+        # Ensures the visual-marker guidance survived rendering.
+        assert "[Slide N: Title]" in system
+        assert "[Visual omitted:" in system
+        assert "[Scanned" in system
+        assert "Chunk 1 | source_chunk_id=c1" in user
+
+    def test_template_documents_alt_text_confidence_ceiling(self):
+        from app.extraction.prompts import get_template
+
+        system = get_template("tier1_visual_aware").system_prompt
+        # Encodes the contract: alt-text-only evidence must be down-weighted.
+        assert "alt text" in system.lower()
+        assert "0.7" in system or "0.7" in system.replace(" ", "")

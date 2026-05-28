@@ -56,6 +56,10 @@ class Section:
     heading: str
     text: str
     page_number: int | None = None
+    #: Indexes into ``ParsedDocument.visual_diagnostics.assets`` for
+    #: assets attached to this section. Used by chunking (IMG.5) to
+    #: propagate per-chunk visual context.
+    visual_asset_indexes: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -77,6 +81,14 @@ class Chunk:
     source_page: int | None
     section_heading: str
     token_count: int
+    #: One of ``"text"`` (no visual placeholders), ``"visual"`` (only
+    #: visual placeholders / scanned-page markers), or ``"mixed"``.
+    #: Used by the visual-aware extraction strategy (IMG.6) and by
+    #: curators inspecting why a chunk's content looks unusual.
+    chunk_kind: str = "text"
+    #: Per-chunk projection of the visual assets that contributed to
+    #: this chunk's text. Mirrors ``VisualAsset.to_dict()`` shape.
+    visual_assets: list[dict[str, Any]] = field(default_factory=list)
 
 
 def compute_file_hash(content: bytes) -> str:
@@ -155,6 +167,7 @@ def parse_pdf(file_bytes: bytes) -> ParsedDocument:
 
         if settings.visual_extraction_enabled and image_blocks_on_page:
             visual_lines: list[str] = []
+            new_asset_indexes: list[int] = []
             for idx in range(1, image_blocks_on_page + 1):
                 parsed.visual_diagnostics.register_asset(
                     VisualAsset(
@@ -164,6 +177,7 @@ def parse_pdf(file_bytes: bytes) -> ParsedDocument:
                         method="placeholder",
                     )
                 )
+                new_asset_indexes.append(parsed.visual_diagnostics.visual_asset_count - 1)
                 if emit_placeholders:
                     visual_lines.append(
                         visual_placeholder_line(
@@ -183,12 +197,18 @@ def parse_pdf(file_bytes: bytes) -> ParsedDocument:
                         f"[Scanned or image-only page {page_num}: OCR not configured]",
                     )
                 parsed.sections.append(
-                    Section(heading="", text="\n".join(visual_lines), page_number=page_num)
+                    Section(
+                        heading="",
+                        text="\n".join(visual_lines),
+                        page_number=page_num,
+                        visual_asset_indexes=new_asset_indexes,
+                    )
                 )
             elif visual_lines:
                 target = parsed.sections[-1]
                 extra = "\n".join(visual_lines)
                 target.text = f"{target.text}\n\n{extra}".strip() if target.text else extra
+                target.visual_asset_indexes.extend(new_asset_indexes)
 
     doc.close()
 
@@ -268,6 +288,7 @@ def parse_pptx(file_bytes: bytes) -> ParsedDocument:
     for slide_index, slide in enumerate(prs.slides, start=1):
         heading = _pptx_slide_title(slide)
         body_parts = _pptx_collect_text(slide.shapes, exclude_title=True)
+        asset_count_before = parsed.visual_diagnostics.visual_asset_count
 
         if settings.visual_extraction_enabled:
             body_parts.extend(
@@ -278,6 +299,9 @@ def parse_pptx(file_bytes: bytes) -> ParsedDocument:
                     emit_placeholders=emit_placeholders,
                 )
             )
+        slide_asset_indexes = list(
+            range(asset_count_before, parsed.visual_diagnostics.visual_asset_count)
+        )
 
         # Speaker notes: powerful provenance signal, often where the
         # actual narrative lives in survey decks.
@@ -297,7 +321,14 @@ def parse_pptx(file_bytes: bytes) -> ParsedDocument:
         if not body and not heading:
             continue
 
-        parsed.sections.append(Section(heading=heading, text=body, page_number=slide_index))
+        parsed.sections.append(
+            Section(
+                heading=heading,
+                text=body,
+                page_number=slide_index,
+                visual_asset_indexes=slide_asset_indexes,
+            )
+        )
 
     return parsed
 
@@ -505,10 +536,19 @@ def chunk_document(
     Each chunk respects ``max_tokens`` (counted via tiktoken ``cl100k_base``).
     Chunks preserve source page and section heading metadata.
     Title-only slides/pages produce a chunk whose text includes the heading.
+
+    IMG.5: chunks carry ``chunk_kind`` (``"text"`` | ``"visual"`` |
+    ``"mixed"``) and ``visual_assets`` (the projection of visual assets
+    that fell in the source section) so downstream prompts can label
+    visual context distinctly without re-scanning the chunk text.
     """
     chunks: list[Chunk] = []
     idx = 0
     doc_format = parsed.format or "unknown"
+    # Map chunk_index -> the section that produced it. Used to backfill
+    # visual_assets / chunk_kind after the (deliberately branchy) main
+    # chunk loop without weaving visual logic into every emit path.
+    chunk_origin_section: dict[int, Section] = {}
 
     for section in parsed.sections:
         section_text = format_section_chunk_text(
@@ -526,22 +566,29 @@ def chunk_document(
         current_parts: list[str] = []
         current_tokens = 0
 
+        # Bind ``section`` explicitly via a default arg so the closure
+        # cannot drift if _emit is ever called after the for-loop exits
+        # (ruff B023 / late-binding pitfall).
+        def _emit(text: str, _section: Section = section) -> None:
+            nonlocal idx
+            chunks.append(
+                Chunk(
+                    text=text,
+                    chunk_index=idx,
+                    source_page=_section.page_number,
+                    section_heading=_section.heading,
+                    token_count=_token_count(text),
+                )
+            )
+            chunk_origin_section[idx] = _section
+            idx += 1
+
         for para in paragraphs:
             para_tokens = _token_count(para)
 
             if para_tokens > max_tokens:
                 if current_parts:
-                    merged = "\n\n".join(current_parts)
-                    chunks.append(
-                        Chunk(
-                            text=merged,
-                            chunk_index=idx,
-                            source_page=section.page_number,
-                            section_heading=section.heading,
-                            token_count=_token_count(merged),
-                        )
-                    )
-                    idx += 1
+                    _emit("\n\n".join(current_parts))
                     current_parts = []
                     current_tokens = 0
 
@@ -551,48 +598,18 @@ def chunk_document(
                 for word in words:
                     word_tokens = _token_count(word + " ")
                     if sub_tokens + word_tokens > max_tokens and sub_parts:
-                        sub_text = " ".join(sub_parts)
-                        chunks.append(
-                            Chunk(
-                                text=sub_text,
-                                chunk_index=idx,
-                                source_page=section.page_number,
-                                section_heading=section.heading,
-                                token_count=_token_count(sub_text),
-                            )
-                        )
-                        idx += 1
+                        _emit(" ".join(sub_parts))
                         sub_parts = []
                         sub_tokens = 0
                     sub_parts.append(word)
                     sub_tokens += word_tokens
 
                 if sub_parts:
-                    sub_text = " ".join(sub_parts)
-                    chunks.append(
-                        Chunk(
-                            text=sub_text,
-                            chunk_index=idx,
-                            source_page=section.page_number,
-                            section_heading=section.heading,
-                            token_count=_token_count(sub_text),
-                        )
-                    )
-                    idx += 1
+                    _emit(" ".join(sub_parts))
                 continue
 
             if current_tokens + para_tokens > max_tokens and current_parts:
-                merged = "\n\n".join(current_parts)
-                chunks.append(
-                    Chunk(
-                        text=merged,
-                        chunk_index=idx,
-                        source_page=section.page_number,
-                        section_heading=section.heading,
-                        token_count=_token_count(merged),
-                    )
-                )
-                idx += 1
+                _emit("\n\n".join(current_parts))
                 current_parts = []
                 current_tokens = 0
 
@@ -600,16 +617,49 @@ def chunk_document(
             current_tokens += para_tokens
 
         if current_parts:
-            merged = "\n\n".join(current_parts)
-            chunks.append(
-                Chunk(
-                    text=merged,
-                    chunk_index=idx,
-                    source_page=section.page_number,
-                    section_heading=section.heading,
-                    token_count=_token_count(merged),
-                )
-            )
-            idx += 1
+            _emit("\n\n".join(current_parts))
 
+    _backfill_visual_context(parsed, chunks, chunk_origin_section)
     return chunks
+
+
+_VISUAL_MARKER_PREFIXES = (
+    "[Visual omitted:",
+    "[Visual (alt text):",
+    "[Scanned",
+    "[Slide ",
+    "[Page ",
+)
+
+
+def _classify_chunk_kind(text: str) -> str:
+    """Return ``"visual"`` / ``"text"`` / ``"mixed"`` for a chunk's text."""
+    lines = [ln for ln in (s.strip() for s in text.splitlines()) if ln]
+    if not lines:
+        return "text"
+    visual_lines = sum(
+        1 for ln in lines if ln.startswith(("[Visual omitted:", "[Visual (alt text):", "[Scanned"))
+    )
+    body_lines = sum(1 for ln in lines if not ln.startswith(_VISUAL_MARKER_PREFIXES))
+    if visual_lines and body_lines == 0:
+        return "visual"
+    if visual_lines:
+        return "mixed"
+    return "text"
+
+
+def _backfill_visual_context(
+    parsed: ParsedDocument,
+    chunks: list[Chunk],
+    origin: dict[int, Section],
+) -> None:
+    """Populate ``chunk_kind`` and ``visual_assets`` after the main loop."""
+    assets = parsed.visual_diagnostics.assets
+    for chunk in chunks:
+        chunk.chunk_kind = _classify_chunk_kind(chunk.text)
+        section = origin.get(chunk.chunk_index)
+        if section is None or not section.visual_asset_indexes:
+            continue
+        chunk.visual_assets = [
+            assets[i].to_dict() for i in section.visual_asset_indexes if 0 <= i < len(assets)
+        ]
