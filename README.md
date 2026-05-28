@@ -53,27 +53,116 @@ flowchart LR
 
 ## Quick Start
 
+> **AOE is a web application, not a CLI or a bare API.** The primary way to
+> use it is the **workspace UI at http://localhost:3000**. The `curl` examples
+> elsewhere in the docs are for automation and integration — you do **not**
+> need them to get started. Follow all six steps below; the app needs a
+> **database**, a **backend**, *and* a **frontend** running together.
+
+### Prerequisites
+
+Install these before you start:
+
+| Requirement | Why | Notes |
+|-------------|-----|-------|
+| **Docker + Docker Compose** | Runs the **ArangoDB** database and Redis locally | **Required** for the default setup. `make infra` starts ArangoDB Community Edition for you — you do not install ArangoDB by hand. (Already have a remote ArangoDB? See [Database: local vs. remote](#database-local-vs-remote).) |
+| **Python 3.11+** | Backend (FastAPI) | `python3 --version` |
+| **Node.js 18+** | Frontend (Next.js) | `node --version` |
+| **Anthropic API key** | LLM extraction | Put in `.env` as `ANTHROPIC_API_KEY` |
+| **OpenAI API key** | Embeddings | Put in `.env` as `OPENAI_API_KEY` |
+
+### Run it
+
 ```bash
-# 1. Clone and set up
+# 1. Clone and configure
 git clone <repo-url> && cd arango-ontoextract
-cp .env.example .env          # Add your API keys
-make setup                     # Python venv + npm install
+cp .env.example .env           # then edit .env: set ANTHROPIC_API_KEY + OPENAI_API_KEY
 
-# 2. Start infrastructure
-make infra                     # ArangoDB + Redis via Docker
+# 2. Install dependencies (Python venv + npm)
+make setup
 
-# 3. Run the backend (default port 8010 — override with BACKEND_PORT=8000 in .env)
+# 3. Start the database + Redis (requires Docker running)
+make infra                     # launches ArangoDB Community Edition + Redis in Docker
+
+# 4. Create the database schema (collections, indexes, graphs)
+make migrate
+
+# 5. Start the backend  — leave this running (default port 8010)
 make backend
 ```
 
-After startup:
+```bash
+# 6. In a SECOND terminal, start the frontend — leave this running too
+make frontend
+```
 
-| Service | URL |
-|---------|-----|
-| Backend API | http://localhost:8010 (default; set `BACKEND_PORT` in `.env`) |
-| API Docs (Swagger) | http://localhost:8010/docs |
-| Frontend | http://localhost:3000 |
-| ArangoDB UI | http://localhost:8530 (host port; container listens on 8529) |
+### Open the app
+
+**→ Open http://localhost:3000 in your browser.** That's the AOE workspace —
+upload a document, run extraction, and curate the resulting ontology visually.
+
+| Surface | URL | What it is |
+|---------|-----|------------|
+| **Workspace UI** | **http://localhost:3000** | **Start here.** The visual curation app (upload, extract, graph canvas, timeline) |
+| API Docs (Swagger) | http://localhost:8010/docs | Interactive REST reference (for automation / integration) |
+| Backend API | http://localhost:8010 | FastAPI server the UI talks to |
+| ArangoDB Web UI | http://localhost:8530 | Raw database admin (host port; container listens on 8529) |
+
+> Backend port defaults to **8010** so `8000` stays free for other tools;
+> override with `BACKEND_PORT=8000` in `.env`.
+
+### Database: local vs. remote
+
+By default AOE runs its own **local ArangoDB Community Edition** in Docker (you
+don't install or configure a database by hand — `make infra` does it). If you'd
+rather point at an existing ArangoDB cluster or a managed deployment, set
+`TEST_DEPLOYMENT_MODE` in `.env` and fill in the matching connection block:
+
+| `TEST_DEPLOYMENT_MODE` | Use when | What to set in `.env` | Run `make infra`? |
+|------------------------|----------|------------------------|-------------------|
+| `local_docker` *(default)* | Local dev / first run | `ARANGO_HOST`, `ARANGO_DB`, `ARANGO_USER`, `ARANGO_PASSWORD` (defaults work out of the box) | **Yes** — it starts the local DB |
+| `self_managed_platform` | Your own remote ArangoDB cluster | Uncomment + set `ARANGO_ENDPOINT`, `ARANGO_DB`, `ARANGO_USER`, `ARANGO_PASSWORD`, `ARANGO_VERIFY_SSL` | No — skip it; point at your cluster |
+| `managed_platform` | ArangoDB Managed Platform (AMP) | Uncomment + set `ARANGO_ENDPOINT`, `ARANGO_GRAPH_API_KEY_ID`, `ARANGO_GRAPH_API_KEY_SECRET`, etc. | No — skip it; point at AMP |
+
+In every mode you still run `make migrate` once to create the schema in the
+target database. See the annotated connection blocks in
+[.env.example](.env.example) for the exact variables.
+
+## Using the Workspace UI
+
+AOE is designed to be driven from the **`/workspace`** page — one persistent
+"stage" where you stay on the graph and act on objects (classes, edges,
+documents, ontologies, runs) through **right-click context menus**. You rarely
+need the API for day-to-day work.
+
+![AOE workspace — asset explorer on the left, the ontology graph canvas in the center with the lens legend bottom-left, a floating class detail panel, and the temporal VCR timeline along the bottom.](docs/images/workspace-hero.png)
+
+A typical first session, entirely in the browser at **http://localhost:3000**:
+
+1. **Upload a document** — drag a PDF, DOCX, PPTX, or Markdown file into the
+   asset explorer. AOE parses, chunks, and embeds it automatically.
+2. **Extract an ontology** — drag the document onto the canvas (or right-click →
+   *Extract*) to run the LLM pipeline. Watch progress live on the pipeline DAG.
+3. **Curate visually** — left-click any class/edge/property to open its detail
+   panel; right-click to **Approve / Reject / Edit / View provenance**. Switch
+   *lenses* (1–5) to recolor the graph by confidence, tier, or status.
+4. **Travel through time** — scrub the **VCR timeline** at the bottom to see the
+   ontology at any past point, diff two versions, or revert a class.
+5. **Promote to production** — once approved, promote entities into the
+   production graph with full temporal versioning.
+
+> **Interaction contract:** *left-click selects* (safe, read-only),
+> *right-click acts* (the menus are where the actions live). If you're ever
+> unsure what to do, **right-click** the canvas or any entity.
+
+For a step-by-step walkthrough with every panel and shortcut explained, see the
+[User Guide](docs/user-guide.md). Prefer to automate instead? The same
+operations are available over REST — see [API Endpoints](#api-endpoints) and the
+live Swagger docs at http://localhost:8010/docs.
+
+> 📸 **Want to help?** More annotated UI screenshots make this section far more
+> inviting to new users. If you'd like to contribute them, see the shot list in
+> [`docs/images/README.md`](docs/images/README.md).
 
 ## Features
 
