@@ -1,8 +1,8 @@
 # AOE — Remaining Work Plan
 
-**Document Version:** 3.2
-**Date:** May 13, 2026
-**Baseline:** v0.3.0 tag (commit `4738d29`) — supersedes v0.2.0 (Stream 11 Phase 1+2 complete) and v0.1.0
+**Document Version:** 3.3
+**Date:** May 28, 2026
+**Baseline:** v0.4.0-dev — supersedes v0.3.0 (perf streams), v0.2.0 (Stream 11 Phase 1+2) and v0.1.0
 **PRD Reference:** `PRD.md` — Arango-OntoExtract Product Requirements Document
 
 ---
@@ -11,8 +11,9 @@
 
 The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline, ontology editor, pipeline monitor, quality metrics, multi-document support, **iterative belief-revision substrate**, and **substantial workspace-load performance work**. This document details the remaining work required to achieve full PRD compliance and production readiness.
 
-**Completed:** ~88% of PRD requirements (§6.1–6.6, §6.10–6.13 incl. quality dashboard, most of §6.8, §7.2.1, §6.16 substrate + per-doc revision Phases 1+2 **and** Phase 3 UX/consolidation/MCP tools, plus the perf streams below)
-**Remaining:** ~12% across 6 work streams + 3 future / architectural streams, estimated 5–7 weeks (core) + TBD (Streams 8–9)
+**Completed (v0.4.0-dev):** ~95% of PRD requirements. Shipped: Streams 1 (Imports + Composition), 2 (Entity Resolution, hand-rolled), 3 (Constraints v1), 4 (Quality Dashboard Q.2–Q.5), 5 (Schema Extraction), 6 (Testing & CI — 5-tier pipeline + coverage gates), 7 (Production Ops), 11 (Belief Revision Phases 1–3), 12 (perf T1–T5, T7–T10), 13 (Image-Aware Extraction), and the **Sigma.js core of Stream 8** (the workspace canvas is WebGL now).
+**Remaining for v1.0.0 (small tail):** Stream 4 RAG-benchmark comparison UI; Stream 3 I.7 constraint approve/reject (blocked on mutation API); Stream 12 T6 WTW switch profile (and the `/edges` + `/effective` pagination it may justify).
+**Post-v1.0:** Stream 8 editor panels (semantic zoom, edge bundling, property matrix, restriction editor, namespace manager, validation console); Stream 9 unified-storage spike; legacy-route removal. See the refreshed execution order below.
 
 ### v0.3.0 highlights (since v0.2.0)
 
@@ -46,10 +47,10 @@ The full belief-revision substrate (`revision_meta` collection, evidence-age + e
 
 | Area | Status | Key Capabilities |
 |------|--------|-----------------|
-| Document Ingestion (§6.1) | **Mostly Complete** | Upload (PDF, DOCX, PPTX, MD), chunking, auto-extraction trigger, multi-doc, CRUD. **Gap:** embedded images / scanned pages are currently text-only or omitted; image-aware extraction tracked in Stream 13. |
-| Extraction Pipeline (§6.2, §6.11) | **Complete** | 6-agent LangGraph pipeline (strategy, extractor, consistency, quality judge, ER stub, filter), async/concurrent, 7-signal confidence scoring |
+| Document Ingestion (§6.1) | **Complete** | Upload (PDF, DOCX, PPTX, MD), chunking, auto-extraction trigger, multi-doc, CRUD. Image-aware extraction shipped (Stream 13): embedded images / scanned pages are inventoried, captioned via OpenAI Vision or on-prem Tesseract when configured, and surfaced to extraction prompts with slide/page provenance + orphan-risk warnings. |
+| Extraction Pipeline (§6.2, §6.11) | **Complete** | 6-agent LangGraph pipeline (strategy, extractor, consistency, quality judge, entity-resolution, filter), async/concurrent, 7-signal confidence scoring. ER agent is a real (hand-rolled) node — see Stream 2 |
 | Tier 2 Extensions (§6.3) | **Complete** | Domain context injection, tier2 prompts, strategy auto-detection |
-| Visual Curation (§6.4) | **Complete** | Graph canvas (React Flow), node/edge actions, VCR timeline, diff view, provenance, standalone editor with CRUD |
+| Visual Curation (§6.4) | **Complete** | Workspace graph canvas with two graph-style renderers: **Network (circles) → Sigma.js + graphology, WebGL** (`SigmaCanvas`, Stream 8 core) and **Box & Arrow (UML) → React Flow** (`BoxArrowCanvas`). Node/edge actions, VCR timeline, diff view, provenance, standalone editor with CRUD. Legacy `/curation` + `/ontology/edit` routes also use React Flow pending deprecation. |
 | Temporal Time Travel (§6.5) | **Mostly Complete** | Edge-interval versioning, snapshot API, timeline events, VCR slider. Missing: playback animation |
 | ArangoDB Visualizer (§6.6) | **Complete** | Themes, canvas actions, saved queries (temporal-aware), viewpoints, auto-install |
 | MCP Server (§6.10) | **Complete** | Runtime MCP tools for ontology operations |
@@ -63,17 +64,17 @@ The full belief-revision substrate (`revision_meta` collection, evidence-age + e
 
 | Area | Status | Gap |
 |------|--------|-----|
-| Entity Resolution (§6.7) | **Stub** | ER agent exists but uses placeholder logic. No real `arango-entity-resolution` library integration. |
+| Entity Resolution (§6.7) | **COMPLETE hand-rolled (Stream 2 closed, v0.4.0-dev)** | `er_agent_node` is a real LangGraph node (blocking, weighted scoring incl. topological similarity, union-find clustering, golden-record merge via temporal `update_class` + `expire_entity`, cross-tier edges). Run-scoped REST under `/api/v1/er/` + per-pair accept/reject/explain, workspace `MergeCandidatesOverlay` ("Find Duplicates…"), and three MCP tools all ship. The `arango-entity-resolution` library is installed but intentionally unused — its services are person-record-focused and a poor fit for ontology classes; hand-rolled is the correct domain fit (see Stream 2 plan-vs-reality audit). |
 | Imports, Composition & Dependencies (§6.15, §6.8.8–8.16) | **COMPLETE (Phase 0 + Phase 1 + Phase 2a + Phase 2b shipped in v0.4.0-dev)** | `owl:imports` edge tracking, imports CRUD, `ontology_imports` named graph, standard ontology catalog (`/ontology/catalog` + bundled DCMI sample), `GET /imports-graph` DAG endpoint, cascade-on-delete impact, base-ontology selector on extraction, OWL exports preserving `owl:imports`, workspace catalog-browser overlay, workspace imports-dependency overlay (DAG canvas + library deep-link), three Visualizer saved queries, effective-graph API (`GET /{id}/effective` with inline conflicts + ETag), merge-conflict detection (duplicate URI / duplicate label / subclass cycle via import), canvas rendering of imported entities (dashed slate border + dimmed fill on Sigma + box-arrow + "Open Source Ontology" context-menu deep-link, with the legend swatch surfacing only when imports are present), drag-and-drop import composition (drag any ontology row onto the canvas to add an `imports` edge, with self/duplicate pre-check, cycle detection on the backend, undo-toast on success, and per-entity "Remove Import (<source name>)" context-menu entries — all routed through a new module-level toast surface), and import-aware extraction prompts (the effective ontology — own + transitive imports — is serialized as a tree-shaped header + reuse guidelines and prepended to `domain_context` for every extraction targeting a composed ontology, so the LLM is told which classes already exist and instructed to reuse via `rdfs:subClassOf` / `owl:equivalentClass` rather than minting duplicates the conflict detector will later flag) are all shipped. |
 | Belief Revision UX (§6.16, Stream 11 Phase 3) | **Complete (v0.4.0-dev)** | Revisions Inbox overlay (IBR.14), inline detail panel (IBR.15), accept/reject/modify REST + service (IBR.16), background consolidation + admin endpoints (IBR.17), four safety guards (IBR.18), Quality Dashboard "Revisions Activity" tile (IBR.19), six MCP tools (IBR.20), and docs cross-link (IBR.21) all shipped. See ADR-008 implementation status appendix. |
 | Constraints (§6.14) | **PR 1–PR 5 shipped (v0.4.0-dev)** | Extraction (PR 1) → OWL restriction import (PR 2) → SHACL shapes import (PR 3) → materialization → API → temporal → rule engine alignment + workspace UI display (PR 4) + OWL Turtle restriction export & new SHACL shapes export (PR 5) all shipped (I.1–I.6, I.8, I.9, plus rule-engine schema reconciliation and SHACL/OWL cross-vocab combination). Stream 3 v1 complete. Remaining only: curator approve / reject mutation actions (I.7 → blocked on mutation API). |
 | Schema Extraction (§6.9) | **Complete (v0.4.0-dev)** | Stream 5 PR 1 (backend extraction) + PR 2 (schema-extraction overlay) + PR 3 sub-A (S.9 constraint mapping) + PR 3 sub-B backend (S.5 schema diff endpoint) + **S.5 frontend overlay** (`SchemaDiffOverlay` on `/workspace`, context menus) all shipped. |
 | Quality Dashboard (§6.13.7) | **Mostly Done (v0.4.0-dev)** | Unified `/dashboard`, `/quality` → per-ontology tab, recharts radar, audited OntoQA metrics, connectivity metric, qualitative evaluation, live per-ontology six-dimension view, **event-tagged history tracking (Q.2)**, **trend sparklines (Q.3)**, **gold-standard recall (Q.4)**, **curation throughput timer (Q.5)**. Remaining: RAG benchmark comparison. |
 | Workspace Performance (Stream 12) | **Mostly Done (v0.4.0-dev)** | T1+T2+T3+T4+T5 (projections, single-item endpoints, client cache, FLATTEN consolidation, telemetry, format sniffer, UI race fixes), T7 (`/runs/{id}/cost` quality cache), T8 (`/runs` bulk-enrichment in 2 AQL), T9 (no `include=full` on canvas paths), and **T10 `/classes` keyset pagination** all shipped. Remaining: T6 WTW switch profile (needs a real per-stage capture); `/edges` + `/effective` pagination intentionally deferred (see T10 row — canvas uses `/effective`, and both need whole-set handling that a profile should justify first). |
-| Testing & CI (§8) | **Partial** | ~500 unit tests exist but no CI pipeline, no coverage enforcement |
+| Testing & CI (§8) | **Complete (Stream 6 PR 1 + PR 2, v0.4.0-dev)** | 5-tier GitHub Actions pipeline (`.github/workflows/ci.yml`): lint (ruff + mypy on py3.11/3.12, eslint + tsc) + pre-commit drift backstop → unit (backend `--cov-fail-under=80`, frontend Jest `coverageThreshold` 55/70/70/55) → integration (ArangoDB + Redis service containers) → E2E (backend pytest + Playwright `workspace.spec.ts`) → unified Docker image build + health/WS smoke. ~1700 backend + ~590 frontend tests; Codecov upload on both layers. See Stream 6 audit. |
 | Production Ops (§8.5) | **Stream 7 complete (v0.4.0-dev)** | Stream 7 PR 1 (TTL GC + visualizer auto-install), PR 2 (OpenTelemetry tracing), PR 3 (alerting + prod docker-compose hardening + monitoring profile), PR 4 (ops benchmarks harness + README/docs refresh). All four PRs shipped. |
 | Image-Aware Extraction (§6.1, §6.2, §6.11) | **Complete (Stream 13 IMG.1–IMG.8 + OpenAI Vision + Tesseract adapters)** | Visual asset inventory (PPTX picture/chart shapes, PDF image blocks, scanned-only pages); labeled placeholders + alt-text + caption markers in chunk text; `chunk_kind` + per-chunk `visual_assets` propagated through chunking; `visual_heavy_presentation` strategy + `tier1_visual_aware` prompt; both cloud (`OpenAIVisionCaptionProvider`) and on-prem (`TesseractCaptionProvider`) caption adapters auto-loaded lazily on `visual_caption_provider="openai_vision"` / `="tesseract"` + no-op default + per-doc cap; orphan-risk warning persisted to `extraction_runs.stats.warnings` when visual-heavy input correlates with parent-less classes; regression coverage in `tests/unit/test_visual_extraction_regression.py`, `tests/unit/test_visual_captions_openai.py`, and `tests/unit/test_visual_captions_tesseract.py`. |
-| Visualizer Migration | **Not Started** | React Flow → Sigma.js/graphology (PRD target architecture) |
+| Visualizer Migration (Stream 8) | **Sigma.js canvas DONE; editor panels outstanding** | The default `/workspace` Network graph style runs on **Sigma.js + graphology** (`SigmaCanvas.tsx`: WebGL renderer, ForceAtlas2 / circular / grid / random layouts, PageRank sizing, noverlap) with a class-tree browser (`ClassHierarchy` / `AssetExplorer`, search + drag-to-reparent) — i.e. V.1 / V.2 / V.5 shipped as part of the object-centric workspace. React Flow is **not fully retired**: it still backs the workspace **Box & Arrow (UML) graph style** (`BoxArrowCanvas`), the **legacy routes** (`/curation`, `/ontology/edit`, `/entity-resolution`), and the **pipeline DAG** (`AgentDAG.tsx`). Outstanding: TopBraid-class editor panels (V.3 semantic zoom, V.4 edge bundling, V.6 property matrix, V.7 restriction editor, V.8 namespace manager, V.9 validation console) and legacy-route migration/removal (V.10 / V.11). See Stream 8 audit. |
 
 ### Recently Fixed (since v1.0 of this plan)
 
@@ -878,23 +879,56 @@ Stream 6 closed.
 - Replace React Flow (DOM-based, limited to ~100 nodes) with Sigma.js + graphology (WebGL, handles 100K+ nodes)
 - Implement TopBraid Composer-class editing panels
 
+#### Plan-vs-reality audit (v0.4.0-dev)
+
+The "Future Phase" framing is stale: the **core WebGL migration already
+shipped** as part of the object-centric workspace, not as a separate post-v1.0
+project. The default `/workspace` Network graph style is `SigmaCanvas.tsx` — a
+Sigma.js v3 + graphology renderer with ForceAtlas2 / circular / grid / random
+layouts (`graphology-layout-*`), PageRank-based node sizing
+(`graphology-metrics/centrality/pagerank`), noverlap, and `@sigma/edge-curve`
++ `@sigma/node-border`.
+
+React Flow (`reactflow`) is **not fully retired** — it still backs:
+
+- the workspace **Box & Arrow (UML) graph style** (`BoxArrowCanvas.tsx`),
+  selectable from the canvas "Graph Style" submenu alongside the Sigma
+  Network style — so React Flow remains on a primary `/workspace` path;
+- the **legacy routes** `/curation`, `/ontology/edit`, `/entity-resolution`
+  (slated for removal/overlay-migration per `ui-architecture.mdc`, not a
+  Sigma port); and
+- the **pipeline DAG** (`AgentDAG.tsx`), a small fixed-size step graph where
+  React Flow is a fine fit and a Sigma rewrite has no payoff.
+
+So the renderer swap is **partial by design**: Sigma handles the large
+force-directed class graph (its strength); React Flow handles the structured
+UML box-arrow view and the DAG (its strength). Full React Flow removal is not
+a goal. What remains for stream closure is the **TopBraid-class editor
+panels**, which were always the harder half and are independent of the
+renderer.
+
 #### Tasks
 
 | # | Task | Type | Estimate | Description |
 |---|------|------|----------|-------------|
-| V.1 | Sigma.js + graphology integration | Frontend | 8h | Install `@react-sigma/core`, `graphology`, `graphology-layout-forceatlas2`. Create `SigmaGraphCanvas` component with same props interface as current `GraphCanvas`. |
-| V.2 | ForceAtlas2 layout | Frontend | 4h | Replace dagre with ForceAtlas2 for organic, force-directed layout. Add layout toggle (hierarchy vs. force-directed). |
-| V.3 | Semantic zoom | Frontend | 4h | At low zoom: show only class labels and group clusters. At medium zoom: show properties count. At high zoom: show full detail. |
-| V.4 | Edge bundling | Frontend | 3h | Use graphology-edge-bundling for clean edge rendering in dense graphs. |
-| V.5 | Class tree browser panel | Frontend | 6h | Left sidebar with hierarchical class tree (from `subclass_of` traversal), search, drag-to-reparent. |
-| V.6 | Property matrix panel | Frontend | 6h | Spreadsheet-style view of all properties across classes (domain × range). Sortable, filterable, editable. |
-| V.7 | Restriction editor panel | Frontend | 6h | Visual builder for OWL restrictions (cardinality, value, has-value, qualified). Generates `owl:Restriction` constructs. |
-| V.8 | Namespace manager | Frontend | 3h | Settings dialog for managing ontology prefixes and namespaces. |
-| V.9 | Validation console | Frontend | 4h | Bottom panel showing real-time OWL consistency issues and SHACL validation results. |
-| V.10 | Migrate curation page to Sigma.js | Frontend | 4h | Replace `GraphCanvas` usage in `/curation?runId=…` with `SigmaGraphCanvas`. |
-| V.11 | Migrate editor page to Sigma.js | Frontend | 4h | Replace `GraphCanvas` usage in `/ontology/edit?ontologyId=…` with `SigmaGraphCanvas`. |
+| V.1 | Sigma.js + graphology integration | Frontend | **DONE (v0.4.0-dev)** | `frontend/src/components/workspace/SigmaCanvas.tsx` is the workspace canvas: `graphology` graph + Sigma v3 WebGL renderer, dynamically imported on `/workspace`. Replaced React Flow as the primary visualization. |
+| V.2 | ForceAtlas2 layout | Frontend | **DONE (v0.4.0-dev)** | `graphology-layout-forceatlas2` + `noverlap` + `circular` wired; canvas context menu "Layout" submenu offers Force-Directed / Circular / Grid / Random (`contextMenus/canvas.ts`). Lens changes never relayout (§14); layout changes always do. |
+| V.3 | Semantic zoom | Frontend | **Not started** | Zoom-dependent level-of-detail (labels-only when zoomed out → full detail when zoomed in) is not yet implemented in `SigmaCanvas`. |
+| V.4 | Edge bundling | Frontend | **Partial** | `@sigma/edge-curve` provides curved edges (Edge Style menu), but true `graphology`-based edge bundling for dense graphs is not implemented. |
+| V.5 | Class tree browser panel | Frontend | **DONE (v0.4.0-dev)** | `ClassHierarchy` (library) + `AssetExplorer` (workspace) render the `subclass_of`-derived class tree with search and drag-to-reparent. |
+| V.6 | Property matrix panel | Frontend | **Not started** | No spreadsheet-style domain × range property matrix yet. Property data is reachable per-class via `FloatingDetailPanel` but not as a cross-class matrix. |
+| V.7 | Restriction editor panel | Frontend | **Not started (display only)** | Stream 3 PR 4 added constraint *display* in the workspace, but there is no visual `owl:Restriction` *builder*. |
+| V.8 | Namespace manager | Frontend | **Not started** | No prefix/namespace settings dialog. |
+| V.9 | Validation console | Frontend | **Not started** | OWL/SHACL results surface via the quality report overlay, not a real-time bottom validation console. |
+| V.10 | Migrate curation page to Sigma.js | Frontend | **Won't do (route deprecated)** | `/curation` is a legacy route targeted for removal/overlay-migration per `ui-architecture.mdc`; porting its `GraphCanvas` to Sigma is not worth it. The workspace canvas already covers curation via overlays. |
+| V.11 | Migrate editor page to Sigma.js | Frontend | **Won't do (route deprecated)** | Same as V.10 for `/ontology/edit`. |
 
-**Exit Criteria:** All graph visualization uses Sigma.js/graphology. TopBraid-class editor panels available. Graphs with 1000+ nodes render smoothly.
+**Exit Criteria:** ~~All graph visualization uses Sigma.js/graphology.~~ The
+workspace **Network graph style** uses Sigma.js/graphology and renders 1000+
+nodes smoothly (V.1 / V.2 / V.5 met). Remaining for full stream closure: the
+TopBraid-class editor panels (V.3 / V.4 / V.6–V.9). The workspace Box & Arrow
+(UML) view, legacy-route canvases (V.10 / V.11), and the pipeline DAG keep
+React Flow by design — full React Flow removal is not a goal.
 
 ---
 
@@ -1125,7 +1159,36 @@ We have most of the substrate already (temporal versioning, provenance, multi-si
 
 ---
 
-## Recommended Execution Order (post-v0.3.0, post-Stream-11)
+## Recommended Execution Order (refreshed v0.4.0-dev)
+
+Streams 1, 2, 3, 5, 6, 7, 11, 13 and the Sigma.js core of Stream 8 are
+**shipped**; the original Sprint A–G plan below is kept only as a historical
+record (struck through). What actually remains for v1.0.0 is a short tail of
+follow-ups.
+
+```
+DONE:  Stream 1 (Imports + Composition)   Stream 2 (Entity Resolution, hand-rolled)
+       Stream 3 (Constraints v1)          Stream 4 (Quality Dashboard: Q.2–Q.5)
+       Stream 5 (Schema Extraction)       Stream 6 (Testing & CI, 5-tier)
+       Stream 7 (Production Ops)          Stream 11 (Belief Revision)
+       Stream 12 (perf: T1–T5, T7–T10)    Stream 13 (Image-Aware Extraction)
+       Stream 8 core (Sigma.js workspace canvas: V.1 / V.2 / V.5)
+
+REMAINING for v1.0.0 (small tail):
+  - Stream 4:  RAG benchmark comparison UI (last quality-dashboard item)
+  - Stream 3:  I.7 curator approve/reject for constraints (blocked on mutation API)
+  - Stream 12: T6 WTW switch profile (needs a real per-stage capture); /edges +
+               /effective pagination only if that profile justifies it
+  → v1.0.0 Release
+
+POST-v1.0:
+  - Stream 8 editor panels (V.3 semantic zoom, V.4 edge bundling, V.6 property
+    matrix, V.7 restriction editor, V.8 namespace manager, V.9 validation console)
+  - Stream 9 (Unified Storage spike)
+  - Legacy-route removal (/curation, /ontology/edit, /entity-resolution)
+```
+
+<details><summary>Historical Sprint A–G plan (superseded — all sprints shipped)</summary>
 
 ```
 Sprint A (now): Stream 4 (Quality Dashboard finishing: Q.2/Q.3/Q.4/Q.5) + Stream 12 P0/P1 (T6 WTW switch profile, T7 cost cache, T8 runs join)
@@ -1138,6 +1201,8 @@ Sprint G:       Stream 13 (Image-Aware Extraction) before additional PPTX-heavy 
                 → v1.0.0 Release
 Post-v1.0:      Stream 8 (Sigma.js Migration) + Stream 9 (Unified Storage spike)
 ```
+
+</details>
 
 **v0.3.0 baseline** unblocked BYOC packaging; **v0.4.0-dev** closes Stream 11 Phase 3 (Belief Revision UX, consolidation, MCP tools, dashboard tile, docs). Stream 4 finishing + Stream 12 perf follow-ups are now the next user-visible priorities.
 
