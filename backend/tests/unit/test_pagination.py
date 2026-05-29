@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import base64
 import json
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.db.pagination import decode_cursor, encode_cursor
+from app.db.pagination import (
+    decode_cursor,
+    encode_cursor,
+    paginate,
+    validate_sort_field,
+)
 
 
 class TestEncodeCursor:
@@ -64,3 +70,49 @@ class TestDecodeCursor:
         bad_cursor = base64.urlsafe_b64encode(json.dumps({"x": 1}).encode()).decode()
         with pytest.raises(KeyError):
             decode_cursor(bad_cursor)
+
+
+class TestValidateSortField:
+    """``sort_field`` is interpolated into AQL, so it must be a safe identifier.
+
+    Regression guard for the AQL-injection vector where ``GET /documents?sort=``
+    and ``GET /orgs?sort=`` forward a free-form query param into the SORT/FILTER
+    clause.
+    """
+
+    @pytest.mark.parametrize(
+        "field",
+        ["_key", "label", "created_at", "upload_date", "chunk_index", "A1_b2"],
+    )
+    def test_accepts_plain_identifiers(self, field):
+        assert validate_sort_field(field) == field
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "label` REMOVE doc IN documents //",  # backtick break-out
+            "a b",  # space
+            "a-b",  # hyphen
+            "a.b",  # nested attribute / dotted
+            "a;b",  # statement separator
+            "",  # empty
+            "1abc",  # leading digit
+            "doc`,@x RETURN 1//",  # injection attempt
+        ],
+    )
+    def test_rejects_unsafe_values(self, field):
+        with pytest.raises(ValueError):
+            validate_sort_field(field)
+
+    def test_paginate_rejects_injection_before_touching_db(self):
+        # The guard must fire before any AQL is issued, so a malicious sort
+        # field can never reach the database.
+        db = MagicMock()
+        with patch("app.db.pagination.run_aql") as run_aql_mock:
+            with pytest.raises(ValueError):
+                paginate(
+                    db,
+                    collection="documents",
+                    sort_field="x` REMOVE doc IN documents //",
+                )
+            run_aql_mock.assert_not_called()

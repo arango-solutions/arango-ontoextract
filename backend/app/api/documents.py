@@ -183,14 +183,19 @@ async def list_documents(
     status: str | None = Query(default=None),
 ) -> PaginatedResponse[dict[str, Any]]:
     """List all documents (paginated)."""
-    return documents_repo.list_documents(
-        limit=limit,
-        cursor=cursor,
-        sort_field=sort,
-        sort_order=order,
-        org_id=org_id,
-        status=status,
-    )
+    try:
+        return documents_repo.list_documents(
+            limit=limit,
+            cursor=cursor,
+            sort_field=sort,
+            sort_order=order,
+            org_id=org_id,
+            status=status,
+        )
+    except ValueError as exc:
+        # ``sort`` is interpolated into AQL; pagination rejects non-identifier
+        # values to block injection. Surface as 400, not 500.
+        raise ValidationError(str(exc)) from exc
 
 
 @router.get("/{doc_id}")

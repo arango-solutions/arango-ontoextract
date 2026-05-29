@@ -76,12 +76,17 @@ async def list_organizations(
     _user: AuthenticatedUser = Depends(require_role("admin")),
 ) -> PaginatedResponse[dict[str, Any]]:
     """List all organizations (admin only)."""
-    return orgs_repo.list_organizations(
-        limit=limit,
-        cursor=cursor,
-        sort_field=sort,
-        sort_order=order,
-    )
+    try:
+        return orgs_repo.list_organizations(
+            limit=limit,
+            cursor=cursor,
+            sort_field=sort,
+            sort_order=order,
+        )
+    except ValueError as exc:
+        # ``sort`` is interpolated into AQL; pagination rejects non-identifier
+        # values to block injection. Surface as 400, not 500.
+        raise ValidationError(str(exc)) from exc
 
 
 @router.get("/{org_id}")

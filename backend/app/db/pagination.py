@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 from typing import Any, TypeVar
 
 from arango.database import StandardDatabase
@@ -22,6 +23,29 @@ T = TypeVar("T")
 
 _MAX_LIMIT = 100
 _DEFAULT_LIMIT = 25
+
+# ``sort_field`` is interpolated directly into the AQL string (it names an
+# attribute: ``SORT doc.`<sort_field>` ...``) because AQL cannot bind an
+# attribute name. Any caller that forwards a user-controlled value (e.g. a
+# ``?sort=`` query param on ``/documents`` or ``/orgs``) would otherwise open
+# an AQL-injection hole. We therefore restrict ``sort_field`` to a plain
+# attribute identifier. ArangoDB attribute names are far more permissive than
+# this, but every legitimate caller in this codebase sorts on a simple
+# identifier (``label``, ``created_at``, ``_key``, ``upload_date``, ...), so
+# the narrow allow-pattern is a safe, defensive chokepoint.
+_SAFE_SORT_FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def validate_sort_field(sort_field: str) -> str:
+    """Return ``sort_field`` if it is a safe AQL attribute identifier.
+
+    Raises ``ValueError`` otherwise. Callers that accept a user-supplied sort
+    key should surface this as a ``400`` rather than letting it reach the
+    query builder.
+    """
+    if not isinstance(sort_field, str) or not _SAFE_SORT_FIELD.match(sort_field):
+        raise ValueError(f"Invalid sort field: {sort_field!r}")
+    return sort_field
 
 
 def encode_cursor(sort_value: Any, key: str) -> str:
@@ -72,6 +96,10 @@ def paginate(
     bind_vars:
         Extra bind variables for ``extra_aql``.
     """
+    # Reject any non-identifier sort field before it reaches the AQL string
+    # (it is interpolated, not bound — see ``_SAFE_SORT_FIELD``).
+    validate_sort_field(sort_field)
+
     limit = min(max(1, limit), _MAX_LIMIT)
     ascending = sort_order.lower() != "desc"
 
