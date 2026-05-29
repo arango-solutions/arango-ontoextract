@@ -16,16 +16,13 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from app.db.client import get_db
+from app.db.ontology_collections import PROPERTY_VERTEX_COLLECTIONS
 from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import doc_get, run_aql
 
 log = logging.getLogger(__name__)
 
-_PROPERTY_VERTEX_COLLECTIONS = (
-    "ontology_properties",
-    "ontology_object_properties",
-    "ontology_datatype_properties",
-)
+_PROPERTY_VERTEX_COLLECTIONS = PROPERTY_VERTEX_COLLECTIONS
 
 
 def _count_ontology_property_vertices(db: Any, ontology_id: str) -> int:

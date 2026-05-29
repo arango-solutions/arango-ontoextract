@@ -1,16 +1,10 @@
 "use client";
 
+import { confidenceColor as scoreColor } from "@/lib/thresholds";
 import type { OntologyScorecard } from "@/types/curation";
 
 interface Props {
   ontology: OntologyScorecard;
-}
-
-function scoreColor(val: number | null, threshold = 0.7, lowThreshold = 0.5): string {
-  if (val === null) return "text-gray-400";
-  if (val >= threshold) return "text-green-600";
-  if (val >= lowThreshold) return "text-yellow-600";
-  return "text-red-600";
 }
 
 function MetricCard({

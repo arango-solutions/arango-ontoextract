@@ -35,18 +35,22 @@ import {
   RDFS_RANGE_CLASS_LABEL_FALLBACK,
 } from "./graphCanvasEdges";
 import { ONTOLOGY_EDGE_COLORS as EDGE_COLORS } from "./graphVisualPalette";
+import { CONFIDENCE_HIGH, CONFIDENCE_MEDIUM } from "@/lib/thresholds";
 
 // --- Confidence-based color helpers ---
+// These return border+background / dot classes rather than the plain text
+// colors in `thresholds.ts`, so they keep their own output format but share
+// the canonical band thresholds.
 
 function confidenceColor(confidence: number): string {
-  if (confidence > 0.7) return "border-green-400 bg-green-50";
-  if (confidence >= 0.5) return "border-yellow-400 bg-yellow-50";
+  if (confidence > CONFIDENCE_HIGH) return "border-green-400 bg-green-50";
+  if (confidence >= CONFIDENCE_MEDIUM) return "border-yellow-400 bg-yellow-50";
   return "border-red-400 bg-red-50";
 }
 
 function confidenceDotColor(confidence: number): string {
-  if (confidence > 0.7) return "bg-green-500";
-  if (confidence >= 0.5) return "bg-yellow-500";
+  if (confidence > CONFIDENCE_HIGH) return "bg-green-500";
+  if (confidence >= CONFIDENCE_MEDIUM) return "bg-yellow-500";
   return "bg-red-500";
 }
 
@@ -231,8 +235,8 @@ function computeLayout(
   }
 
   for (const edge of edges) {
-    const fromKey = edge._from.split("/").pop() ?? edge._from;
-    const toKey = edge._to.split("/").pop() ?? edge._to;
+    const fromKey = documentKey(edge._from);
+    const toKey = documentKey(edge._to);
     if (!classKeySet.has(fromKey) || !classKeySet.has(toKey)) continue;
     if (fromKey === toKey) continue;
 

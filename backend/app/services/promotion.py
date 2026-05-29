@@ -15,17 +15,13 @@ from typing import Any
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.ontology_collections import PROPERTY_VERTEX_COLLECTIONS
 from app.db.utils import run_aql
 from app.services.temporal import NEVER_EXPIRES, create_version
 
 log = logging.getLogger(__name__)
 
-_VERTEX_COLLECTIONS = [
-    "ontology_classes",
-    "ontology_properties",
-    "ontology_object_properties",
-    "ontology_datatype_properties",
-]
+_VERTEX_COLLECTIONS = ["ontology_classes", *PROPERTY_VERTEX_COLLECTIONS]
 _EDGE_COLLECTIONS = [
     "subclass_of",
     "has_property",

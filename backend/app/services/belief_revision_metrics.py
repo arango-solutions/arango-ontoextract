@@ -234,3 +234,43 @@ def inbox_size(
         )
     )
     return int(rows[0]) if rows else 0
+
+
+class RevisionsDashboard(TypedDict):
+    """Composite payload for ``GET /api/v1/quality/{ontology_id}/revisions``.
+
+    Bundles the four read-only aggregations the dashboard tile needs so the
+    UI makes a single request rather than fanning out. The shape is stable
+    (every sub-structure degrades to zero-filled defaults) so the tile can
+    render unconditionally.
+    """
+
+    ontology_id: str
+    summary: RevisionsSummary
+    decay: dict[str, Any]
+    pending_inbox: int
+    recent: list[dict[str, Any]]
+
+
+def revisions_dashboard(
+    ontology_id: str,
+    *,
+    recent_limit: int = 20,
+    db: Any | None = None,
+) -> RevisionsDashboard:
+    """Assemble the belief-revision metrics tile for one ontology (PRD §7.7a).
+
+    Composes :func:`revisions_summary` (verdict / action / status
+    distribution), :func:`decay_status` (decay-flagged count + decay
+    config), :func:`inbox_size` (pending curation inbox count) and
+    :func:`recent_revisions` (timeline). A single shared ``db`` handle is
+    reused across all four passes.
+    """
+    db = _ensure_db(db)
+    return {
+        "ontology_id": ontology_id,
+        "summary": revisions_summary(ontology_id, db=db),
+        "decay": decay_status(ontology_id, db=db),
+        "pending_inbox": inbox_size(ontology_id, db=db),
+        "recent": recent_revisions(ontology_id, limit=recent_limit, db=db),
+    }

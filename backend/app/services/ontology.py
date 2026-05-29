@@ -8,6 +8,7 @@ from typing import Any
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.ontology_collections import PROPERTY_VERTEX_COLLECTIONS
 from app.db.utils import run_aql
 from app.models.ontology import ExtractionResult
 from app.services.arangordf_bridge import import_owl_to_graph
@@ -81,11 +82,7 @@ def get_staging_graph(
             )
         )
 
-    for prop_col in (
-        "ontology_properties",
-        "ontology_object_properties",
-        "ontology_datatype_properties",
-    ):
+    for prop_col in PROPERTY_VERTEX_COLLECTIONS:
         if db.has_collection(prop_col):
             properties.extend(
                 list(

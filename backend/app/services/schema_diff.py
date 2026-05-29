@@ -34,6 +34,7 @@ from typing import Any
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.ontology_collections import PROPERTY_VERTEX_COLLECTIONS
 from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import run_aql
 
@@ -43,11 +44,7 @@ log = logging.getLogger(__name__)
 # on whether they're un-typed, owl:ObjectProperty, or owl:DatatypeProperty.
 # Diff walks all three so a datatype-property added in run B that didn't
 # exist in run A still shows up as ``added``.
-_PROPERTY_COLLECTIONS = [
-    "ontology_properties",
-    "ontology_object_properties",
-    "ontology_datatype_properties",
-]
+_PROPERTY_COLLECTIONS = list(PROPERTY_VERTEX_COLLECTIONS)
 
 # Fields we deliberately ignore when deciding whether two rows differ.
 # ``_key`` / ``_id`` / ``_rev`` are Arango plumbing. The temporal fields

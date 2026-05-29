@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.db.client import get_db
+from app.services.belief_revision_metrics import revisions_dashboard
 from app.services.quality_metrics import (
     compute_dashboard_payload,
     compute_quality_report,
@@ -69,6 +70,26 @@ async def qualitative_evaluation(ontology_id: str) -> dict[str, Any]:
         return result or {"strengths": [], "weaknesses": [], "status": "not_available"}
     except Exception as exc:
         log.exception("Failed to get evaluation for ontology %s", ontology_id)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
+@router.get("/{ontology_id}/revisions")
+async def revisions_metrics(
+    ontology_id: str,
+    recent_limit: int = 20,
+) -> dict[str, Any]:
+    """Belief-revision metrics tile for an ontology (PRD §7.7a, FR-13.26).
+
+    Read-only aggregation: verdict / action / status distribution, decay
+    state, pending curation-inbox count, and a short recent-revisions
+    timeline. Degrades to zero-filled defaults when the ontology has no
+    recorded revisions yet, so the dashboard tile always renders.
+    """
+    try:
+        db = get_db()
+        return dict(revisions_dashboard(ontology_id, recent_limit=recent_limit, db=db))
+    except Exception as exc:
+        log.exception("Failed to get revision metrics for ontology %s", ontology_id)
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 

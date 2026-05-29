@@ -219,3 +219,66 @@ class TestInboxSize:
             by_aql={"FOR r IN revision_meta": []},
         )
         assert metrics.inbox_size("OID", db=db) == 0
+
+
+# ---------------------------------------------------------------------------
+# revisions_dashboard (composite)
+# ---------------------------------------------------------------------------
+
+
+class TestRevisionsDashboard:
+    def test_composes_all_four_aggregations(self, monkeypatch):
+        """The dashboard payload bundles summary / decay / inbox / recent,
+        reusing one db handle and forwarding ``recent_limit``."""
+        db = MagicMock()
+        calls: dict[str, Any] = {}
+
+        def _summary(oid, *, db):
+            calls["summary"] = (oid, db)
+            return {"total": 5}
+
+        def _decay(oid, *, db):
+            calls["decay"] = (oid, db)
+            return {"decayed_classes": 2}
+
+        def _inbox(oid, *, db):
+            calls["inbox"] = (oid, db)
+            return 3
+
+        def _recent(oid, *, limit, db):
+            calls["recent"] = (oid, limit, db)
+            return [{"_key": "r1"}]
+
+        monkeypatch.setattr(metrics, "revisions_summary", _summary)
+        monkeypatch.setattr(metrics, "decay_status", _decay)
+        monkeypatch.setattr(metrics, "inbox_size", _inbox)
+        monkeypatch.setattr(metrics, "recent_revisions", _recent)
+
+        out = metrics.revisions_dashboard("OID", recent_limit=7, db=db)
+
+        assert out == {
+            "ontology_id": "OID",
+            "summary": {"total": 5},
+            "decay": {"decayed_classes": 2},
+            "pending_inbox": 3,
+            "recent": [{"_key": "r1"}],
+        }
+        # Single shared db handle threaded into every helper.
+        assert calls["summary"] == ("OID", db)
+        assert calls["decay"] == ("OID", db)
+        assert calls["inbox"] == ("OID", db)
+        # recent_limit forwarded as the limit kwarg.
+        assert calls["recent"] == ("OID", 7, db)
+
+    def test_degrades_to_zero_filled_on_fresh_ontology(self):
+        """With no revision_meta / ontology_classes collections, the
+        composite still returns a stable, fully-populated shape."""
+        db = MagicMock()
+        db.has_collection.return_value = False
+        out = metrics.revisions_dashboard("OID", db=db)
+        assert out["ontology_id"] == "OID"
+        assert out["summary"]["total"] == 0
+        assert out["pending_inbox"] == 0
+        assert out["recent"] == []
+        assert out["decay"]["decayed_classes"] == 0
+        assert out["decay"]["last_decay_run_at"] is None

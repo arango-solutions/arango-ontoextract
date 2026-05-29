@@ -27,6 +27,7 @@ from app.api.quality import (
     quality_for_ontology,
     quality_history_for_ontology,
     quality_recall,
+    revisions_metrics,
 )
 
 
@@ -227,4 +228,34 @@ class TestQualityRoutes:
             pytest.raises(HTTPException) as exc,
         ):
             await quality_recall(body)
+        assert exc.value.status_code == 500
+
+    @pytest.mark.asyncio
+    async def test_revisions_metrics_forwards_and_returns_payload(self):
+        """PRD §7.7a — the route delegates to the metrics aggregator and
+        returns its payload, forwarding ``recent_limit``."""
+        payload = {
+            "ontology_id": "onto1",
+            "summary": {"total": 3},
+            "decay": {"decayed_classes": 2},
+            "pending_inbox": 1,
+            "recent": [{"_key": "r1"}],
+        }
+        with (
+            patch("app.api.quality.get_db", return_value=MagicMock()) as mock_db,
+            patch("app.api.quality.revisions_dashboard", return_value=payload) as mock_dash,
+        ):
+            result = await revisions_metrics("onto1", recent_limit=5)
+        assert result == payload
+        assert mock_dash.call_args.kwargs["recent_limit"] == 5
+        assert mock_dash.call_args.kwargs["db"] is mock_db.return_value
+
+    @pytest.mark.asyncio
+    async def test_revisions_metrics_unexpected_failure_returns_500(self):
+        with (
+            patch("app.api.quality.get_db", return_value=MagicMock()),
+            patch("app.api.quality.revisions_dashboard", side_effect=RuntimeError("boom")),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await revisions_metrics("onto1")
         assert exc.value.status_code == 500

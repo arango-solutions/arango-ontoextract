@@ -1079,251 +1079,66 @@ class TestGetProvenance:
 
 
 class TestExportOntology:
-    @patch("app.mcp.tools.export.run_aql")
-    @patch("app.mcp.tools.export.get_db")
-    def test_no_entities(self, mock_get_db, mock_run_aql):
+    """The MCP ``export_ontology`` tool delegates to
+    ``app.services.export.export_ontology`` (the single source of truth for
+    OWL/RDF graph building). These tests assert the delegation contract;
+    the graph-content behavior itself is covered by ``test_export.py``.
+    """
+
+    def test_unsupported_format_rejected_before_delegation(self):
         from app.mcp.tools.export import register_export_tools
 
-        db = MagicMock()
-        db.has_collection.return_value = True
-        mock_get_db.return_value = db
-        # classes, 3 property collections, rdfs_range_class, rdfs_domain (then early return)
-        mock_run_aql.side_effect = [
-            iter([]),
-            iter([]),
-            iter([]),
-            iter([]),
-            iter([]),
-            iter([]),
-        ]
-
-        tools = _capture_tools(register_export_tools)
-        result = tools["export_ontology"]("empty-onto")
-        assert "No entities found" in result
-
-    @patch("app.mcp.tools.export.run_aql")
-    @patch("app.mcp.tools.export.get_db")
-    def test_unsupported_format(self, mock_get_db, mock_run_aql):
-        from app.mcp.tools.export import register_export_tools
-
-        db = MagicMock()
-        mock_get_db.return_value = db
-
-        tools = _capture_tools(register_export_tools)
-        result = tools["export_ontology"]("o1", format="xml")
+        with patch("app.mcp.tools.export.export_svc.export_ontology") as mock_export:
+            tools = _capture_tools(register_export_tools)
+            result = tools["export_ontology"]("o1", format="xml")
         assert "Unsupported format" in result
+        mock_export.assert_not_called()
 
-    @patch("app.mcp.tools.export.run_aql")
-    @patch("app.mcp.tools.export.get_db")
-    def test_turtle_export(self, mock_get_db, mock_run_aql):
+    def test_turtle_delegates_with_turtle_format(self):
         from app.mcp.tools.export import register_export_tools
 
-        db = MagicMock()
-        db.has_collection.return_value = True
-        mock_get_db.return_value = db
-
-        classes = [
-            {
-                "_key": "c1",
-                "_id": "ontology_classes/c1",
-                "label": "Animal",
-                "uri": "http://example.org/Animal",
-                "description": "An animal",
-            }
-        ]
-        properties = [
-            {
-                "_key": "p1",
-                "_id": "ontology_properties/p1",
-                "label": "hasName",
-                "uri": "http://example.org/hasName",
-                "description": "Name property",
-                "property_type": "datatype",
-            }
-        ]
-        mock_run_aql.side_effect = [
-            iter(classes),
-            iter(properties),
-            iter([]),
-            iter([]),
-            iter([]),  # rdfs_range_class
-            iter([]),  # rdfs_domain
-            iter([]),  # subclass_of
-        ]
-
-        tools = _capture_tools(register_export_tools)
-        result = tools["export_ontology"]("o1", format="turtle")
+        with patch(
+            "app.mcp.tools.export.export_svc.export_ontology",
+            return_value="@prefix owl: <...> . :Animal a owl:Class .",
+        ) as mock_export:
+            tools = _capture_tools(register_export_tools)
+            result = tools["export_ontology"]("o1", format="turtle")
+        mock_export.assert_called_once_with("o1", fmt="turtle")
         assert "Animal" in result
-        assert "hasName" in result
 
-    @patch("app.mcp.tools.export.run_aql")
-    @patch("app.mcp.tools.export.get_db")
-    def test_jsonld_export(self, mock_get_db, mock_run_aql):
+    def test_jsonld_maps_to_rdflib_json_ld_format(self):
         from app.mcp.tools.export import register_export_tools
 
-        db = MagicMock()
-        db.has_collection.return_value = True
-        mock_get_db.return_value = db
+        with patch(
+            "app.mcp.tools.export.export_svc.export_ontology",
+            return_value='{"@graph": []}',
+        ) as mock_export:
+            tools = _capture_tools(register_export_tools)
+            result = tools["export_ontology"]("o1", format="json-ld")
+        mock_export.assert_called_once_with("o1", fmt="json-ld")
+        # Whatever the service returns is passed through unchanged.
+        assert json.loads(result) == {"@graph": []}
 
-        classes = [
-            {
-                "_key": "c1",
-                "_id": "ontology_classes/c1",
-                "label": "Thing",
-                "uri": "http://example.org/Thing",
-                "description": None,
-            }
-        ]
-        mock_run_aql.side_effect = [
-            iter(classes),
-            iter([]),
-            iter([]),
-            iter([]),
-            iter([]),
-            iter([]),
-            iter([]),
-        ]
-
-        tools = _capture_tools(register_export_tools)
-        result = tools["export_ontology"]("o1", format="json-ld")
-        # Should be valid JSON-LD
-        parsed = json.loads(result)
-        assert isinstance(parsed, (dict, list))
-
-    @patch("app.mcp.tools.export.run_aql")
-    @patch("app.mcp.tools.export.get_db")
-    def test_object_property(self, mock_get_db, mock_run_aql):
+    def test_jsonld_alias_normalizes(self):
         from app.mcp.tools.export import register_export_tools
 
-        db = MagicMock()
-        db.has_collection.return_value = True
-        mock_get_db.return_value = db
+        with patch(
+            "app.mcp.tools.export.export_svc.export_ontology", return_value="{}"
+        ) as mock_export:
+            tools = _capture_tools(register_export_tools)
+            tools["export_ontology"]("o1", format="jsonld")
+        mock_export.assert_called_once_with("o1", fmt="json-ld")
 
-        classes = [
-            {"_key": "c1", "_id": "ontology_classes/c1", "label": "A", "uri": "http://ex.org/A"}
-        ]
-        properties = [
-            {
-                "_key": "p1",
-                "_id": "ontology_properties/p1",
-                "label": "relatesTo",
-                "uri": "http://ex.org/relatesTo",
-                "property_type": "object",
-            }
-        ]
-        mock_run_aql.side_effect = [
-            iter(classes),
-            iter(properties),
-            iter([]),
-            iter([]),
-            iter([]),
-            iter([]),
-            iter([]),
-        ]
-
-        tools = _capture_tools(register_export_tools)
-        result = tools["export_ontology"]("o1", format="turtle")
-        assert "ObjectProperty" in result
-
-    @patch("app.mcp.tools.export.get_db", side_effect=Exception("crash"))
-    def test_error(self, mock_get_db):
+    def test_service_failure_surfaced_as_message(self):
         from app.mcp.tools.export import register_export_tools
 
-        tools = _capture_tools(register_export_tools)
-        result = tools["export_ontology"]("o1")
+        with patch(
+            "app.mcp.tools.export.export_svc.export_ontology",
+            side_effect=Exception("crash"),
+        ):
+            tools = _capture_tools(register_export_tools)
+            result = tools["export_ontology"]("o1")
         assert "Export failed" in result
-
-    @patch("app.mcp.tools.export.run_aql")
-    @patch("app.mcp.tools.export.get_db")
-    def test_subclass_edges_in_export(self, mock_get_db, mock_run_aql):
-        from app.mcp.tools.export import register_export_tools
-
-        db = MagicMock()
-        db.has_collection.return_value = True
-        mock_get_db.return_value = db
-
-        classes = [
-            {
-                "_key": "parent",
-                "_id": "ontology_classes/parent",
-                "label": "Parent",
-                "uri": "http://ex.org/Parent",
-            },
-            {
-                "_key": "child",
-                "_id": "ontology_classes/child",
-                "label": "Child",
-                "uri": "http://ex.org/Child",
-            },
-        ]
-        edges = [{"from_id": "ontology_classes/child", "to_id": "ontology_classes/parent"}]
-        mock_run_aql.side_effect = [
-            iter(classes),
-            iter([]),
-            iter([]),
-            iter([]),
-            iter([]),
-            iter([]),
-            iter(edges),
-        ]
-
-        tools = _capture_tools(register_export_tools)
-        result = tools["export_ontology"]("o1", format="turtle")
-        assert "subClassOf" in result
-
-    @patch("app.mcp.tools.export.run_aql")
-    @patch("app.mcp.tools.export.get_db")
-    def test_pgt_object_property_domain_and_range_in_turtle(self, mock_get_db, mock_run_aql):
-        from app.mcp.tools.export import register_export_tools
-
-        db = MagicMock()
-        db.has_collection.return_value = True
-        mock_get_db.return_value = db
-
-        classes = [
-            {
-                "_key": "c1",
-                "_id": "ontology_classes/c1",
-                "label": "DomainCls",
-                "uri": "http://ex.org/DomainCls",
-                "description": None,
-            }
-        ]
-        obj_prop = {
-            "_key": "c1_rel",
-            "_id": "ontology_object_properties/c1_rel",
-            "label": "pointsTo",
-            "uri": "http://ex.org/pointsTo",
-            "description": "",
-        }
-        range_rows = [
-            {
-                "from_id": "ontology_object_properties/c1_rel",
-                "uri": "http://ex.org/TargetCls",
-            }
-        ]
-        domain_rows = [
-            {
-                "from_id": "ontology_object_properties/c1_rel",
-                "to_id": "ontology_classes/c1",
-            }
-        ]
-        mock_run_aql.side_effect = [
-            iter(classes),
-            iter([]),
-            iter([obj_prop]),
-            iter([]),
-            iter(range_rows),
-            iter(domain_rows),
-            iter([]),
-        ]
-
-        tools = _capture_tools(register_export_tools)
-        result = tools["export_ontology"]("o1", format="turtle")
-        assert "ObjectProperty" in result
-        assert "rdfs:domain" in result
-        assert "rdfs:range" in result
-        assert "TargetCls" in result
 
 
 # ===========================================================================

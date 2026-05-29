@@ -11,6 +11,7 @@ from typing import Any, cast
 from arango.database import StandardDatabase
 
 from app.db.client import get_db
+from app.db.ontology_collections import PROPERTY_VERTEX_COLLECTIONS
 from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import run_aql
 from app.services.temporal import create_version, expire_entity, update_entity
@@ -172,11 +173,7 @@ def create_property(
     )
 
 
-_PROPERTY_COLLECTIONS = [
-    "ontology_properties",
-    "ontology_object_properties",
-    "ontology_datatype_properties",
-]
+_PROPERTY_COLLECTIONS = list(PROPERTY_VERTEX_COLLECTIONS)
 
 
 def get_property(

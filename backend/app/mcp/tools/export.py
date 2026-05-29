@@ -13,82 +13,12 @@ from typing import Any, cast
 from mcp.server.fastmcp import FastMCP
 
 from app.db.client import get_db
+from app.db.ontology_collections import PROPERTY_VERTEX_COLLECTIONS
 from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import doc_get, run_aql
+from app.services import export as export_svc
 
 log = logging.getLogger(__name__)
-
-_PROPERTY_VERTEX_COLLECTIONS = (
-    "ontology_properties",
-    "ontology_object_properties",
-    "ontology_datatype_properties",
-)
-
-
-def _load_export_property_vertices(db: Any, ontology_id: str) -> list[dict[str, Any]]:
-    """Load current property vertices from legacy + PGT collections (ADR-006)."""
-    rows: list[dict[str, Any]] = []
-    for col in _PROPERTY_VERTEX_COLLECTIONS:
-        if not db.has_collection(col):
-            continue
-        part = list(
-            run_aql(
-                db,
-                f"FOR p IN {col} FILTER p.ontology_id == @oid AND p.expired == @never RETURN p",
-                bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
-            )
-        )
-        rows.extend(part)
-    return rows
-
-
-def _object_property_range_uris(db: Any, ontology_id: str) -> dict[str, str]:
-    """Map property document _id -> range class URI from rdfs_range_class edges."""
-    if not db.has_collection("rdfs_range_class"):
-        return {}
-    out: dict[str, str] = {}
-    for row in run_aql(
-        db,
-        """\
-FOR e IN rdfs_range_class
-  FILTER e.ontology_id == @oid AND e.expired == @never
-  LET t = DOCUMENT(e._to)
-  FILTER t != null
-  RETURN {from_id: e._from, uri: t.uri}""",
-        bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
-    ):
-        fid = row.get("from_id")
-        if fid:
-            out[str(fid)] = str(row.get("uri") or "")
-    return out
-
-
-def _rdfs_domain_edges(db: Any, ontology_id: str) -> list[dict[str, str]]:
-    if not db.has_collection("rdfs_domain"):
-        return []
-    return list(
-        run_aql(
-            db,
-            """\
-FOR e IN rdfs_domain
-  FILTER e.ontology_id == @oid AND e.expired == @never
-  RETURN {from_id: e._from, to_id: e._to}""",
-            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
-        )
-    )
-
-
-def _property_vertex_kind(prop: dict[str, Any]) -> str:
-    """Infer owl:ObjectProperty vs DatatypeProperty from source collection / fields."""
-    explicit = prop.get("property_type")
-    if explicit in ("object", "datatype"):
-        return str(explicit)
-    pid = prop.get("_id", "")
-    if isinstance(pid, str) and "ontology_object_properties" in pid:
-        return "object"
-    if isinstance(pid, str) and "ontology_datatype_properties" in pid:
-        return "datatype"
-    return "datatype"
 
 
 def register_export_tools(mcp: FastMCP) -> None:
@@ -152,133 +82,23 @@ def register_export_tools(mcp: FastMCP) -> None:
     ) -> str:
         """Export an ontology as an OWL Turtle or JSON-LD string.
 
-        Queries all current classes and properties for the ontology, builds
-        an rdflib Graph, and serializes to the requested format.
+        Delegates to :func:`app.services.export.export_ontology`, the single
+        source of truth for OWL/RDF graph building. That service is
+        registry-URI aware and emits ``owl:imports`` and ``owl:Restriction``
+        triples that this tool previously omitted, so MCP consumers now get
+        the same, more complete output as the HTTP export endpoint.
 
         Args:
             ontology_id: The ontology identifier.
             format: Export format — "turtle" (default) or "json-ld".
         """
+        fmt = format.lower().strip()
+        if fmt not in ("turtle", "json-ld", "jsonld"):
+            return f"Unsupported format '{format}'. Use 'turtle' or 'json-ld'."
+
+        rdflib_format = "turtle" if fmt == "turtle" else "json-ld"
         try:
-            from rdflib import OWL, RDF, RDFS, Graph, Literal, Namespace, URIRef
-
-            db = get_db()
-
-            fmt = format.lower().strip()
-            if fmt not in ("turtle", "json-ld", "jsonld"):
-                return f"Unsupported format '{format}'. Use 'turtle' or 'json-ld'."
-
-            rdflib_format = "turtle" if fmt == "turtle" else "json-ld"
-
-            from rdflib.namespace import XSD
-
-            classes: list[dict[str, Any]] = []
-            if db.has_collection("ontology_classes"):
-                classes = list(
-                    run_aql(
-                        db,
-                        """\
-FOR cls IN ontology_classes
-  FILTER cls.ontology_id == @oid
-  FILTER cls.expired == @never
-  RETURN cls""",
-                        bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
-                    )
-                )
-
-            properties = _load_export_property_vertices(db, ontology_id)
-            range_by_prop = _object_property_range_uris(db, ontology_id)
-            domain_edges = _rdfs_domain_edges(db, ontology_id)
-
-            if not classes and not properties:
-                return f"No entities found for ontology '{ontology_id}'."
-
-            ns = Namespace("http://example.org/ontology#")
-            g = Graph()
-            g.bind("owl", OWL)
-            g.bind("rdfs", RDFS)
-            g.bind("rdf", RDF)
-            g.bind("xsd", XSD)
-            g.bind("ont", ns)
-
-            ont_node = URIRef(f"http://example.org/ontology/{ontology_id}")
-            g.add((ont_node, RDF.type, OWL.Ontology))
-            g.add((ont_node, RDFS.label, Literal(ontology_id)))
-
-            subclass_edges: list[dict[str, Any]] = []
-            if db.has_collection("subclass_of"):
-                subclass_edges = list(
-                    run_aql(
-                        db,
-                        """\
-FOR e IN subclass_of
-  FILTER e.expired == @never
-  RETURN {from_id: e._from, to_id: e._to}""",
-                        bind_vars={"never": NEVER_EXPIRES},
-                    )
-                )
-
-            class_id_to_uri = {}
-            for cls in classes:
-                cls_uri = URIRef(cls.get("uri", f"http://example.org/ontology#{cls['_key']}"))
-                class_id_to_uri[cls["_id"]] = cls_uri
-                g.add((cls_uri, RDF.type, OWL.Class))
-                if cls.get("label"):
-                    g.add((cls_uri, RDFS.label, Literal(cls["label"])))
-                if cls.get("description"):
-                    g.add((cls_uri, RDFS.comment, Literal(cls["description"])))
-
-            for edge in subclass_edges:
-                child_uri = class_id_to_uri.get(edge["from_id"])
-                parent_uri = class_id_to_uri.get(edge["to_id"])
-                if child_uri and parent_uri:
-                    g.add((child_uri, RDFS.subClassOf, parent_uri))
-
-            prop_id_to_uri: dict[str, URIRef] = {}
-            for prop in properties:
-                prop_uri = URIRef(prop.get("uri", f"http://example.org/ontology#{prop['_key']}"))
-                prop_id_to_uri[prop["_id"]] = prop_uri
-                kind = _property_vertex_kind(prop)
-                if kind == "object":
-                    g.add((prop_uri, RDF.type, OWL.ObjectProperty))
-                else:
-                    g.add((prop_uri, RDF.type, OWL.DatatypeProperty))
-                if prop.get("label"):
-                    g.add((prop_uri, RDFS.label, Literal(prop["label"])))
-                if prop.get("description"):
-                    g.add((prop_uri, RDFS.comment, Literal(prop["description"])))
-                range_uri = range_by_prop.get(prop["_id"], "").strip()
-                if kind == "object" and range_uri:
-                    g.add((prop_uri, RDFS.range, URIRef(range_uri)))
-                elif kind == "datatype":
-                    dt = (prop.get("range_datatype") or prop.get("range") or "xsd:string").strip()
-                    if dt.startswith("http://") or dt.startswith("https://"):
-                        g.add((prop_uri, RDFS.range, URIRef(dt)))
-                    elif dt.lower().startswith("xsd:"):
-                        local = dt.split(":", 1)[-1]
-                        xsd_term = getattr(XSD, local, XSD.string)
-                        g.add((prop_uri, RDFS.range, xsd_term))
-                    else:
-                        g.add((prop_uri, RDFS.range, XSD.string))
-
-            for edge in domain_edges:
-                pu = prop_id_to_uri.get(edge["from_id"])
-                du = class_id_to_uri.get(edge["to_id"])
-                if pu and du:
-                    g.add((pu, RDFS.domain, du))
-
-            serialized: str = g.serialize(format=rdflib_format)
-            log.info(
-                "ontology exported",
-                extra={
-                    "ontology_id": ontology_id,
-                    "format": rdflib_format,
-                    "classes": len(classes),
-                    "properties": len(properties),
-                    "triples": len(g),
-                },
-            )
-            return serialized
+            return export_svc.export_ontology(ontology_id, fmt=rdflib_format)
         except Exception as exc:
             log.exception("export_ontology failed")
             return f"Export failed: {exc}"
@@ -286,12 +106,7 @@ FOR e IN subclass_of
 
 def _find_entity(db: Any, key: str) -> dict[str, Any] | None:
     """Find an entity by key in class and property vertex collections."""
-    for collection in (
-        "ontology_classes",
-        "ontology_properties",
-        "ontology_object_properties",
-        "ontology_datatype_properties",
-    ):
+    for collection in ("ontology_classes", *PROPERTY_VERTEX_COLLECTIONS):
         if not db.has_collection(collection):
             continue
         results = list(

@@ -448,6 +448,7 @@ clients that only consume direct dependents; new clients should read
 | `GET` | `/api/v1/quality/{ontology_id}/evaluation` | Qualitative strengths / weaknesses | Yes |
 | `GET` | `/api/v1/quality/{ontology_id}/class-scores` | Per-class faithfulness and semantic validity | Yes |
 | `GET` | `/api/v1/quality/{ontology_id}/history?limit=50` | Timestamped quality snapshots for trend views (Q.2) | Yes |
+| `GET` | `/api/v1/quality/{ontology_id}/revisions?recent_limit=20` | Belief-revision metrics tile: verdict/action/status distribution, decay state, pending inbox count, recent timeline (§7.7a, FR-13.26) | Yes |
 | `POST` | `/api/v1/quality/recall` | Compare an ontology to a gold-standard OWL/TTL document (Q.4) | Yes |
 
 **Note:** `GET /api/v1/quality/summary` was removed; use `GET /api/v1/quality/dashboard` and read the `summary` field.

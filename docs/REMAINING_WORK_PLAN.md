@@ -1159,6 +1159,23 @@ We have most of the substrate already (temporal versioning, provenance, multi-si
 
 ---
 
+### Stream 14: Code Quality & Modularity (tech debt)
+
+**Source:** May 2026 code-quality audit (duplicate code, oversized files, orphaned code, hardwiring, security, doc drift).
+**Priority:** P2 — no user-facing behavior change; reduces maintenance risk and unblocks the `modularity-and-structure` file-size cap.
+
+| # | Task | Type | Status | Description |
+|---|------|------|--------|-------------|
+| CQ.1 | Consolidate score/confidence color thresholds | Frontend | **DONE** | `frontend/src/lib/thresholds.ts` is now the single source for confidence (0.7/0.5) and health (70/50) bands + null-safe text/bg helpers. `SummaryCards`/`MetricCards` use the helpers; `GraphCanvas`, `OntologyCard`, `workspace/page.tsx` share the constants (kept their own output formats). `thresholds.test.ts` added. The confidence *lens* palette stays separate by design. |
+| CQ.2 | Wire orphaned `belief_revision_metrics` | Backend | **DONE** | Was a documented-but-unimplemented feature (PRD §7.7a). Added `revisions_dashboard()` aggregator + `GET /api/v1/quality/{ontology_id}/revisions`, tests, and the api-reference row. **Follow-up:** frontend dashboard tile to consume it (FR-13.26). |
+| CQ.3 | Split `backend/app/api/ontology.py` (3485 lines) | Backend | **PLANNED** | Convert to package `app/api/ontology/` whose `__init__.py` builds the prefixed `router` and `include_router`s cohesive sub-routers: `library`, `entities_classes`, `entities_edges`, `entities_properties`, `effective`, `imports`, `catalog`, `schema`, `misc`; shared helpers/deps in `_shared.py`. **Risk:** ~8 test files patch `app.api.ontology.<name>` directly (`get_db`, `run_aql`, `registry_repo`, `ontology_repo`, `paginate`, `export_svc`, `schema_diff_svc`, `constraints_repo`, `import_from_file`, `_import_jobs`) + import endpoint fns directly; each patch target/import must move to (or be re-exported for) the new owning submodule. Do as its own incremental PR, one sub-router per slice, running the full ontology suite after each. |
+| CQ.4 | Remaining duplicate-code consolidations | Both | PARTIAL | (a) **DONE** — `documentKey()` promoted to `frontend/src/lib/arangoId.ts` (re-exported from `graphCanvasEdges.ts` for the canvas imports); inline `_from/_to.split("/")` duplications migrated in `GraphCanvas`, `ClassHierarchy`, `workspace/page.tsx`; `arangoId.test.ts` added. Legacy routes (`/library`, `/ontology/edit`) and `AssetExplorer`'s label-humanization line left as-is. (b) property/edge collection allowlists (ADR-006 triple) → one shared constant; (c) **DONE** — MCP `export_ontology` tool now delegates to `app.services.export.export_ontology` (single source of truth: registry-aware URIs + `owl:imports` + `owl:Restriction`); removed ~120 lines of thinner duplicate graph-building + its 4 helpers; MCP export tests rewritten to assert delegation. (d) **DONE** — `workspace/page.tsx` `QualityReportSection` now uses the shared `buildQualityReportMetrics()` (previously imported-but-unused) instead of an inline copy; this also fixes a latent bug where completeness/connectivity (already 0–100) were multiplied by 100 again. Radar / `SCHEMA_METRIC_LABELS` remain single-use in `QualityReportOverlay` (not duplicated). |
+| CQ.5 | Remaining orphaned code | Frontend | DEFERRED to feature PR | Investigation (2026-05): `EditableLabel` and `ReparentSelect` are **ready-to-wire missing features**, not obsolete — neither class rename nor class reparent is wired through any sanctioned context-menu/DnD path today, and both backend endpoints already exist (`PUT /{ontology_id}/classes/{class_key}` for rename, `POST /{ontology_id}/edges` for subclass_of reparent). Per wiring-over-deletion they must be **wired, not deleted**. Recommended path (its own scoped PR, like CQ.3): inline class rename via `EditableLabel` in the class detail-panel title (double-click is the sanctioned "inline edit where safe" gesture, rule 0/preferred-patterns); class reparent via DnD class→class as the **primary** path (rule 5) with `ReparentSelect` offered as a **secondary** duplicate affordance (rule 2) — both routed through the shared optimistic-curation helper (rule 17) and shipping the full rule-22 checklist (selection handler, detail-panel control, context-menu entry, legend if needed, optimistic update, tests). `useApiCall` is a generic fetch hook with **zero adoption and no test** (not a missing feature, so not provably obsolete → not deleted); fold adoption into the same PR (the rename/reparent handlers are natural first consumers) or a later cleanup. No code change in this CQ batch: doing it right is a feature, not a consolidation. |
+
+**Exit Criteria:** No source file over the `modularity-and-structure` caps; no duplicated threshold/allowlist/key-extraction logic; every orphan either wired or removed with rationale.
+
+---
+
 ## Recommended Execution Order (refreshed v0.4.0-dev)
 
 Streams 1, 2, 3, 5, 6, 7, 11, 13 and the Sigma.js core of Stream 8 are
@@ -1185,6 +1202,7 @@ POST-v1.0:
   - Stream 8 editor panels (V.3 semantic zoom, V.4 edge bundling, V.6 property
     matrix, V.7 restriction editor, V.8 namespace manager, V.9 validation console)
   - Stream 9 (Unified Storage spike)
+  - Stream 14 (Code Quality: CQ.3 ontology.py split, CQ.4 dup consolidations, CQ.5 orphans)
   - Legacy-route removal (/curation, /ontology/edit, /entity-resolution)
 ```
 

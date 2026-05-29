@@ -1,4 +1,7 @@
+import { documentKey } from "@/lib/arangoId";
 import type { OntologyEdge } from "@/types/curation";
+
+export { documentKey };
 
 /** Property→class edges: not drawn as class↔class links (PGT / legacy). */
 export const FILTERED_FROM_CLASS_GRAPH = new Set(["rdfs_domain", "has_property"]);
@@ -8,10 +11,6 @@ export const RDFS_RANGE_CLASS_LABEL_FALLBACK = "owl:ObjectProperty";
 
 export function getEdgeType(edge: OntologyEdge): string {
   return ((edge as unknown as Record<string, unknown>).edge_type ?? edge.type) as string;
-}
-
-export function documentKey(fullId: string): string {
-  return fullId.split("/").pop() ?? fullId;
 }
 
 export function isRelationshipEdgeStyle(edgeType: string): boolean {

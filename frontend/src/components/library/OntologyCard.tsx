@@ -1,5 +1,6 @@
 "use client";
 
+import { HEALTH_HIGH, HEALTH_MEDIUM } from "@/lib/thresholds";
 import type { OntologyRegistryEntry } from "@/types/curation";
 
 interface OntologyCardProps {
@@ -25,8 +26,8 @@ const STATUS_CONFIG: Record<
 };
 
 function healthScoreColor(score: number): { bg: string; text: string; ring: string } {
-  if (score >= 70) return { bg: "bg-green-50", text: "text-green-700", ring: "ring-green-200" };
-  if (score >= 50) return { bg: "bg-yellow-50", text: "text-yellow-700", ring: "ring-yellow-200" };
+  if (score >= HEALTH_HIGH) return { bg: "bg-green-50", text: "text-green-700", ring: "ring-green-200" };
+  if (score >= HEALTH_MEDIUM) return { bg: "bg-yellow-50", text: "text-yellow-700", ring: "ring-yellow-200" };
   return { bg: "bg-red-50", text: "text-red-700", ring: "ring-red-200" };
 }
 

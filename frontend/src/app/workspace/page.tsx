@@ -35,6 +35,7 @@ import {
   invalidateOntologyKind,
 } from "@/lib/ontologyDataCache";
 import { withBasePath } from "@/lib/base-path";
+import { documentKey } from "@/lib/arangoId";
 import {
   buildQualityReportMetrics,
   formatOntologyHealthSummary,
@@ -508,8 +509,8 @@ function WorkspacePageInner() {
       const edgeType = ((edge as unknown as Record<string, unknown>).edge_type ?? edge.type) as string;
       if (edgeType !== "rdfs_domain") continue;
 
-      const propKey = edge._from.split("/").pop() ?? edge._from;
-      const classKey = edge._to.split("/").pop() ?? edge._to;
+      const propKey = documentKey(edge._from);
+      const classKey = documentKey(edge._to);
       const prop = propByKey.get(propKey);
       if (!prop) continue;
 
@@ -2126,35 +2127,17 @@ function PipelineSplitPane({
 }
 
 function QualityReportSection({ report }: { report: Record<string, unknown> }) {
-  const metrics: { label: string; value: string; color?: string }[] = [];
+  // Single source of truth for quality-metric rows (labels, percent vs ratio
+  // formatting, and threshold colors). Avoids the prior inline copy that
+  // double-scaled the already-0–100 completeness/connectivity values.
+  const metrics = buildQualityReportMetrics(report);
 
-  const fmt = (v: unknown, pct = false) => {
-    if (v == null) return "—";
-    const n = Number(v);
-    if (isNaN(n)) return String(v);
-    return pct ? `${(n * 100).toFixed(1)}%` : n.toFixed(2);
-  };
-
-  const scoreColor = (v: unknown) => {
-    const n = Number(v);
-    if (isNaN(n)) return "text-gray-600";
-    if (n >= 0.7) return "text-green-600";
-    if (n >= 0.5) return "text-yellow-600";
-    return "text-red-600";
-  };
-
-  if (report.health_score != null) metrics.push({ label: "Health Score", value: fmt(report.health_score, true), color: scoreColor(report.health_score) });
-  if (report.avg_confidence != null) metrics.push({ label: "Avg Confidence", value: fmt(report.avg_confidence, true), color: scoreColor(report.avg_confidence) });
-  if (report.avg_faithfulness != null) metrics.push({ label: "Faithfulness", value: fmt(report.avg_faithfulness, true), color: scoreColor(report.avg_faithfulness) });
-  if (report.avg_semantic_validity != null) metrics.push({ label: "Semantic Validity", value: fmt(report.avg_semantic_validity, true), color: scoreColor(report.avg_semantic_validity) });
-  if (report.completeness != null) metrics.push({ label: "Completeness", value: fmt(report.completeness, true) });
-  if (report.connectivity != null) metrics.push({ label: "Connectivity", value: fmt(report.connectivity, true) });
-  if (report.orphan_count != null) metrics.push({ label: "Orphan Classes", value: String(report.orphan_count) });
-  if (report.has_cycles != null) metrics.push({ label: "Has Cycles", value: report.has_cycles ? "Yes" : "No", color: report.has_cycles ? "text-red-600" : "text-green-600" });
-  if (report.relationship_count != null) metrics.push({ label: "Relationships", value: String(report.relationship_count) });
-  if (report.estimated_cost != null) metrics.push({ label: "Extraction Cost", value: `$${Number(report.estimated_cost).toFixed(4)}` });
-
-  if (metrics.length === 0) return null;
+  // The builder emits one placeholder row when nothing is displayable; hide
+  // the whole section in that case (preserves the prior "render nothing" UX).
+  const hasRealMetrics =
+    metrics.length > 1 ||
+    (metrics.length === 1 && metrics[0].label !== "Quality report");
+  if (!hasRealMetrics) return null;
 
   return (
     <div className="border-t border-gray-100 pt-3">

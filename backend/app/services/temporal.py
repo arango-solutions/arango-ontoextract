@@ -14,6 +14,7 @@ from arango.database import StandardDatabase
 
 from app.config import settings
 from app.db.client import get_db
+from app.db.ontology_collections import PROPERTY_VERTEX_COLLECTIONS
 from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import run_aql
 
@@ -421,17 +422,11 @@ FOR doc IN @@col
 # classes and properties.
 _ONTOLOGY_VERTEX_COLLECTIONS = [
     "ontology_classes",
-    "ontology_properties",
-    "ontology_object_properties",
-    "ontology_datatype_properties",
+    *PROPERTY_VERTEX_COLLECTIONS,
     "ontology_constraints",
 ]
 
-_PROPERTY_VERTEX_COLLECTIONS = [
-    "ontology_properties",
-    "ontology_object_properties",
-    "ontology_datatype_properties",
-]
+_PROPERTY_VERTEX_COLLECTIONS = list(PROPERTY_VERTEX_COLLECTIONS)
 
 # Vertex collections fetched separately into the snapshot payload's
 # ``constraints`` bucket (vs ``classes`` or ``properties``).

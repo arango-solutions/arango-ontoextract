@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { api, ApiError, fetchAllPages } from "@/lib/api-client";
+import { documentKey } from "@/lib/arangoId";
 import type { OntologyClass, OntologyEdge } from "@/types/curation";
 
 interface ClassHierarchyProps {
@@ -24,8 +25,8 @@ function buildTree(
   for (const edge of edges) {
     const edgeType = (edge as unknown as Record<string, unknown>).edge_type ?? edge.type;
     if (edgeType !== "subclass_of") continue;
-    const childKey = edge._from.split("/").pop() ?? edge._from;
-    const parentKey = edge._to.split("/").pop() ?? edge._to;
+    const childKey = documentKey(edge._from);
+    const parentKey = documentKey(edge._to);
     if (!childMap.has(parentKey)) childMap.set(parentKey, []);
     childMap.get(parentKey)!.push(childKey);
     hasParent.add(childKey);

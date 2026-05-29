@@ -1,23 +1,10 @@
 "use client";
 
+import { confidenceColor, healthScoreColor } from "@/lib/thresholds";
 import type { QualitySummary } from "@/types/curation";
 
 interface Props {
   summary: QualitySummary;
-}
-
-function healthColor(score: number | null): string {
-  if (score === null) return "text-gray-400";
-  if (score >= 70) return "text-green-600";
-  if (score >= 50) return "text-yellow-600";
-  return "text-red-600";
-}
-
-function confidenceColor(val: number | null): string {
-  if (val === null) return "text-gray-400";
-  if (val >= 0.7) return "text-green-600";
-  if (val >= 0.5) return "text-yellow-600";
-  return "text-red-600";
 }
 
 function Card({
@@ -55,7 +42,7 @@ export default function SummaryCards({ summary }: Props) {
       <Card
         label="Avg Health Score"
         value={summary.avg_health_score !== null ? String(summary.avg_health_score) : "N/A"}
-        colorClass={healthColor(summary.avg_health_score)}
+        colorClass={healthScoreColor(summary.avg_health_score)}
         subtitle="0-100 composite"
       />
       <Card

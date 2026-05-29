@@ -31,6 +31,7 @@ from typing import Any, cast
 
 from arango.database import StandardDatabase
 
+from app.db.ontology_collections import PROPERTY_VERTEX_COLLECTIONS
 from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import run_aql
 
@@ -47,9 +48,7 @@ log = logging.getLogger(__name__)
 # computing how many entities would be soft-expired.
 _VERTEX_COLLECTIONS: tuple[str, ...] = (
     "ontology_classes",
-    "ontology_properties",
-    "ontology_object_properties",
-    "ontology_datatype_properties",
+    *PROPERTY_VERTEX_COLLECTIONS,
     "ontology_constraints",
 )
 
