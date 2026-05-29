@@ -2,6 +2,13 @@
 
 A comprehensive walkthrough for using the Arango-OntoExtract (AOE) platform — from setup to production ontology management.
 
+> **UI-first.** AOE is a web application — the primary way to do everything
+> below is the **workspace at http://localhost:3000**. Each task section opens
+> with the **workspace UI** gesture; the `curl` examples that follow are the
+> equivalent REST calls for **automation and scripting**, not a requirement for
+> day-to-day use. The interaction contract on the canvas is *left-click selects*
+> (safe, read-only), *right-click acts* (the menus are where the actions live).
+
 ---
 
 ## Table of Contents
@@ -83,6 +90,11 @@ The migration runner creates all required collections, indexes, named graphs, an
 
 AOE ingests PDF, DOCX, and Markdown files. Each upload triggers an async processing pipeline that parses, chunks, and embeds the content.
 
+> **In the workspace UI:** drag a PDF / DOCX / PPTX / Markdown file into the
+> **asset explorer** (left pane). AOE parses, chunks, and embeds it
+> automatically — watch the document's status badge advance to **ready**. The
+> API calls below are the automation equivalent.
+
 ### Step-by-Step
 
 1. **Via API** — upload a file with `POST /api/v1/documents/upload`:
@@ -140,6 +152,11 @@ AOE computes a SHA-256 hash of each uploaded file. Re-uploading an identical fil
 ## 3. Run Extraction
 
 Once a document is in `ready` status, trigger LLM-driven ontology extraction.
+
+> **In the workspace UI:** drag the document from the asset explorer onto the
+> **graph canvas** (or right-click it → **Extract**) to start the pipeline, then
+> watch progress live on the **pipeline DAG**. The API calls below are the
+> automation equivalent.
 
 ### Trigger Extraction
 
@@ -214,6 +231,12 @@ curl -X POST http://localhost:8010/api/v1/extraction/runs/run_456/retry
 ## 4. Curate the Ontology
 
 After extraction, a staging graph contains draft ontology entities. Domain experts review and refine them through the Visual Curation Dashboard.
+
+> **In the workspace UI:** **left-click** any class / edge / property to open its
+> read-only detail panel; **right-click** it for actions — **Approve / Reject**,
+> **View provenance**, **View version history**, **Delete**. Switch *lenses*
+> (keys 1–5) to recolor the graph by confidence, tier, or status. The API calls
+> below are the automation equivalent.
 
 ### Open the Curation Dashboard
 
@@ -420,6 +443,10 @@ The same surface is exposed to AI agents — see the
 
 After curation, approved entities move from the staging graph to the production ontology.
 
+> **In the UI:** review the promotion summary (counts of approved classes,
+> properties, and edges) in the **Promote** panel and confirm. The API calls
+> below are the automation equivalent.
+
 ### Promotion Workflow
 
 1. **Review Summary** — the Promote Panel in the curation UI shows what will be promoted (counts of approved classes, properties, edges)
@@ -467,6 +494,11 @@ curl http://localhost:8010/api/v1/curation/promote/run_456/status
 ## 7. Use the VCR Timeline
 
 The VCR Timeline enables time-travel through your ontology's history. Every edit, promotion, and merge creates a temporal version.
+
+> **In the workspace UI:** scrub the **VCR timeline** along the bottom edge to
+> view the ontology at any past point; right-click a class → **View version
+> history** to inspect or revert a single entity. The API calls below are the
+> automation equivalent.
 
 ### Timeline Controls
 
@@ -522,6 +554,11 @@ Creates a new current version that restores the historical state. The revert its
 ## 8. Entity Resolution
 
 Entity Resolution (ER) detects and merges duplicate or overlapping concepts across ontologies.
+
+> **In the workspace UI:** right-click an ontology in the asset explorer (or the
+> canvas) → **Find Duplicates…** to run ER and review merge candidates in an
+> overlay, then approve a merge from there. The API calls below are the
+> automation equivalent.
 
 ### Run the ER Pipeline
 
@@ -590,6 +627,11 @@ curl -X PUT http://localhost:8010/api/v1/er/config \
 ---
 
 ## 9. Import and Export
+
+> **In the workspace UI:** right-click an ontology in the asset explorer →
+> **Export** (Turtle / JSON-LD / CSV), **Manage imports** (owl:imports between
+> ontologies), or **Edit name & description**. Importing a brand-new OWL/TTL
+> file currently uses the API below.
 
 ### Import an Existing Ontology
 
