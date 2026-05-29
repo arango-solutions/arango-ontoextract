@@ -218,7 +218,7 @@ def _build_rooted_dag(
             db,
             f"""
             FOR v, e, p IN 1..@max_depth {arango_direction} @target imports
-              OPTIONS {{ uniqueEdges: 'global', bfs: true }}
+              OPTIONS {{ uniqueEdges: 'path', bfs: true }}
               FILTER e == null OR e.expired == @never
               LET src = DOCUMENT(e._from)
               LET dst = DOCUMENT(e._to)

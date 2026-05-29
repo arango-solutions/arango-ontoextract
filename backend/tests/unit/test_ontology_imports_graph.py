@@ -262,6 +262,34 @@ class TestRootedDag:
             f"expected {expected_arango} traversal, queries were: {captured}"
         )
 
+    def test_rooted_traversal_uses_supported_unique_edges_option(self) -> None:
+        """Regression: ArangoDB rejects ``uniqueEdges: 'global'`` with
+        ``[HTTP 400][ERR 10] ... Use 'path' or 'none' instead``. Every
+        rooted dependency-graph query 500'd until this was switched to a
+        supported value. Mocked AQL can't surface the 400, so we pin the
+        emitted option string instead (the Python layer already de-dupes
+        edges, so ``'path'`` is sufficient)."""
+        captured: list[str] = []
+
+        db = _make_db(
+            registry_entries={
+                "root": {"_key": "root", "name": "Root", "status": "active", "tier": "domain"}
+            },
+        )
+
+        def _execute(query: str, bind_vars: dict[str, Any] | None = None) -> Any:
+            captured.append(query)
+            return iter([])
+
+        db.aql.execute = MagicMock(side_effect=_execute)
+
+        build_imports_dag(db, root="root", direction="both")
+
+        traversal = next((q for q in captured if "@target imports" in q), None)
+        assert traversal is not None, f"no traversal query issued, got: {captured}"
+        assert "uniqueEdges: 'global'" not in traversal
+        assert "uniqueEdges: 'path'" in traversal
+
     def test_rooted_dag_dedupes_edges(self) -> None:
         # Edge "e1" appears twice in the traversal (different paths can
         # revisit the same edge with ANY direction); the result must
