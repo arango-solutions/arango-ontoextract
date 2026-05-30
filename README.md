@@ -101,6 +101,12 @@ make frontend
 **→ Open http://localhost:3000 in your browser.** That's the AOE workspace —
 upload a document, run extraction, and curate the resulting ontology visually.
 
+> **No login needed for local dev.** Local runs bypass authentication and drop
+> you straight into the workspace — you should *not* see a sign-in screen. (The
+> browser reaches the backend through a built-in `/api` proxy, so you only ever
+> open one URL: **http://localhost:3000**.) If you *do* land on a "Sign in" page
+> or see **"Login failed (404)"**, see [Troubleshooting](#troubleshooting).
+
 | Surface | URL | What it is |
 |---------|-----|------------|
 | **Workspace UI** | **http://localhost:3000** | **Start here.** The visual curation app (upload, extract, graph canvas, timeline) |
@@ -127,6 +133,27 @@ rather point at an existing ArangoDB cluster or a managed deployment, set
 In every mode you still run `make migrate` once to create the schema in the
 target database. See the annotated connection blocks in
 [.env.example](.env.example) for the exact variables.
+
+## Troubleshooting
+
+Most first-run issues come from one of two things: a server that isn't running,
+or an `.env` change that hasn't been picked up yet.
+
+> **The #1 gotcha:** after you edit `.env`, you must **restart** the affected
+> server. `.env` is read only when a server *starts* — saving the file does not
+> update an already-running `make backend` or `make frontend`. Stop it with
+> `Ctrl+C` in its terminal and run the command again.
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| You see a **"Sign in"** screen, or upload/login shows **"Login failed (404)"** | The frontend can't reach the backend, or it was started before the backend was ready | 1) Make sure the backend is running: open http://localhost:8010/health — it should say `{"status":"ok"}`. If not, run `make backend`. 2) In the frontend terminal, stop it (`Ctrl+C`) and run `make frontend` again. Local dev bypasses login, so you should land straight in the workspace. |
+| Upload fails with **"Incorrect API key provided"** / `invalid_api_key` (401) | `OPENAI_API_KEY` in `.env` is missing, mistyped, or revoked | Set a valid key (from https://platform.openai.com/account/api-keys) as `OPENAI_API_KEY` in `.env`, then **restart `make backend`** so it loads the new key. |
+| Upload fails mentioning **Anthropic** / extraction errors | `ANTHROPIC_API_KEY` missing or invalid | Set a valid `ANTHROPIC_API_KEY` in `.env`, then **restart `make backend`**. |
+| `make infra` / `make migrate` errors about connection refused | Docker isn't running, or the database hasn't finished starting | Start Docker Desktop, run `make infra`, wait ~10s for ArangoDB to become healthy, then `make migrate`. |
+| Port already in use on `8010` or `3000` | Another app (or a previous run) is using the port | Stop the other process, or change `BACKEND_PORT` in `.env` (the frontend proxy follows it via `BACKEND_PROXY_URL`). |
+
+Still stuck? The backend prints structured logs in its terminal — the last few
+lines usually name the exact failing step.
 
 ## Using the Workspace UI
 

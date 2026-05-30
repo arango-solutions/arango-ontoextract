@@ -77,6 +77,28 @@ Every tenant-scoped query includes an `org_id` filter, enforced at the repositor
 - Domain ontologies (Tier 1) are shared across orgs but read-only for non-admins
 - The MCP server filters tool results by the authenticated org
 
+### Development Mode Bypass
+
+To keep local development and demos friction-free (no IdP to stand up), auth is
+bypassed end-to-end when the system is not running in production:
+
+- **Backend** — when `APP_ENV != "production"`, `JWTAuthMiddleware` attaches a
+  mock admin user to any request that arrives without a valid `Authorization`
+  header (see `app/api/auth.py`). The scaffold `POST /api/v1/auth/login`
+  endpoint also accepts any non-empty email/password and issues a short-lived
+  HS256 JWT. Setting `APP_ENV=production` removes both behaviours and enforces
+  real bearer-token validation.
+- **Frontend** — when `NEXT_PUBLIC_DEV_MODE=true` (the default for `make
+  frontend` via `frontend/.env.development`), the Next.js middleware lets every
+  route through and the `/login` page auto-redirects into the workspace, so a
+  developer never sees the sign-in screen. Production builds read
+  `.env.production`, where this flag is absent, so the login flow and route
+  guards are active.
+
+This mirrors the stdio-MCP bypass above: the bypass is gated strictly on
+non-production environment signals, never shipped on by default in a production
+build.
+
 ## Consequences
 
 ### Positive
@@ -92,6 +114,7 @@ Every tenant-scoped query includes an `org_id` filter, enforced at the repositor
 - JWT token revocation is not instant — tokens remain valid until expiry (mitigated by short expiry + refresh tokens)
 - API key management is a separate auth surface to maintain alongside JWT
 - RBAC is coarse-grained — no per-ontology or per-document permissions (acceptable for v1.0)
+- The development-mode bypass is gated on environment signals (`APP_ENV`, `NEXT_PUBLIC_DEV_MODE`); a misconfigured deployment that leaves these at dev values would disable auth, so production rollout must assert `APP_ENV=production` and a production frontend build
 
 ### Trade-offs Considered
 
