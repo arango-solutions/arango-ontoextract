@@ -61,6 +61,7 @@ from opentelemetry.sdk.trace.sampling import (
 )
 from opentelemetry.trace import Tracer
 
+from app import __version__
 from app.config import settings
 
 if TYPE_CHECKING:
@@ -95,7 +96,7 @@ def setup_tracing(app: FastAPI) -> None:
     resource = Resource.create(
         {
             "service.name": settings.otel_service_name,
-            "service.version": "0.1.0",
+            "service.version": __version__,
             "deployment.environment": settings.app_env,
         }
     )

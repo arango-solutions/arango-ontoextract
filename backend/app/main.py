@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
+from app import __version__
 from app.api import (
     admin,
     auth,
@@ -67,7 +68,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 _fastapi_kw: dict[str, Any] = {
     "title": "Arango-OntoExtract",
     "description": "LLM-driven ontology extraction and curation platform",
-    "version": "0.1.0",
+    "version": __version__,
     "lifespan": lifespan,
 }
 if settings.service_url_path_prefix:

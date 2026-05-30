@@ -1,6 +1,7 @@
 [project]
 name = "aoe-backend"
-version = "0.1.0"
+# Single source of truth: app/__init__.py:__version__ (read via [tool.hatch.version]).
+dynamic = ["version"]
 description = "Arango-OntoExtract — LLM-driven ontology extraction and curation platform"
 # Arango manual packaging / uv: must match the Container Manager base image (e.g. py13base → Python 3.13).
 requires-python = ">=3.11,<3.14"
@@ -92,6 +93,9 @@ markers = [
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+[tool.hatch.version]
+path = "app/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
