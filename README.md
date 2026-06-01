@@ -87,14 +87,23 @@ make infra                     # launches ArangoDB Community Edition + Redis in 
 # 4. Create the database schema (collections, indexes, graphs)
 make migrate
 
-# 5. Start the backend  — leave this running (default port 8010)
+# 5. Preflight — verify your keys, models, and DB are actually reachable
+make doctor                    # validates config, ArangoDB, Redis, and LLM keys+models
+
+# 6. Start the backend  — leave this running (default port 8010)
 make backend
 ```
 
 ```bash
-# 6. In a SECOND terminal, start the frontend — leave this running too
+# 7. In a SECOND terminal, start the frontend — leave this running too
 make frontend
 ```
+
+> **Tip:** run `make doctor` whenever something misbehaves. It makes a tiny live
+> call to your configured LLM + embedding models and your database, so a bad/missing
+> API key, a deprecated model, or an unreachable DB shows up as a clear `[FAIL]`
+> with a fix — instead of a confusing error deep in the extraction pipeline. Use
+> `make doctor OFFLINE=1` to skip the network calls (config + key-presence only).
 
 ### Open the app
 
@@ -136,6 +145,11 @@ target database. See the annotated connection blocks in
 
 ## Troubleshooting
 
+**First step for any issue:** run **`make doctor`**. It validates your config,
+ArangoDB, Redis, and LLM/embedding keys+models with tiny live calls and prints a
+`[FAIL]`/`[WARN]` line with the exact fix for each problem — catching most of the
+issues below before you have to read this table.
+
 Most first-run issues come from one of two things: a server that isn't running,
 or an `.env` change that hasn't been picked up yet.
 
@@ -148,12 +162,61 @@ or an `.env` change that hasn't been picked up yet.
 |---------|--------------|-----|
 | You see a **"Sign in"** screen, or upload/login shows **"Login failed (404)"** | The frontend can't reach the backend, or it was started before the backend was ready | 1) Make sure the backend is running: open http://localhost:8010/health — it should say `{"status":"ok"}`. If not, run `make backend`. 2) In the frontend terminal, stop it (`Ctrl+C`) and run `make frontend` again. Local dev bypasses login, so you should land straight in the workspace. |
 | Upload fails with **"Incorrect API key provided"** / `invalid_api_key` (401) | `OPENAI_API_KEY` in `.env` is missing, mistyped, or revoked | Set a valid key (from https://platform.openai.com/account/api-keys) as `OPENAI_API_KEY` in `.env`, then **restart `make backend`** so it loads the new key. |
+| Extraction runs **"Completed (warnings)"** with **0 classes** / pipeline shows *"Pass N failed after 5 retries"* and the log has `api.anthropic.com/v1/messages "... 404"` | The Anthropic key can't call the configured model — usually **no model access** or **no billing/credits** on a new account (the key itself can be valid) | See **[Choosing your LLM provider & verifying your key](#choosing-your-llm-provider--verifying-your-key)** below. Quickest unblock: switch to OpenAI with `LLM_EXTRACTION_MODEL=gpt-4o`. Then **restart `make backend`**. |
 | Upload fails mentioning **Anthropic** / extraction errors | `ANTHROPIC_API_KEY` missing or invalid | Set a valid `ANTHROPIC_API_KEY` in `.env`, then **restart `make backend`**. |
 | `make infra` / `make migrate` errors about connection refused | Docker isn't running, or the database hasn't finished starting | Start Docker Desktop, run `make infra`, wait ~10s for ArangoDB to become healthy, then `make migrate`. |
 | Port already in use on `8010` or `3000` | Another app (or a previous run) is using the port | Stop the other process, or change `BACKEND_PORT` in `.env` (the frontend proxy follows it via `BACKEND_PROXY_URL`). |
 
 Still stuck? The backend prints structured logs in its terminal — the last few
 lines usually name the exact failing step.
+
+### Choosing your LLM provider & verifying your key
+
+AOE can drive extraction with **either Anthropic (Claude) or OpenAI (GPT)**.
+The provider is selected by the **model name** in `LLM_EXTRACTION_MODEL`, *not*
+by anything you choose when you create an API key:
+
+| You want | Set in `.env` | Key needed |
+|----------|---------------|------------|
+| Anthropic (default) | `LLM_EXTRACTION_MODEL=claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
+| OpenAI | `LLM_EXTRACTION_MODEL=gpt-4o` | `OPENAI_API_KEY` |
+
+> Embeddings always use OpenAI, so keep a valid `OPENAI_API_KEY` set regardless
+> of which extraction provider you pick.
+
+**"I created a Claude key but it never asked which model — am I doing it wrong?"**
+No — that's expected. An API key authenticates your *account*; it is never tied
+to a model. Whether a key can call a given model depends on your org's **model
+access** and **billing/credits**, which are separate from key creation. A
+new Anthropic account can mint a key that still returns **HTTP 404
+`not_found_error`** (or a "credit balance too low" 400) until you add billing in
+the Console under **Settings → Billing / Plans & Billing**.
+
+**Verify a key + model in ~10 seconds** (swap in your real key):
+
+```bash
+curl https://api.anthropic.com/v1/messages \
+  -H "x-api-key: $ANTHROPIC_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"claude-sonnet-4-6","max_tokens":16,
+       "messages":[{"role":"user","content":"ping"}]}'
+```
+
+| Response | Meaning | What to do |
+|----------|---------|------------|
+| `200` with a reply | Key + model + billing all good | Put it in `.env` as `ANTHROPIC_API_KEY`, restart `make backend` |
+| `404 not_found_error` ("model … does not exist or you do not have access") | Your org lacks access to that model (common on new accounts) | Use OpenAI instead (`LLM_EXTRACTION_MODEL=gpt-4o`), or request model access |
+| `400` about **credit balance** | No billing/credits on the account | Add billing/credits in the Anthropic Console |
+| `401` | Key is wrong / mistyped / revoked | Regenerate the key and re-copy it |
+
+For OpenAI, the equivalent check is a `gpt-4o` call to
+`https://api.openai.com/v1/chat/completions` with `Authorization: Bearer
+$OPENAI_API_KEY` — a `401` means a bad key, a `200` means you're good.
+
+> **Heads-up:** the older `claude-sonnet-4-20250514` snapshot is **deprecated**
+> (Anthropic retires it 2026-06-15) and already 404s for many keys. Don't pin
+> it — use `claude-sonnet-4-6` (the current default) or `gpt-4o`.
 
 ## Using the Workspace UI
 
@@ -447,7 +510,7 @@ All configuration is via environment variables (see [.env.example](.env.example)
 | `ARANGO_DB` | `OntoExtract` | Database name |
 | `ANTHROPIC_API_KEY` | — | Anthropic API key for Claude |
 | `OPENAI_API_KEY` | — | OpenAI API key for embeddings |
-| `LLM_EXTRACTION_MODEL` | `claude-sonnet-4-20250514` | Model for ontology extraction |
+| `LLM_EXTRACTION_MODEL` | `claude-sonnet-4-6` | Model for ontology extraction (Anthropic `claude-*` or OpenAI `gpt-*`) |
 | `EXTRACTION_PASSES` | `3` | Number of LLM passes for consistency |
 | `ER_VECTOR_SIMILARITY_THRESHOLD` | `0.85` | Min similarity for merge candidates |
 | `TEST_DEPLOYMENT_MODE` | `local_docker` | Deployment mode (local_docker, self_managed_platform, managed_platform) |

@@ -1,4 +1,4 @@
-.PHONY: help setup dev infra backend frontend test test-unit test-integration test-all test-infra-up test-infra-down lint format typecheck type-check clean migrate docker-build docker-up docker-down docker-unified-build docker-unified-run docker-unified-up docker-unified-down package-arango-manual package-arango-manual-all sync-requirements check-requirements install-git-hooks pre-commit-run-all pre-commit-run-pre-push smoke-test setup-branch-protection setup-dual-push-remotes release-to-org sync-from-org bench bench-update
+.PHONY: help setup dev infra backend frontend doctor test test-unit test-integration test-all test-infra-up test-infra-down lint format typecheck type-check clean migrate docker-build docker-up docker-down docker-unified-build docker-unified-run docker-unified-up docker-unified-down package-arango-manual package-arango-manual-all sync-requirements check-requirements install-git-hooks pre-commit-run-all pre-commit-run-pre-push smoke-test setup-branch-protection setup-dual-push-remotes release-to-org sync-from-org bench bench-update
 
 # Optional repo-root .env (BACKEND_PORT, etc.). Safe if missing.
 -include .env
@@ -53,6 +53,9 @@ backend: ## Run backend dev server (port from BACKEND_PORT, default 8010; set in
 
 migrate: ## Apply pending database migrations
 	cd backend && .venv/bin/python -m migrations.runner
+
+doctor: ## Preflight: validate config, ArangoDB, Redis, and LLM keys+models (add OFFLINE=1 to skip API calls)
+	cd backend && .venv/bin/python -m app.preflight $(if $(OFFLINE),--offline,)
 
 # ---------------------------------------------------------------------------
 # Frontend
