@@ -79,7 +79,14 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_base_url: str = ""
     anthropic_api_key: str = ""
-    llm_extraction_model: str = "claude-sonnet-4-20250514"
+    #: Default extraction model. Anthropic deprecated the original
+    #: ``claude-sonnet-4-20250514`` snapshot (retires 2026-06-15) and the
+    #: Messages API already returns HTTP 404 ``not_found_error`` for accounts
+    #: without grandfathered access -- which silently failed every extraction
+    #: batch (see the "Pass N failed after 5 retries" incident). Pin the
+    #: current recommended replacement; override per-deployment via
+    #: ``LLM_EXTRACTION_MODEL`` (e.g. ``gpt-4o`` for the OpenAI path).
+    llm_extraction_model: str = "claude-sonnet-4-6"
     embedding_model: str = "text-embedding-3-small"
     #: Per-request HTTP timeout for LLM calls, in seconds. Without an
     #: explicit timeout, ``ChatAnthropic`` and ``ChatOpenAI`` inherit

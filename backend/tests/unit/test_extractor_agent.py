@@ -10,13 +10,27 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.extraction.agents.extractor import (
+    _MAX_RETRIES_PER_BATCH,
     _batch_chunks,
     _get_llm,
     _parse_llm_response,
+    _provider_config_error_status,
     _retrieve_relevant_chunks,
     extractor_node,
 )
 from app.models.ontology import ExtractionResult
+
+
+class _FakeProviderError(Exception):
+    """Mimics the Anthropic/OpenAI SDK error shape (HTTP ``status_code``)
+    that LangChain re-raises, so we can exercise the non-retryable
+    classification without importing either provider SDK.
+    """
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 # ---------------------------------------------------------------------------
 # _get_llm
@@ -115,6 +129,37 @@ class TestGetLlm:
         _, kwargs = mock_openai_cls.call_args
         assert kwargs.get("timeout") == 30.0
         assert kwargs.get("base_url") == "https://proxy.example/v1"
+
+
+# ---------------------------------------------------------------------------
+# _provider_config_error_status
+# ---------------------------------------------------------------------------
+
+
+class TestProviderConfigErrorStatus:
+    """Classifier that distinguishes a non-retryable provider/config error
+    (bad/unavailable model id, invalid key, no access) from a transient
+    fault or a malformed-JSON parse error. The deprecated
+    ``claude-sonnet-4-20250514`` default returned HTTP 404 on every call,
+    and the old code masked it as an ``extractor parse error`` and burned
+    all 5 retries -- this helper is what stops that.
+    """
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 404])
+    def test_flags_non_retryable_provider_statuses(self, status: int) -> None:
+        exc = _FakeProviderError("model not found", status_code=status)
+        assert _provider_config_error_status(exc) == status
+
+    @pytest.mark.parametrize("status", [429, 500, 502, 503, 529])
+    def test_does_not_flag_transient_statuses(self, status: int) -> None:
+        # Rate limits / 5xx are retryable -- they must fall through to the
+        # normal retry path, not abort the batch.
+        exc = _FakeProviderError("overloaded", status_code=status)
+        assert _provider_config_error_status(exc) is None
+
+    def test_returns_none_for_plain_exception(self) -> None:
+        # A JSON parse error (no ``status_code``) must not be misclassified.
+        assert _provider_config_error_status(ValueError("Expecting value")) is None
 
 
 # ---------------------------------------------------------------------------
@@ -373,6 +418,49 @@ class TestExtractorNode:
 
         # 0 chunks -> 0 batches -> 0 classes but still completes
         assert len(result["extraction_passes"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_provider_404_aborts_batch_without_retrying(self):
+        # Regression: the deprecated claude-sonnet-4-20250514 default made
+        # every Anthropic call return HTTP 404. The old extractor caught it
+        # as a generic "parse error" and retried 5x per batch, hiding the
+        # real cause behind "failed after 5 retries". A non-retryable
+        # provider error must abort the batch after a SINGLE attempt and
+        # surface an actionable message (HTTP status + model name).
+        mock_llm = AsyncMock()
+        mock_llm.ainvoke.side_effect = _FakeProviderError(
+            "model: claude-sonnet-4-20250514 does not exist or you do not have access",
+            status_code=404,
+        )
+
+        mock_template = MagicMock()
+        mock_template.render.return_value = ("sys", "usr")
+
+        with (
+            patch("app.extraction.agents.extractor._get_llm", return_value=mock_llm),
+            patch("app.extraction.agents.extractor.get_template", return_value=mock_template),
+            patch(
+                "app.extraction.agents.extractor._retrieve_relevant_chunks",
+                side_effect=lambda did, c, bt: c,
+            ),
+        ):
+            result = await extractor_node(self._make_state())
+
+        # Single batch, single pass -> exactly one attempt, NOT _MAX_RETRIES.
+        assert mock_llm.ainvoke.await_count == 1
+        assert _MAX_RETRIES_PER_BATCH > 1  # guards the assertion above is meaningful
+
+        # The error is surfaced with enough context for the operator to fix
+        # their config (HTTP status + the offending model name).
+        assert len(result["errors"]) == 1
+        err = result["errors"][0]
+        assert "404" in err
+        assert "test-model" in err
+        # The pass produced no classes and the failure is surfaced on the
+        # step log so the pipeline monitor shows it.
+        step_log = result["step_logs"][0]
+        assert step_log["metadata"]["total_classes"] == 0
+        assert step_log["error"] is not None and "404" in step_log["error"]
 
     @pytest.mark.asyncio
     async def test_accumulates_token_usage(self):

@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import sys
 import time
 import uuid
+from pathlib import Path
 from typing import Any, cast
 
 from arango.collection import StandardCollection
@@ -1737,7 +1739,21 @@ def _load_visualizer_installer() -> Any:
     visualizer asset loader doesn't become a hard dependency of
     the extraction service when the assets aren't packaged into a
     given deployment (eg a slim API-only image).
+
+    ``make backend`` launches uvicorn from ``backend/`` (``cd backend &&
+    uvicorn app.main:app``), so the repo root that holds the top-level
+    ``scripts`` package is not on ``sys.path`` and the import below would
+    otherwise raise ``ModuleNotFoundError: No module named 'scripts'``
+    regardless of how clean the environment is. Resolve the repo root from
+    this module's own location (``<root>/backend/app/services/extraction.py``)
+    and prepend it to ``sys.path`` so the visualizer assets install no matter
+    what the process CWD is. The insert is idempotent (guarded by membership)
+    so repeated extractions don't grow ``sys.path``.
     """
+    repo_root = str(Path(__file__).resolve().parents[3])
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
     from scripts.setup.install_visualizer import install_for_ontology_graph
 
     return install_for_ontology_graph

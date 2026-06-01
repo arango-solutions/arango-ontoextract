@@ -25,6 +25,28 @@ log = logging.getLogger(__name__)
 _MAX_RETRIES_PER_BATCH = 5
 _MAX_CONCURRENCY = 40
 
+#: Provider HTTP statuses that signal a misconfiguration (bad/unavailable
+#: model id, invalid/disabled API key, or insufficient access) rather than a
+#: transient fault or a malformed-JSON response. Retrying these is pointless --
+#: every batch will fail identically -- and burning the retry budget on them
+#: buried the real cause behind a generic "extractor parse error" warning (the
+#: deprecated ``claude-sonnet-4-20250514`` default returned 404 on every call).
+_NON_RETRYABLE_PROVIDER_STATUSES = frozenset({400, 401, 403, 404})
+
+
+def _provider_config_error_status(exc: Exception) -> int | None:
+    """Return the HTTP status if ``exc`` is a non-retryable provider/config
+    error, else ``None``.
+
+    Both the Anthropic and OpenAI SDK error types (which LangChain re-raises)
+    expose the HTTP status on a ``status_code`` attribute, so we can classify
+    without importing either provider SDK here.
+    """
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int) and status in _NON_RETRYABLE_PROVIDER_STATUSES:
+        return status
+    return None
+
 
 def _get_llm(model_name: str) -> Any:
     """Instantiate the LLM based on model name.
@@ -229,6 +251,31 @@ async def _extract_batch(
 
             except Exception as exc:
                 last_error = str(exc)
+
+                provider_status = _provider_config_error_status(exc)
+                if provider_status is not None:
+                    log.error(
+                        "extractor aborting batch: LLM provider rejected the request "
+                        "(HTTP %s). The configured model is unavailable to this API key "
+                        "or the key is invalid/disabled -- not a transient error, so not "
+                        "retrying. Check LLM_EXTRACTION_MODEL and the provider API key.",
+                        provider_status,
+                        extra={
+                            "run_id": run_id,
+                            "pass": pass_num,
+                            "batch": batch_idx,
+                            "model": model_name,
+                            "http_status": provider_status,
+                            "error": last_error,
+                        },
+                    )
+                    errors.append(
+                        f"Pass {pass_num} batch {batch_idx}: LLM provider rejected the "
+                        f"request (HTTP {provider_status}) for model '{model_name}' -- "
+                        f"model unavailable to this API key or key invalid: {last_error}"
+                    )
+                    break
+
                 log.warning(
                     "extractor parse error, retrying",
                     extra={
