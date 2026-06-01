@@ -55,6 +55,20 @@ describe("next.config.js /api proxy", () => {
     expect(apiRule!.destination).toMatch(/^https?:\/\/.+\/api\/:path\*$/);
   });
 
+  it("proxies the root-level health probes (/ready, /health) too", async () => {
+    delete process.env.AOE_STATIC_EXPORT;
+
+    const rules = await loadConfig().rewrites!();
+    // The home page reads /ready (and /health) directly — these are NOT under
+    // /api, so they need their own rewrites or they 404 at the Next server and
+    // the backend-status card lies in local dev.
+    for (const path of ["/ready", "/health"]) {
+      const rule = rules.find((r) => r.source === path);
+      expect(rule).toBeDefined();
+      expect(rule!.destination).toMatch(new RegExp(`^https?://.+${path}$`));
+    }
+  });
+
   it("omits the rewrite for static export — nginx/FastAPI serve /api directly there", () => {
     process.env.AOE_STATIC_EXPORT = "1";
 

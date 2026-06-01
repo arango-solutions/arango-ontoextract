@@ -42,10 +42,24 @@ const nextConfig = {
         output: "standalone",
         ...(pathPrefix ? { basePath: pathPrefix } : {}),
         async rewrites() {
+          // Same-origin dev proxy: the browser only ever talks to the Next
+          // origin (:3000) and Next forwards backend calls to FastAPI. This
+          // must cover the REST API (/api/*) AND the root-level health probes
+          // the home page reads (/ready, /health) — those are NOT under /api,
+          // so without explicit entries they 404 at the Next server and the
+          // "Backend status" card shows a misleading 404 in local dev.
           return [
             {
               source: "/api/:path*",
               destination: `${backendProxyTarget}/api/:path*`,
+            },
+            {
+              source: "/ready",
+              destination: `${backendProxyTarget}/ready`,
+            },
+            {
+              source: "/health",
+              destination: `${backendProxyTarget}/health`,
             },
           ];
         },
