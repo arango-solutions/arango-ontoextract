@@ -137,7 +137,7 @@ Options:
   "run_id": "run_abc123",
   "status": "completed",
   "document_id": "doc_456",
-  "model": "claude-sonnet-4-20250514",
+  "model": "claude-sonnet-4-6",
   "elapsed_seconds": 42.5,
   "token_usage": {"total_tokens": 12450},
   "classes_extracted": 34,

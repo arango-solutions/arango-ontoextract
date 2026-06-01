@@ -71,7 +71,7 @@ Configure the following environment variables in the ArangoCD console:
 | `APP_SECRET_KEY` | Yes | `<openssl rand -hex 32>` | App secret key |
 | `APP_ENV` | No | `production` | Environment (`production`, `development`) |
 | `APP_LOG_LEVEL` | No | `INFO` | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
-| `LLM_EXTRACTION_MODEL` | No | `claude-sonnet-4-20250514` | LLM for extraction |
+| `LLM_EXTRACTION_MODEL` | No | `claude-sonnet-4-6` | LLM for extraction (Anthropic `claude-*` or OpenAI `gpt-*`) |
 | `EMBEDDING_MODEL` | No | `text-embedding-3-small` | Embedding model |
 | `EXTRACTION_PASSES` | No | `3` | Number of extraction passes |
 | `CORS_ORIGINS` | No | `https://aoe.your-deploy.arangodb.cloud` | Allowed CORS origins |

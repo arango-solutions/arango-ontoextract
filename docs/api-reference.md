@@ -176,7 +176,7 @@ Upload a file for processing. The file is parsed, chunked, and embedded asynchro
   "total_tokens": 12450,
   "estimated_cost_usd": 0.037,
   "breakdown": [
-    {"model": "claude-sonnet-4-20250514", "tokens": 10000, "cost_usd": 0.030},
+    {"model": "claude-sonnet-4-6", "tokens": 10000, "cost_usd": 0.030},
     {"model": "text-embedding-3-small", "tokens": 2450, "cost_usd": 0.007}
   ]
 }

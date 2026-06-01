@@ -17,7 +17,7 @@ data:
 
   REDIS_URL: redis://redis:6379/0
 
-  LLM_EXTRACTION_MODEL: claude-sonnet-4-20250514
+  LLM_EXTRACTION_MODEL: claude-sonnet-4-6
   EMBEDDING_MODEL: text-embedding-3-small
 
   EXTRACTION_PASSES: "3"
