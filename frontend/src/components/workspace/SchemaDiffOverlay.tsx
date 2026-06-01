@@ -62,7 +62,7 @@ export default function SchemaDiffOverlay({
   useEffect(() => {
     let cancelled = false;
     api
-      .get<{ data: RegistryOntologyOption[] }>("/api/v1/ontology/library?limit=200")
+      .get<{ data: RegistryOntologyOption[] }>("/api/v1/ontology/library?limit=100")
       .then((res) => {
         if (cancelled) return;
         const rows = (res.data ?? []).filter((r) => r._key !== ontologyAKey);

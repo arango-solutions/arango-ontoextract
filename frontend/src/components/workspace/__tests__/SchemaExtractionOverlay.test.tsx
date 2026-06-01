@@ -243,6 +243,21 @@ describe("SchemaExtractionOverlay", () => {
     setupHappyPath();
   });
 
+  // Regression: GET /api/v1/ontology/library caps `limit` at 100 and returns
+  // HTTP 422 above it (this overlay previously hard-coded limit=200, which 422'd
+  // every time the imports picker loaded). Pin the request at/under the cap.
+  it("requests the ontology registry within the API limit cap (<=100)", async () => {
+    await advanceToPreview();
+    const libUrls = mockedGet.mock.calls
+      .map(([url]) => url as string)
+      .filter((url) => typeof url === "string" && url.startsWith("/api/v1/ontology/library"));
+    expect(libUrls.length).toBeGreaterThan(0);
+    for (const url of libUrls) {
+      const limit = Number(new URLSearchParams(url.split("?")[1] ?? "").get("limit"));
+      expect(limit).toBeLessThanOrEqual(100);
+    }
+  });
+
   // -- Step 1: connect ----------------------------------------------------
 
   it("renders the connect step with default host pre-filled", () => {

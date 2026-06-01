@@ -113,7 +113,7 @@ export default function CatalogBrowserOverlay({
     if (existingFromProp) return;
     let cancelled = false;
     api
-      .get<{ data: RegistryEntry[] }>("/api/v1/ontology/library?limit=200")
+      .get<{ data: RegistryEntry[] }>("/api/v1/ontology/library?limit=100")
       .then((res) => {
         if (cancelled) return;
         setExisting(new Set((res.data ?? []).map((e) => e._key)));

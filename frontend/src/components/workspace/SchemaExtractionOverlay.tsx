@@ -316,7 +316,7 @@ export default function SchemaExtractionOverlay({ onClose, onImported }: Props) 
       // A failure here just leaves the picker empty -- the user can
       // still extract without imports.
       api
-        .get<{ data: RegistryEntry[] }>("/api/v1/ontology/library?limit=200")
+        .get<{ data: RegistryEntry[] }>("/api/v1/ontology/library?limit=100")
         .then((res) => setRegistry(res.data ?? []))
         .catch(() => {
           /* picker stays empty */
