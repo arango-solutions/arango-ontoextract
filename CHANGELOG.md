@@ -1,0 +1,107 @@
+# Changelog
+
+All notable changes to Arango-OntoExtract are documented here.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The backend version is the single source of truth in `backend/app/__init__.py`.
+
+## [0.4.0] - 2026-06-01
+
+The largest release since the initial cut: closes Belief Revision, Imports &
+Composition, Entity Resolution, Constraints, Schema Extraction, Production Ops,
+Image-Aware Extraction, the 5-tier CI pipeline, and the Sigma.js workspace core
+— roughly 95% of the PRD. ~78 commits since `v0.3.0`.
+
+### Added
+
+- **Belief Revision (Stream 11, Phase 3):** Revisions Inbox overlay with inline
+  detail panel, accept/reject/modify REST endpoints + service, background
+  consolidation job with admin endpoints, four runtime safety guards, a Quality
+  Dashboard "Revisions Activity" tile, and six MCP tools (IBR.14–IBR.21).
+- **Imports, Composition & Dependencies (Stream 1):** `owl:imports` tracking and
+  CRUD, registry-level imports DAG, bundled standard-ontology catalog, cascade-
+  on-delete impact analysis, base-ontology selector on extraction, OWL exports
+  preserving `owl:imports`, effective-ontology API with inline merge-conflict
+  detection, effective-graph canvas rendering of imported entities, drag-and-drop
+  import composition with undo toast, and import-aware extraction prompts.
+- **Entity Resolution (Stream 2):** workspace "Find Duplicates" merge-candidates
+  overlay with per-pair accept/reject/explain, run-scoped `/api/v1/er/` REST, and
+  three MCP tools (hand-rolled scorer + union-find clustering + golden-record merge).
+- **Constraints — OWL & SHACL (Stream 3):** extract → OWL restriction import →
+  SHACL shapes import → materialize → API → temporal, rule-engine alignment,
+  workspace constraint display, and Turtle restriction + SHACL shape exports.
+- **Schema Extraction (Stream 5):** named-graph-aware reverse extraction from any
+  ArangoDB with provenance + auto-imports, a workspace overlay, schema-validation
+  / unique-index → SHACL reverse-engineering, and a cross-ontology schema-diff
+  endpoint with a `SchemaDiffOverlay`.
+- **Image-Aware Extraction (Stream 13):** visual asset inventory (PPTX/PDF/scanned
+  pages), visual-aware chunking + `tier1_visual_aware` strategy, OpenAI Vision and
+  on-prem Tesseract caption adapters, and visual-orphan run warnings.
+- **Quality Dashboard (Stream 4):** event-tagged history snapshots (Q.2), trend
+  sparklines (Q.3), gold-standard recall comparison (Q.4), and a client-measured
+  curation throughput timer with `GET /curation/throughput` (Q.5).
+- **Production Ops (Stream 7):** TTL garbage-collection retention, post-extraction
+  Visualizer auto-install, OpenTelemetry tracing across the ingest→extraction
+  pipeline, production alerting + hardened docker-compose, and an ops benchmark harness.
+- **Testing & CI (Stream 6):** 5-tier GitHub Actions pipeline (lint → unit →
+  integration → E2E → Docker smoke), frontend coverage gate, Codecov upload, and a
+  Python 3.11/3.12 matrix.
+- **Developer experience:** pre-commit (Tier A) + pre-push (Tier B) +
+  branch-protection (Tier C) hooks, a solo-dev dual-push release workflow
+  (`make release-to-org`), and a mock-fidelity rule.
+- **Workspace:** keyboard navigation across sidebar rows (W.7), schema-diff overlay,
+  and Playwright E2E coverage.
+- **`make doctor` preflight:** validates config, ArangoDB, Redis, and the LLM +
+  embedding keys/models with tiny live calls, printing actionable `[FAIL]`/`[WARN]`
+  fixes — so misconfiguration surfaces up front instead of deep in the pipeline.
+
+### Changed
+
+- **Default extraction model is now `claude-sonnet-4-6`.** The previous
+  `claude-sonnet-4-20250514` snapshot is deprecated (Anthropic retires it
+  2026-06-15) and already returns HTTP 404 for many keys.
+- Extraction performance: quality-snapshot cache on `/runs/{id}/cost` (T7),
+  bulk-enriched `/runs` in 2 AQL calls (T8), and opt-in keyset pagination on
+  `/classes` (T10).
+- Version is now single-sourced from `backend/app/__init__.py`; onboarding docs
+  are UI-first; added `CONTRIBUTING.md`; code-quality consolidation (CQ.1–CQ.4).
+
+### Fixed
+
+- **Security:** blocked AQL injection via the `paginate` `sort_field` parameter.
+- **Extraction:** non-retryable provider HTTP errors (400/401/403/404) are now
+  surfaced with actionable messages instead of being masked as "parse error" and
+  retried 5×; the Visualizer asset loader is CWD-independent (no more
+  `ModuleNotFoundError: No module named 'scripts'` under `make backend`).
+- **Local dev:** restored the `/api` proxy rewrite and dev login bypass; proxied
+  `/ready` + `/health` through Next so the backend status card works; capped the
+  ontology-library request limit at 100 (was a 422).
+- **Imports graph:** use a supported `uniqueEdges` option in the rooted traversal
+  (was a 500 on the dependency overlay).
+
+## [0.3.0] - 2026-05-13
+
+Performance and importer-robustness release: `?include=summary` projections on
+`/classes` + `/edges`, single-item `/edges/{key}` and `/properties/{key}`
+endpoints, a client-side `ontologyDataCache` with in-flight dedup, RDF format
+sniffing that overrides misleading extensions, and stage-level perf telemetry.
+This baseline also unblocked BYOC packaging.
+
+## [0.2.0] - 2026
+
+Iterative Belief Revision substrate (Stream 11, Phases 1 + 2): `revision_meta`
+collection, evidence-age/-count signals, confidence decay, the ontology rule
+engine (R1–R4), touchpoint discovery, the mechanical verdict classifier, the LLM
+revision agent, the Levi-identity supersede helper, and the LangGraph
+belief-revision node behind a feature flag.
+
+## [0.1.0] - 2026
+
+Initial release: end-to-end extraction pipeline, ontology editor, pipeline
+monitor, quality metrics, multi-document support, and the temporal substrate.
+
+[0.4.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v0.4.0
+[0.3.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v0.3.0
+[0.2.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v0.2.0
+[0.1.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v0.1.0
