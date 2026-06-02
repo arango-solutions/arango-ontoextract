@@ -29,6 +29,15 @@
 #                                    Default: "^v[0-9]+\.[0-9]+\.[0-9]+$"
 #   ALLOW_UPSTREAM_PUSH              set to "1" to bypass (escape hatch;
 #                                    surfaced in the refusal message)
+#   UPSTREAM_HEAD_TAGS               test/advanced seam: if SET (even to empty),
+#                                    its newline-separated value is used as the
+#                                    list of tags pointing at the pushed commit
+#                                    instead of shelling out to `git tag
+#                                    --points-at`. Lets the hook's unit tests be
+#                                    hermetic regardless of whatever tags happen
+#                                    to sit at HEAD — notably during a real
+#                                    `make release-to-org`, which tags HEAD
+#                                    *before* this pre-push gate runs.
 #
 # Behaviour:
 #   • Remote URL doesn't match pattern  → silent allow (your personal fork)
@@ -104,6 +113,16 @@ refs/tags/*)
 	if [[ -z "${local_sha}" ]]; then
 		refusal="cannot determine local sha being pushed (PRE_COMMIT_TO_REF empty)"
 	else
+		# Source the candidate tag list. ``${VAR+set}`` is non-empty only
+		# when UPSTREAM_HEAD_TAGS is *defined* (even if empty), so an
+		# explicit empty value means "no tags at HEAD" rather than falling
+		# back to git — that distinction is what keeps the tests hermetic.
+		if [[ -n "${UPSTREAM_HEAD_TAGS+set}" ]]; then
+			head_tags() { printf '%s\n' "${UPSTREAM_HEAD_TAGS}"; }
+		else
+			head_tags() { git tag --points-at "${local_sha}" 2>/dev/null || true; }
+		fi
+
 		matching_tag=""
 		while IFS= read -r t; do
 			[[ -z "${t}" ]] && continue
@@ -111,7 +130,7 @@ refs/tags/*)
 				matching_tag="${t}"
 				break
 			fi
-		done < <(git tag --points-at "${local_sha}" 2>/dev/null || true)
+		done < <(head_tags)
 
 		if [[ -n "${matching_tag}" ]]; then
 			exit 0

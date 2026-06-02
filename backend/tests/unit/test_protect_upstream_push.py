@@ -130,13 +130,19 @@ def test_silent_allow_when_remote_url_is_empty() -> None:
 
 
 def test_refuses_pushing_main_to_protected_url_without_release_tag(head_sha: str) -> None:
-    """The headline failure mode the hook exists to prevent."""
+    """The headline failure mode the hook exists to prevent.
+
+    ``UPSTREAM_HEAD_TAGS=""`` pins the "no release tag at HEAD" scenario so
+    this test is hermetic even when run *during* a real ``make release-to-org``
+    (which tags HEAD with the release tag before the pre-push gate runs).
+    """
     result = _run(
         {
             "PRE_COMMIT_REMOTE_NAME": "upstream",
             "PRE_COMMIT_REMOTE_URL": PROTECTED_URL,
             "PRE_COMMIT_REMOTE_BRANCH": "refs/heads/main",
             "PRE_COMMIT_TO_REF": head_sha,
+            "UPSTREAM_HEAD_TAGS": "",
         }
     )
     assert result.returncode == 1
@@ -160,6 +166,21 @@ def test_allows_pushing_main_when_head_has_release_tag(
     )
     assert result.returncode == 0, result.stderr
     assert release_tag_at_head == "v999.999.999"  # fixture sanity
+
+
+def test_allows_pushing_main_when_injected_head_tags_contain_a_release_tag(head_sha: str) -> None:
+    """The release path, pinned hermetically via the UPSTREAM_HEAD_TAGS seam:
+    a release-shaped tag among HEAD's tags allows the protected-branch push."""
+    result = _run(
+        {
+            "PRE_COMMIT_REMOTE_NAME": "upstream",
+            "PRE_COMMIT_REMOTE_URL": PROTECTED_URL,
+            "PRE_COMMIT_REMOTE_BRANCH": "refs/heads/main",
+            "PRE_COMMIT_TO_REF": head_sha,
+            "UPSTREAM_HEAD_TAGS": "some-feature\nv4.5.6",
+        }
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_allows_pushing_feature_branch_to_protected_url(head_sha: str) -> None:
@@ -230,6 +251,7 @@ def test_url_pattern_is_overridable_via_env(head_sha: str) -> None:
             "PRE_COMMIT_REMOTE_BRANCH": "refs/heads/main",
             "PRE_COMMIT_TO_REF": head_sha,
             "UPSTREAM_PROTECTED_URL_PATTERN": "some-other-org/",
+            "UPSTREAM_HEAD_TAGS": "",
         }
     )
     assert result.returncode == 1
@@ -262,6 +284,7 @@ def test_protected_branch_is_overridable_via_env(head_sha: str) -> None:
             "PRE_COMMIT_REMOTE_BRANCH": "refs/heads/release",
             "PRE_COMMIT_TO_REF": head_sha,
             "UPSTREAM_PROTECTED_BRANCH": "release",
+            "UPSTREAM_HEAD_TAGS": "",
         }
     )
     assert result.returncode == 1
