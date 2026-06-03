@@ -1,1 +1,77 @@
 @import "tailwindcss";
+
+/*
+ * Arango AI brand theme (.cursor/rules/arango-frontend-rules.mdc).
+ *
+ * The app historically used Tailwind's blue/indigo/sky scales as its primary
+ * "action / link / active" color. The brand rule requires that primary color to
+ * be Arango Green. Rather than touch ~60 component files, we remap those scales
+ * to an Arango-green ramp anchored on the rule's exact hexes (#006532 main,
+ * #005329 hover, #007339 brand, #f4fef2 light bg). Every existing `*-blue-600`,
+ * `text-blue-600`, `ring-blue-500`, etc. therefore renders on-brand.
+ *
+ * `red` is anchored on the brand error/delete red (#da1a20). Categorical chart
+ * hues (purple/violet/cyan) are intentionally left as Tailwind defaults so
+ * multi-series radar/sparkline legends keep distinct colors.
+ *
+ * Grays are left as Tailwind defaults (visually equivalent neutrals to the
+ * rule's #282828 / #9a9a9a / #e5e5e5 / #f8f8f8) to avoid wide subtle shifts.
+ */
+@theme {
+  /* Global font: Inter (wired via next/font in layout.tsx -> --font-inter). */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Technical content: a simple monospace (Courier) per the brand rule. */
+  --font-mono: "Courier New", Courier, ui-monospace, SFMono-Regular, Menlo,
+    Monaco, monospace;
+
+  /* --- Arango green ramp (primary / action / link / active) --------------- */
+  --color-arango-green: #006532;
+  --color-arango-green-hover: #005329;
+  --color-arango-green-brand: #007339;
+  --color-arango-green-bg: #f4fef2;
+
+  /* Remap blue -> Arango green (monotonic in lightness so light tints stay
+     light backgrounds and the 600/700 primary+hover land on brand hexes). */
+  --color-blue-50: #f4fef2;
+  --color-blue-100: #def5e3;
+  --color-blue-200: #b9e8c4;
+  --color-blue-300: #84d49a;
+  --color-blue-400: #43b06b;
+  --color-blue-500: #007339;
+  --color-blue-600: #006532;
+  --color-blue-700: #005329;
+  --color-blue-800: #064020;
+  --color-blue-900: #07331b;
+  --color-blue-950: #03200f;
+
+  /* indigo + sky read as the same "primary / info" family in this app. */
+  --color-indigo-50: #f4fef2;
+  --color-indigo-100: #def5e3;
+  --color-indigo-200: #b9e8c4;
+  --color-indigo-300: #84d49a;
+  --color-indigo-400: #43b06b;
+  --color-indigo-500: #007339;
+  --color-indigo-600: #006532;
+  --color-indigo-700: #005329;
+  --color-indigo-800: #064020;
+  --color-indigo-900: #07331b;
+  --color-indigo-950: #03200f;
+
+  --color-sky-50: #f4fef2;
+  --color-sky-100: #def5e3;
+  --color-sky-200: #b9e8c4;
+  --color-sky-300: #84d49a;
+  --color-sky-400: #43b06b;
+  --color-sky-500: #007339;
+  --color-sky-600: #006532;
+  --color-sky-700: #005329;
+  --color-sky-800: #064020;
+  --color-sky-900: #07331b;
+  --color-sky-950: #03200f;
+
+  /* --- Brand error / delete red (#da1a20), used sparingly ----------------- */
+  --color-red-500: #e23b40;
+  --color-red-600: #da1a20;
+  --color-red-700: #b71419;
+}

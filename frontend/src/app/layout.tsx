@@ -1,5 +1,13 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
+
+/** Global brand font (Arango rule §2): Inter, self-hosted at build by next/font. */
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
 
 /** Prefix for static assets when ``NEXT_PUBLIC_BASE_PATH`` is set (manual CM bundle). */
 function staticAsset(path: string): string {
@@ -23,8 +31,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="antialiased">{children}</body>
+    <html lang="en" className={inter.variable}>
+      <body className="font-sans antialiased">{children}</body>
     </html>
   );
 }
