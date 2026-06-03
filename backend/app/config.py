@@ -183,23 +183,26 @@ class Settings(BaseSettings):
     belief_revision_circuit_max_per_minute: int = 50
     belief_revision_circuit_window_seconds: float = 60.0
 
-    # -- Structural gate (Stream 15 SO.1) ---------------------------------
+    # -- Structural gate (Stream 15 SO.1 + SO.2) --------------------------
     #: Master kill-switch for the in-pipeline structural quality gate
-    #: (``extraction/agents/structural_gate.py``). Default OFF: the node
-    #: runs as a transparent pass-through that records a single skipped
-    #: step log, so the pipeline topology is identical across deploys and
-    #: enabling/disabling is a config-only rollout (no code deploy).
+    #: (``extraction/agents/structural_gate.py``). Default **ON** as of SO.2:
+    #: the node runs *before* the human-in-the-loop curation breakpoint and
+    #: applies two deterministic (non-LLM, 100%-reliable) repairs to the
+    #: in-memory merged class list -- URI normalization and evidence-based
+    #: link recovery -- so broken relationship targets are recovered (or at
+    #: least surfaced in the health report) rather than materialized into a
+    #: disconnected schema. Inspired by the UPM "Self-Optimizing Ontology"
+    #: Pipeline-2 quality loop (``docs/research/Ontologies_3_6 .pdf``;
+    #: empirical gains in ``Ontologies_27_05.pdf``).
     #:
-    #: When ON, the node runs *before* the human-in-the-loop curation
-    #: breakpoint and applies two deterministic (non-LLM, 100%-reliable)
-    #: repairs to the in-memory merged class list -- URI normalization and
-    #: evidence-based link recovery -- so broken relationship targets are
-    #: recovered (or at least surfaced in the health report) rather than
-    #: materialized into a disconnected schema. Inspired by the UPM
-    #: "Self-Optimizing Ontology" Pipeline-2 quality loop
-    #: (``docs/research/Ontologies_3_6 .pdf``). The iterative LLM "surgeon"
-    #: loop (SO.3) and A-box layer (SO.4) are deliberately out of scope.
-    structural_gate_enabled: bool = False
+    #: Enabling by default is safe because the repairs are provably
+    #: faithfulness-neutral: they only ever rewrite relationship *targets*,
+    #: never class identity/description/evidence (the inputs the faithfulness
+    #: judge reads). See the guardrail test
+    #: ``test_repairs_never_touch_faithfulness_inputs``. Set to ``False`` to
+    #: roll back to a pass-through with no code deploy. The iterative LLM
+    #: "surgeon" loop (SO.3) and A-box layer (SO.4) remain out of scope.
+    structural_gate_enabled: bool = True
 
     # -- Observability (Stream 7 PR 2 -- E.1, OpenTelemetry) ---------------
     #: Master kill-switch for OpenTelemetry tracing. Default OFF so a

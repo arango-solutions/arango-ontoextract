@@ -32,11 +32,19 @@ function MetricCard({
 }
 
 export default function MetricCards({ ontology }: Props) {
-  const structuralIntegrity = (() => {
-    const cyclePenalty = ontology.has_cycles ? 0.3 : 0;
-    const orphanRatio = ontology.class_count > 0 ? ontology.orphan_count / ontology.class_count : 0;
-    return Math.max(0, 1.0 - cyclePenalty - orphanRatio);
-  })();
+  // Prefer the backend's structural_integrity (Stream 15 SO.2, single source of
+  // truth). Fall back to the client formula for older payloads that predate it.
+  const structuralIntegrity =
+    ontology.structural_integrity != null
+      ? ontology.structural_integrity
+      : (() => {
+          const cyclePenalty = ontology.has_cycles ? 0.3 : 0;
+          const orphanRatio =
+            ontology.class_count > 0 ? ontology.orphan_count / ontology.class_count : 0;
+          return Math.max(0, 1.0 - cyclePenalty - orphanRatio);
+        })();
+
+  const islandCount = ontology.island_count ?? 0;
 
   return (
     <div className="grid grid-cols-2 gap-3">
@@ -69,6 +77,12 @@ export default function MetricCards({ ontology }: Props) {
         value={structuralIntegrity.toFixed(2)}
         description="Cycles + orphan penalty"
         colorClass={scoreColor(structuralIntegrity)}
+      />
+      <MetricCard
+        label="Isolated Classes"
+        value={String(islandCount)}
+        description="Classes connected to nothing"
+        colorClass={islandCount === 0 ? "text-green-600" : "text-red-600"}
       />
       <MetricCard
         label="Estimated Cost"

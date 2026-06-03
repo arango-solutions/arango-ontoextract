@@ -13,10 +13,12 @@ recovered — or at least surfaced in a health report — before the
 human-in-the-loop curation breakpoint, instead of after they have already been
 written to the graph.
 
-Gated behind ``settings.structural_gate_enabled`` (default OFF). When disabled
-the node is a transparent pass-through that records a single skipped step log,
-so the pipeline topology is identical across deploys and flipping the flag is a
-config-only rollout (no code deploy required to roll out or roll back).
+Gated behind ``settings.structural_gate_enabled`` (default ON as of SO.2; the
+repairs are provably faithfulness-neutral — see the guardrail test
+``test_repairs_never_touch_faithfulness_inputs``). When disabled the node is a
+transparent pass-through that records a single skipped step log, so the pipeline
+topology is identical across deploys and flipping the flag is a config-only
+rollout (no code deploy required to roll out or roll back).
 
 Scope (Stream 15 SO.1) — two deterministic rules borrowed from the deck:
 

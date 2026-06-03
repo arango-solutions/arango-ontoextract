@@ -231,6 +231,49 @@ class TestRepair:
         # Original relationship target is still the un-normalized fragment.
         assert account.relationships[0].target_class_uri == "Customer"
 
+    def test_repairs_never_touch_faithfulness_inputs(self):
+        """Faithfulness guardrail (Stream 15 SO.2 exit criterion).
+
+        Per-class faithfulness is scored from {uri, label, description} (see
+        judges/faithfulness.py). The gate must only ever rewrite relationship
+        *targets* -- never class identity/description/evidence/attributes -- so
+        enabling it cannot regress faithfulness the way UPM's loop did (1.0->0.8).
+        This proves that invariant by construction over a repaired graph.
+        """
+        account = _cls(
+            "Account",
+            "Account",
+            parent_uri=None,
+            attributes=[ExtractedAttribute(uri=f"{NS}#balance", label="balance")],
+            relationships=[
+                _rel("r1", "has holder", "Customer"),  # resolves by label -> normalize
+                _rel(
+                    "r2",
+                    "is held by",
+                    f"{NS}#Ghost",
+                    description="held by a Customer",
+                ),  # unresolvable -> link recovery
+            ],
+        )
+        customer = _cls("Customer", "Customer")
+        classes = [account, customer]
+
+        repaired, repairs = repair_relationship_targets(classes, _ClassIndex(classes))
+        assert len(repairs) == 2  # both relationships were repaired
+
+        for before, after in zip(classes, repaired, strict=True):
+            # Everything the faithfulness judge reads is byte-for-byte identical.
+            assert after.uri == before.uri
+            assert after.label == before.label
+            assert after.description == before.description
+            assert after.evidence == before.evidence
+            assert after.attributes == before.attributes
+            assert after.parent_uri == before.parent_uri
+            assert after.confidence == before.confidence
+            assert after.faithfulness_score == before.faithfulness_score
+            # Same number of relationships -- repair rewrites targets, never adds/drops.
+            assert len(after.relationships) == len(before.relationships)
+
     def test_link_recovery_excludes_owning_class_to_avoid_self_loop(self):
         # The description names the owning class; recovery must not self-loop.
         account = _cls(

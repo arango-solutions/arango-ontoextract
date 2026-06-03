@@ -635,3 +635,143 @@ class TestComputeHealthScore:
             connectivity=0.8,
         )
         assert score_with_conn > score_no_conn
+
+
+# ---------------------------------------------------------------------------
+# Stream 15 SO.2: island detection + structural integrity
+# ---------------------------------------------------------------------------
+
+
+class TestIslandClasses:
+    """Zero-degree "connects to nothing" detection (_island_classes)."""
+
+    def _cid(self, key: str) -> str:
+        return f"ontology_classes/{key}"
+
+    def test_pgt_flags_only_truly_disconnected_classes(self):
+        from app.services.quality_metrics import _island_classes
+
+        # PGT query order: 0 all_classes, 1 subclass_of {f,t}, 2 rdfs_domain _to,
+        # 3 rdfs_range_class _to.
+        db = _mock_db(
+            {
+                0: [
+                    {"id": self._cid("C1"), "key": "C1", "label": "Account"},
+                    {"id": self._cid("C2"), "key": "C2", "label": "Customer"},
+                    {"id": self._cid("C3"), "key": "C3", "label": "Island"},
+                ],
+                1: [{"f": self._cid("C2"), "t": self._cid("C1")}],  # C2 subclassOf C1
+                2: [],  # no rdfs_domain
+                3: [self._cid("C2")],  # C2 is the range of some property
+            }
+        )
+        count, examples = _island_classes(db, "onto_1", use_pgt=True)
+        # C1 (parent) and C2 (child + range) are connected; only C3 is an island.
+        assert count == 1
+        assert examples == [{"key": "C3", "label": "Island"}]
+
+    def test_no_islands_when_all_connected(self):
+        from app.services.quality_metrics import _island_classes
+
+        db = _mock_db(
+            {
+                0: [
+                    {"id": self._cid("C1"), "key": "C1", "label": "Account"},
+                    {"id": self._cid("C2"), "key": "C2", "label": "Customer"},
+                ],
+                1: [{"f": self._cid("C2"), "t": self._cid("C1")}],
+                2: [],
+                3: [],
+            }
+        )
+        count, examples = _island_classes(db, "onto_1", use_pgt=True)
+        assert count == 0
+        assert examples == []
+
+    def test_legacy_path_uses_related_to_both_ends(self):
+        from app.services.quality_metrics import _island_classes
+
+        # Legacy query order: 0 all_classes, 1 subclass_of {f,t}, 2 related_to {f,t}.
+        db = _mock_db_selective(
+            {"ontology_classes", "subclass_of", "related_to"},
+            {
+                0: [
+                    {"id": self._cid("C1"), "key": "C1", "label": "Account"},
+                    {"id": self._cid("C2"), "key": "C2", "label": "Customer"},
+                    {"id": self._cid("C3"), "key": "C3", "label": "Island"},
+                ],
+                1: [],  # no subclass edges
+                2: [{"f": self._cid("C1"), "t": self._cid("C2")}],  # related_to links C1-C2
+            },
+        )
+        count, examples = _island_classes(db, "onto_1", use_pgt=False)
+        assert count == 1
+        assert examples == [{"key": "C3", "label": "Island"}]
+
+    def test_empty_or_missing_classes_returns_zero(self):
+        from app.services.quality_metrics import _island_classes
+
+        empty = MagicMock()
+        empty.has_collection.return_value = False
+        assert _island_classes(empty, "x", use_pgt=True) == (0, [])
+
+        no_rows = _mock_db({0: []})
+        assert _island_classes(no_rows, "x", use_pgt=True) == (0, [])
+
+    def test_examples_are_capped_but_count_is_exact(self):
+        from app.services.quality_metrics import _island_classes
+
+        many = [{"id": self._cid(f"C{i}"), "key": f"C{i}", "label": f"L{i}"} for i in range(120)]
+        db = _mock_db({0: many, 1: [], 2: [], 3: []})
+        count, examples = _island_classes(db, "onto_1", use_pgt=True, limit=50)
+        assert count == 120  # exact
+        assert len(examples) == 50  # truncated
+
+
+class TestStructuralIntegrity:
+    """structural_integrity surfaced as a first-class metric."""
+
+    def _db_with(self, *, class_count: int, orphan_count: int, has_cycles: bool):
+        # PGT path indices: 0 class stats, 1 dt props, 2 obj props, 3 completeness,
+        # 4 orphan count, 5 cycle check, 6 rel count, 7 classes-with-rel, 8 chunks,
+        # 9 subclass edge count. Island queries land after and return [].
+        return _mock_db(
+            {
+                0: [{"cnt": class_count, "avg_conf": 0.8, "avg_faith": 0.8, "avg_sem": 0.9}],
+                1: [0],
+                2: [0],
+                3: [0],
+                4: [orphan_count],
+                5: [True] if has_cycles else [],
+                6: [0],
+                7: [0],
+                8: [0],
+                9: [0],
+            }
+        )
+
+    def test_clean_ontology_scores_high(self):
+        from app.services.quality_metrics import compute_ontology_quality
+
+        db = self._db_with(class_count=5, orphan_count=1, has_cycles=False)
+        result = compute_ontology_quality(db, "onto_1")
+        # 1 - 0 - 1/5 = 0.8
+        assert result["structural_integrity"] == 0.8
+
+    def test_cycles_penalize_integrity(self):
+        from app.services.quality_metrics import compute_ontology_quality
+
+        db = self._db_with(class_count=5, orphan_count=1, has_cycles=True)
+        result = compute_ontology_quality(db, "onto_1")
+        # 1 - 0.3 - 0.2 = 0.5
+        assert result["structural_integrity"] == 0.5
+
+    def test_empty_ontology_integrity_is_none(self):
+        from app.services.quality_metrics import compute_ontology_quality
+
+        db = MagicMock()
+        db.has_collection.return_value = False
+        result = compute_ontology_quality(db, "empty")
+        assert result["structural_integrity"] is None
+        assert result["island_count"] == 0
+        assert result["island_classes"] == []

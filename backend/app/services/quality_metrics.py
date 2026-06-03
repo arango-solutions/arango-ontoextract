@@ -271,6 +271,25 @@ def compute_ontology_quality(
 
     assertion_metrics = compute_assertion_evidence_metrics(db, ontology_id)
 
+    # Structural integrity (0-1), surfaced as a first-class metric to match the
+    # UPM empirical baseline (docs/research/Ontologies_27_05.pdf: 0.11 -> 0.7
+    # without/with the quality loop). Same definition the health score uses
+    # internally -- penalize cycles and the orphan ratio -- but reported on its
+    # own so the Quality dashboard / lens can show it directly. Pure arithmetic
+    # over already-fetched counts: no extra DB round-trip.
+    if class_count > 0:
+        cycle_penalty = 0.3 if has_cycles else 0.0
+        orphan_ratio = orphan_count / class_count
+        structural_integrity: float | None = round(max(0.0, 1.0 - cycle_penalty - orphan_ratio), 4)
+    else:
+        structural_integrity = None
+
+    # Zero-degree "island" classes ("connects to nothing"). Appended at the END
+    # of the function on purpose: the unit tests mock AQL by call ordinal, so
+    # new queries must come after the existing numbered ones to avoid shifting
+    # them. Strictly stronger than orphan_count (see _island_classes docstring).
+    island_count, island_classes = _island_classes(db, ontology_id, use_pgt=_use_pgt)
+
     return {
         "ontology_id": ontology_id,
         "name": ontology_name,
@@ -288,6 +307,9 @@ def compute_ontology_quality(
         "orphan_count": orphan_count,
         "has_cycles": has_cycles,
         "classes_without_properties": classes_without_properties,
+        "structural_integrity": structural_integrity,
+        "island_count": island_count,
+        "island_classes": island_classes,
         "health_score": health_score,
         "estimated_cost": round(estimated_cost, 6) if estimated_cost is not None else None,
         "schema_metrics": schema_metrics,
@@ -495,6 +517,86 @@ def _count_orphans(db: StandardDatabase, ontology_id: str) -> int:
         )
     )
     return rows[0] if rows else 0
+
+
+def _island_classes(
+    db: StandardDatabase,
+    ontology_id: str,
+    *,
+    use_pgt: bool,
+    limit: int = 50,
+) -> tuple[int, list[dict[str, str]]]:
+    """Find zero-degree "island" classes — the deck's "connects to nothing".
+
+    A class is an *island* when it has no edge of **any** kind: no
+    ``subclass_of`` parent or child, and (PGT) it is neither the domain nor the
+    range of any object property, or (legacy) it is not an endpoint of any
+    ``related_to`` edge.
+
+    This is strictly stronger than ``_count_orphans`` (which only considers the
+    ``subclass_of`` hierarchy): a subclass-orphan that still participates in an
+    object property is *not* an island. Islands are the classes that genuinely
+    "connect to nothing" — the structural-integrity failure mode the UPM decks
+    flag (``docs/research/``) and the structural gate repairs at extraction time.
+
+    Returns ``(count, examples)`` where ``examples`` is capped at ``limit``
+    ``{"key", "label"}`` dicts for the workspace "connects to nothing" lens.
+    Counts are exact; only the enumerated examples are truncated.
+    """
+    if not _has(db, "ontology_classes"):
+        return 0, []
+
+    all_classes = list(
+        run_aql(
+            db,
+            "FOR c IN ontology_classes "
+            "FILTER c.ontology_id == @oid AND c.expired == @never "
+            "RETURN { id: c._id, key: c._key, label: c.label }",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        )
+    )
+    if not all_classes:
+        return 0, []
+
+    connected: set[str] = set()
+
+    def _collect_both_ends(collection: str) -> None:
+        if not _has(db, collection):
+            return
+        for row in run_aql(
+            db,
+            f"FOR e IN {collection} "
+            "FILTER e.ontology_id == @oid AND e.expired == @never "
+            "RETURN { f: e._from, t: e._to }",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        ):
+            connected.add(row["f"])
+            connected.add(row["t"])
+
+    def _collect_to(collection: str) -> None:
+        if not _has(db, collection):
+            return
+        for row in run_aql(
+            db,
+            f"FOR e IN {collection} "
+            "FILTER e.ontology_id == @oid AND e.expired == @never "
+            "RETURN DISTINCT e._to",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        ):
+            connected.add(row)
+
+    _collect_both_ends("subclass_of")
+    if use_pgt:
+        # In PGT, object properties link classes via rdfs_domain (_to = the
+        # property's domain class) and rdfs_range_class (_to = its range class).
+        _collect_to("rdfs_domain")
+        _collect_to("rdfs_range_class")
+    else:
+        _collect_both_ends("related_to")
+
+    islands = [c for c in all_classes if c["id"] not in connected]
+    examples = [{"key": c["key"], "label": c.get("label") or c["key"]} for c in islands[:limit]]
+    return len(islands), examples
 
 
 def _detect_cycles(db: StandardDatabase, ontology_id: str) -> bool:

@@ -43,4 +43,25 @@ describe("buildQualityReportMetrics", () => {
     const x = rows.find((r) => r.label === "Curation acceptance");
     expect(x?.value).toBe("80.0%");
   });
+
+  it("shows structural_integrity as a 2-decimal score (Stream 15 SO.2)", () => {
+    const rows = buildQualityReportMetrics({ structural_integrity: 0.7 });
+    const s = rows.find((r) => r.label === "Structural Integrity");
+    expect(s?.value).toBe("0.70");
+    expect(s?.color).toBe("text-green-600");
+  });
+
+  it("flags isolated (island) classes red when any exist", () => {
+    const rows = buildQualityReportMetrics({ island_count: 3 });
+    const i = rows.find((r) => r.label === "Isolated Classes");
+    expect(i?.value).toBe("3");
+    expect(i?.color).toBe("text-red-600");
+  });
+
+  it("shows zero isolated classes green", () => {
+    const rows = buildQualityReportMetrics({ island_count: 0 });
+    const i = rows.find((r) => r.label === "Isolated Classes");
+    expect(i?.value).toBe("0");
+    expect(i?.color).toBe("text-green-600");
+  });
 });

@@ -85,6 +85,19 @@ export function buildQualityReportMetrics(report: Record<string, unknown>): Qual
   pushPct100("Completeness", report.completeness);
   pushPct100("Connectivity", report.connectivity);
 
+  // Stream 15 SO.2: structural integrity (0–1) shown as a 2-decimal score to
+  // match the UPM baseline scale (0.11→0.7) and the dashboard metric cards.
+  if (report.structural_integrity != null) {
+    const n = Number(report.structural_integrity);
+    if (!Number.isNaN(n)) {
+      metrics.push({
+        label: "Structural Integrity",
+        value: n.toFixed(2),
+        color: colorForRatio(n),
+      });
+    }
+  }
+
   if (report.class_count != null) {
     metrics.push({ label: "Classes", value: String(report.class_count) });
   }
@@ -99,6 +112,16 @@ export function buildQualityReportMetrics(report: Record<string, unknown>): Qual
   }
   if (report.orphan_count != null) {
     metrics.push({ label: "Orphan Classes", value: String(report.orphan_count) });
+  }
+  // Stream 15 SO.2: zero-degree "connects to nothing" classes. Red when any
+  // exist (a class wired to nothing is a quality defect), green at zero.
+  if (report.island_count != null) {
+    const n = Number(report.island_count);
+    metrics.push({
+      label: "Isolated Classes",
+      value: String(report.island_count),
+      color: n > 0 ? "text-red-600" : "text-green-600",
+    });
   }
   if (report.has_cycles != null) {
     const c = report.has_cycles ? "text-red-600" : "text-green-600";

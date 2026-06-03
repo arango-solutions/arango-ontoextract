@@ -275,6 +275,12 @@ export interface OntologyScorecard {
   orphan_count: number;
   has_cycles: boolean;
   classes_without_properties: number;
+  // Stream 15 SO.2. structural_integrity is 0-1 (UPM baseline 0.11→0.7);
+  // island_* surface zero-degree "connects to nothing" classes. Optional so
+  // older cached payloads / partial responses don't break the UI.
+  structural_integrity?: number | null;
+  island_count?: number;
+  island_classes?: { key: string; label: string }[];
   estimated_cost: number | null;
   schema_metrics: SchemaMetrics | null;
 }
