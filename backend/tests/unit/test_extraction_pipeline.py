@@ -102,6 +102,7 @@ class TestBuildPipeline:
             "consistency_checker",
             "quality_judge",
             "er_agent",
+            "structural_gate",
             "filter",
         }
         assert expected.issubset(node_names)
@@ -153,7 +154,9 @@ class TestNextStepsMapping:
         # Stream 11 IBR.11: belief_revision sits between QJ/ER and filter.
         assert _NEXT_STEPS["quality_judge"] == ["belief_revision"]
         assert _NEXT_STEPS["er_agent"] == ["belief_revision"]
-        assert _NEXT_STEPS["belief_revision"] == ["filter"]
+        # Stream 15 SO.1: structural_gate sits between belief_revision and filter.
+        assert _NEXT_STEPS["belief_revision"] == ["structural_gate"]
+        assert _NEXT_STEPS["structural_gate"] == ["filter"]
 
     def test_filter_not_in_next_steps(self):
         assert "filter" not in _NEXT_STEPS

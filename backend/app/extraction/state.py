@@ -87,3 +87,13 @@ class ExtractionPipelineState(TypedDict, total=False):
     # belief_revision node hasn't run yet (early pipeline state) or
     # when the agent's return is missing the field.
     belief_revision_summary: dict[str, Any] | None
+
+    # Structural gate (Stream 15 SO.1).
+    # The structural_gate node runs once per pipeline invocation (between
+    # belief_revision and filter) and produces a single summary dict --
+    # the before/after structural health report (dangling targets, island
+    # classes, classes without parent/properties) plus the list of
+    # deterministic repairs it applied. Replaced wholesale by the node's
+    # single write (no reducer). ``None`` until the node runs, or when the
+    # gate is disabled / had no input.
+    structural_health: dict[str, Any] | None

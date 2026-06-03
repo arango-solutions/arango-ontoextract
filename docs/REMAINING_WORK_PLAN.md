@@ -1176,6 +1176,37 @@ We have most of the substrate already (temporal versioning, provenance, multi-si
 
 ---
 
+### Stream 15: Self-Optimizing Ontology (in-pipeline gates, deterministic repair, A-box)
+
+**Source:** `docs/research/Ontologies_3_6 .pdf` (UPM "Self-Optimizing Ontology Project" 3-generation pipeline retrospective: Baseline → T-box Quality Loop → Double Loop with A-box) + its empirical companion `docs/research/Ontologies_27_05.pdf` (measured "without loop vs with loop" results on the demo dataset). Analyzed against our pipeline June 2026.
+**Priority:** SO.1/SO.2 are P1 (monetize detectors we already shipped); SO.3 P2; SO.4 is a PRD-level scope decision.
+
+**Framing — where we already are vs. the deck.** On *grounding* we are ahead of the deck: our LLM-as-judge faithfulness rater (`extraction/judges/faithfulness.py`) + semantic validator + ER + belief revision have no analog there. The deck's two load-bearing ideas we *don't* yet have are: (1) **gate-then-repair-before-materialize** — our `quality_judge` only *annotates* scores and flows unconditionally to `filter` (`extraction/pipeline.py`), so a disconnected/orphan-heavy schema still materializes; (2) a **T-box/A-box split** — we extract a T-box only (`prompts/tier1_standard.py`); there is no named-individual (A-box) layer. Crucially, our deterministic detectors already exist but run *post-materialization, on demand*: `services/edge_repair.py` (orphan object-property range inference) and `services/ontology_rule_engine.py` (subclass cycles, disjointness, cardinality conflicts, redundant classes, orphan ranges).
+
+**Empirical baseline (from `Ontologies_27_05.pdf`).** UPM measured the same demo dataset with and without the quality loop. These are the targets SO.2's metrics should reproduce, and the benchmark SO.1/SO.3 are judged against:
+
+| Metric | Without loop | With loop | Note |
+|---|---|---|---|
+| Faithfulness | 1.0 | **0.8** | ⚠️ *dropped* — denser graph came partly from less-grounded links |
+| Completeness | 50% | 100% | |
+| Semantic Validity | 0.80 | 0.80 | unchanged |
+| Connectivity | 28% | 100% | the disconnected-schema failure mode SO.1 attacks |
+| Structural Integrity | 0.11 | 0.7 | |
+| Classes / Properties | 18 / 39 | 23 / 63 | (the 63 matches `edge_repair.py`'s "23/63 orphans" demo note — same dataset) |
+
+Multi-hop query traversability was the qualitative test ("Which academic center manages the degree program for this subject?" resolving Subject→Degree→Academic Center→concrete individual). **Guardrail takeaway:** the loop's only regression was *faithfulness* (1.0→0.8). SO.1's repairs are deterministic + evidence-anchored (no invention) so they should not move it, but this must be **measured, not assumed**, and it is the hard cap on SO.3 (the LLM surgeon), where ungrounded expansion would realistically creep in.
+
+| # | Task | Type | Status | Description |
+|---|------|------|--------|-------------|
+| SO.1 | In-pipeline structural gate + deterministic repair | Backend | **DONE** (flag OFF) | Flag-gated `extraction/agents/structural_gate.py` node between `belief_revision` and `filter`. Computes a pre-materialization health report on the in-memory merged class list (dangling relationship targets, zero-degree "island" classes, classes without parent, classes without properties) and applies two of the deck's 100%-reliable deterministic rules: **URI normalization** (rewrite a relationship target that matches a known class only by fragment/normalized key to its canonical URI) and **link recovery** (re-point a relationship whose target resolves to no class at the class named in the relationship's own evidence text — the proven `edge_repair` substring heuristic, applied in-memory). Gated behind `settings.structural_gate_enabled` (default OFF; transparent pass-through when disabled). Before/after counts + repair audit land in `step_logs[].metadata`. Unit-tested in `tests/unit/test_structural_gate.py`. **Follow-up before flipping ON:** add a faithfulness-no-regression assertion (see empirical baseline) — the gate's repairs are evidence-anchored, but we want the judge to confirm Faithfulness doesn't slip the way UPM's 1.0→0.8 did. |
+| SO.2 | Post-write graph-health metrics ("island" detection + ratios) | Backend | PLANNED | Extend `services/quality_metrics.py` (already computes `orphan_count`, `has_cycles`, `classes_without_properties`) with the deck's `abox_health.py` ideas adapted to the T-box, reproducing the empirical-baseline metric set: **Connectivity** (% of classes with ≥1 resolvable edge — UPM 28%→100%), **Structural Integrity** (0.11→0.7), **Completeness** (50%→100%), explicit zero-degree class detection, and a **materialized-vs-declared ratio** (declared relationship targets that never became edges). Surface as a workspace lens / quality-report row ("connects to nothing"). Pin the UPM baselines as regression targets on the demo dataset. |
+| SO.3 | LLM "Surgeon" bounded-patch repair loop | Backend | PLANNED | Where deterministic rules (SO.1) can't resolve a violation, feed the `ontology_rule_engine` violation report to an LLM that emits a **bounded patch over only the damaged subgraph** (deck's `optimizer_surgeon`), iterating ~3× until the gate passes. Natural host: the existing `services/revision_agent.py` / belief-revision machinery. Needs a circuit breaker (cf. `belief_revision_max_revisions`) and a hard attempt cap to avoid spend blow-ups (the deck flags "double generative dependence" cost). |
+| SO.4 | A-box (named-individual) extraction — second loop | Backend + PRD | NEEDS DECISION | The deck's headline: after a frozen T-box, a Loop 2 extracts *instances* with the actual T-box in the prompt, generates cross-relations from a **closed catalog of entity names** (anti-hallucination), applies deterministic A-box repairs (URI normalization, semantic re-typing, chunk co-occurrence forced edges, noise filter), then re-extracts on health-gate failure. This changes what AOE *is* (ontology + populated knowledge graph). **Decide in PRD before building** — scope, storage (A-box collections + temporal model), UI (instance lens), and a "rerun Phase C only" affordance. |
+
+**Exit Criteria (SO.1–SO.2):** structural gate runs behind a flag with full unit coverage and a no-op-when-disabled guarantee (**met**); health metrics (Connectivity, Structural Integrity, Completeness, islands, declared/materialized ratio) computed and surfaced, hitting the UPM with-loop baselines on the demo dataset; no broken links materialized when the flag is on for the demo ontologies; **and Faithfulness must not regress** when the gate is enabled (UPM's loop dropped it 1.0→0.8 — our evidence-anchored repairs must hold the line, verified by the faithfulness judge). SO.3/SO.4 gated on their own design notes; SO.3's hard acceptance gate is "no Faithfulness regression beyond a small, explicit tolerance."
+
+---
+
 ## Recommended Execution Order (refreshed v0.4.0-dev)
 
 Streams 1, 2, 3, 5, 6, 7, 11, 13 and the Sigma.js core of Stream 8 are

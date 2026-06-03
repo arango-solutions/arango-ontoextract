@@ -19,6 +19,7 @@ from app.extraction.agents.er_agent import er_agent_node
 from app.extraction.agents.extractor import extractor_node
 from app.extraction.agents.filter import filter_agent_node
 from app.extraction.agents.strategy import strategy_selector_node
+from app.extraction.agents.structural_gate import structural_gate_node
 from app.extraction.judges.quality_judge_node import quality_judge_node
 from app.extraction.state import ExtractionPipelineState
 
@@ -32,7 +33,8 @@ _NEXT_STEPS: dict[str, list[str]] = {
     "consistency_checker": ["quality_judge", "er_agent"],
     "quality_judge": ["belief_revision"],
     "er_agent": ["belief_revision"],
-    "belief_revision": ["filter"],
+    "belief_revision": ["structural_gate"],
+    "structural_gate": ["filter"],
 }
 
 
@@ -75,15 +77,20 @@ def build_pipeline() -> StateGraph[Any]:
 
     Pipeline topology (parallel fork/join after consistency checker):
 
-    Strategy -> Extraction -> Consistency -+-> Quality Judge -+-> Belief Revision -> Filter
-                                           +-> ER Agent ------+
+    Strategy -> Extraction -> Consistency -+-> Quality Judge -+-> Belief Revision
+                                           +-> ER Agent ------+        |
+                                                                       v
+                                              Filter <- Structural Gate
 
     Quality Judge and ER Agent run in parallel since they both only
     depend on the consistency result and don't depend on each other.
     Belief Revision (Stream 11) joins them: it reads the ER results to
     avoid revising entities that ER will merge, and it gates writes
     behind ``settings.belief_revision_pipeline_enabled`` (default OFF).
-    Filter is the final pre-staging step.
+    Structural Gate (Stream 15) then applies deterministic link repairs
+    pre-materialization, gated behind ``settings.structural_gate_enabled``
+    (default OFF; transparent pass-through when disabled). Filter is the
+    final pre-staging step.
     """
     graph = StateGraph(ExtractionPipelineState)
 
@@ -93,6 +100,7 @@ def build_pipeline() -> StateGraph[Any]:
     graph.add_node("quality_judge", quality_judge_node)
     graph.add_node("er_agent", er_agent_node)
     graph.add_node("belief_revision", belief_revision_node)
+    graph.add_node("structural_gate", structural_gate_node)
     graph.add_node("filter", filter_agent_node)
 
     graph.set_entry_point("strategy_selector")
@@ -122,7 +130,12 @@ def build_pipeline() -> StateGraph[Any]:
 
     graph.add_edge("quality_judge", "belief_revision")
     graph.add_edge("er_agent", "belief_revision")
-    graph.add_edge("belief_revision", "filter")
+    # Stream 15 SO.1: structural gate sits between belief_revision and the
+    # human-in-the-loop filter so deterministic link repairs land before
+    # curation. The node is a transparent pass-through when
+    # ``settings.structural_gate_enabled`` is False.
+    graph.add_edge("belief_revision", "structural_gate")
+    graph.add_edge("structural_gate", "filter")
 
     graph.add_conditional_edges(
         "filter",

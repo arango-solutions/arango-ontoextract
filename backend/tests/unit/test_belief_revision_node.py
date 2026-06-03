@@ -828,7 +828,8 @@ class TestPipelineTopologyWiring:
 
     Verified via the ``_NEXT_STEPS`` table the WebSocket emitter uses:
     quality_judge -> belief_revision, er_agent -> belief_revision,
-    belief_revision -> filter. We don't instantiate the LangGraph
+    belief_revision -> structural_gate -> filter (Stream 15 SO.1 inserted
+    the structural gate ahead of the filter). We don't instantiate the LangGraph
     object here -- it requires a checkpointer, ASGI, etc. -- but the
     NEXT_STEPS table is the source of truth for the WS-event order
     and is what would have to drift first if someone broke the wiring.
@@ -846,10 +847,14 @@ class TestPipelineTopologyWiring:
         assert "belief_revision" in _NEXT_STEPS["er_agent"]
         assert "filter" not in _NEXT_STEPS["er_agent"]
 
-    def test_belief_revision_routes_to_filter(self) -> None:
+    def test_belief_revision_routes_to_structural_gate_then_filter(self) -> None:
+        # Stream 15 SO.1 inserted structural_gate between belief_revision and
+        # filter. Belief revision now hands off to the gate, which hands off to
+        # the (human-in-the-loop) filter.
         from app.extraction.pipeline import _NEXT_STEPS
 
-        assert _NEXT_STEPS["belief_revision"] == ["filter"]
+        assert _NEXT_STEPS["belief_revision"] == ["structural_gate"]
+        assert _NEXT_STEPS["structural_gate"] == ["filter"]
 
     def test_build_pipeline_includes_belief_revision_node(self) -> None:
         from app.extraction.pipeline import build_pipeline
