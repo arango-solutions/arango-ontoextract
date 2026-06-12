@@ -3,6 +3,8 @@
 **Derived from:** PRD.md v3 (2026-03-28)
 **Approach:** Each PRD phase is decomposed into weekly sprints with specific tasks, files to create/modify, dependencies, and acceptance criteria.
 
+> **⚠️ Status (June 2026):** This document is the original build plan plus historical gap-analysis addenda. **Its per-task status markers are no longer maintained and had drifted badly from reality** (e.g., Sprint PGT, H, ER, I, S, and IMG were still listed as pending months after they shipped). For current status, **`docs/REMAINING_WORK_PLAN.md` is the single source of truth.** A Sprint↔Stream mapping is in the "Status Tracking Moved" section below. Keep this file for task breakdowns and historical traceability only — do not plan new work from its status columns.
+
 ---
 
 ## Phase 1: Foundation (Weeks 1–3)
@@ -661,7 +663,7 @@ Each gap is classified by severity:
 
 ### Remediation Summary
 
-Original phased backlog (historical sizing). **Current completion** matches the **Remaining Work Priority (Updated March 31, 2026)** table later in this document — A, C, K, B, G, J are **done**; F is **mostly done**; primary open tracks are **PGT**, H, ER, quality history, I, S, D, E, V.
+Original phased backlog (historical sizing). The status markers below are frozen as of early 2026 — most lettered sprints (including PGT, H, ER, I, S, IMG) have since shipped. **For current status see `docs/REMAINING_WORK_PLAN.md`.**
 
 | Sprint | Duration | Tasks | Priority |
 |--------|----------|-------|----------|
@@ -678,7 +680,7 @@ Original phased backlog (historical sizing). **Current completion** matches the 
 | ~~K: Standalone Ontology Graph Editor~~ | ~~1.5 weeks~~ | ~~12~~ | **DONE** |
 | **Total (original plan)** | **~12 weeks** | **96 tasks** | |
 
-### Recommended Execution Order
+### Recommended Execution Order (historical — superseded by `docs/REMAINING_WORK_PLAN.md`)
 
 ```
 Sprint C (data integrity)  ─┐
@@ -691,7 +693,7 @@ Sprint C (data integrity)  ─┐
                                                                                   └─→ Sprint J (CRUD, search) ─→ Sprint D (tests) ─→ Sprint E (polish)
 ```
 
-- Sprint A and K are **complete** in the current codebase; new work should branch from **`object-centric-ux` / Sprint PGT** (schema alignment) unless you are picking up imports (H), ER, or quality history.
+- Sprint A and K are **complete** in the current codebase. (Stale guidance removed: Sprint PGT has since shipped and merged — do not branch from `object-centric-ux`. Pick up work from `docs/REMAINING_WORK_PLAN.md` instead.)
 - Sprint C backfill/reindex items are **largely done** (migration `019`, MDI fixes in `005` per Addendum L); treat C.4 (`has_chunk` / `produced_by` lineage) and visualizer redeploy as the remaining C-class follow-ups if still open.
 - Sprint H (imports) builds on multi-doc and library behavior already shipped (**G** / **J** done); catalog + `owl:imports` graph remain the gap.
 - Sprint I (constraints) can follow H, leveraging the import pipeline for OWL restriction parsing.
@@ -758,65 +760,31 @@ Sprint C (data integrity)  ─┐
 | L.24 | AQL double-brace syntax fix | `backend/app/api/ontology.py` | DONE | Corrected `{{edge_type: @et}}` to `{edge_type: @et}` in `list_ontology_edges` and `get_staging` endpoints. |
 | L.25 | MDI-prefixed index corrections | `backend/migrations/005_mdi_indexes.py` | DONE | Updated to use `prefixFields: ["ontology_id"]` and `fields: ["created", "expired"]` per PRD §5.3. |
 
-### Coverage Verification: PRD vs Implementation Plan
+### Status Tracking Moved (June 2026)
 
-All PRD §6 features are tracked in the implementation plan:
+The PRD-coverage and remaining-work-priority tables that used to live here (last updated March 31, 2026) drifted badly from reality — they still listed Sprints PGT, H, ER, I, S, IMG, OWL, and V as pending long after they shipped. They have been removed. **`docs/REMAINING_WORK_PLAN.md` is the single source of truth for current status**; `SYSTEM_REVIEW_REPORT.md` gives a point-in-time assessment.
 
-| PRD Section | Feature | Plan Location | Status |
-|-------------|---------|---------------|--------|
-| §6.1 FR-1.1–1.5 | Document ingestion basics | Phase 1, Week 2 | **IMPLEMENTED** |
-| §6.1 FR-1.6 | Upload status + auto-extract | Phase 1 + L.7 | **IMPLEMENTED** |
-| §6.1 FR-1.7–1.8 | Multi-doc ontologies, add doc | Sprint G | **IMPLEMENTED** |
-| §6.1 FR-1.9–1.10 | Full CRUD, many-to-many | Sprint J | **IMPLEMENTED** |
-| §6.1 FR-1.11–1.15 | Visual image/OCR extraction | Sprint IMG | PLANNED |
-| §6.2 FR-2.1–2.6 | Core extraction pipeline | Phase 2 | **IMPLEMENTED** (parallel fork/join, object property detection, deferred relationship resolution, `related_to` edge materialization) |
-| §6.2 FR-2.7–2.11 | Materialization, graphs, visualizer | Phase 2 + L.18–L.22 | **IMPLEMENTED** |
-| §6.2 FR-2.12–2.13 | Incremental + multi-doc extraction | Sprint G | **IMPLEMENTED** |
-| §6.2 FR-2.16–2.17 | Visual-context-aware extraction + orphan-risk diagnostics | Sprint IMG | PLANNED |
-| §6.3 FR-3.1–3.5 | Tier 2 local extensions | Sprint B | **IMPLEMENTED** |
-| §6.4 FR-4.1–4.9 | Visual curation dashboard | Phase 3 + Sprint A (complete) | **IMPLEMENTED** (VCR, EntityHistory, DiffOverlay, WS pipeline events, schema extract status — see Sprint A verification) |
-| §6.4 FR-4.10–4.13 | Standalone ontology editor | Sprint K | **IMPLEMENTED** |
-| §6.5 FR-5.1–5.11 | Temporal time travel + VCR | Phase 3 + fixes | **IMPLEMENTED** (snapshot, timeline, VCR slider working) |
-| §6.6 FR-6.1–6.12 | ArangoDB Visualizer customization | Phase 3 + L.20 + Sprint C | **IMPLEMENTED** |
-| §6.7 FR-7.1–7.11 | Entity resolution | Phase 4 | STUB — needs `arango-entity-resolution` integration |
-| §6.8 FR-8.1–8.7 | Import/export + CRUD | Phase 6 + Sprint J + fixes | **IMPLEMENTED** (export, import, CRUD with temporal cascade) |
-| §6.8 FR-8.8–8.16 | Imports graph, catalog, search | Sprint J (partial) | PARTIALLY IMPLEMENTED — search done, imports/catalog pending (Sprint H) |
-| §6.9 FR-9.1–9.7 | Schema extraction from ArangoDB | Phase 6 | STUB |
-| §6.10 FR-10.1–10.5 | MCP server (runtime) | Phase 5 | **IMPLEMENTED** |
-| §6.11 FR-11.1–11.10 | Agentic extraction pipeline | Phase 2 + quality judge | **IMPLEMENTED** (6-agent parallel pipeline, async `ainvoke`, concurrent extraction, `Annotated` reducers for state merging) |
-| §6.11 FR-11.17 | Visual-heavy document strategy | Sprint IMG | PLANNED |
-| §6.12 FR-12.1–12.10 | Pipeline monitor dashboard | Phase 2 + L + fixes | **IMPLEMENTED** (polling, step DAG, metrics, errors) |
-| §6.13 FR-13.1–13.13 | Ontology quality metrics | Sprint F + confidence fixes + Q.1 | **MOSTLY IMPLEMENTED** (7-signal confidence, health score, quality panel, unified `/dashboard`, per-ontology live radar tab, recharts radar on scorecard detail, audited OntoQA panel, connectivity metric; missing: `/quality/history`, gold-standard recall API, RAG benchmark comparison) |
-| §6.14 FR-14.1–14.7 | OWL restrictions + SHACL | Sprint I | NOT STARTED |
-| §6.15 FR-15.1–15.6 | Ontology imports & dependencies | Sprint H | NOT STARTED |
-| §7.2.1 | Admin reset endpoints | L.3 + fixes | **IMPLEMENTED** (with named graph cleanup) |
-| §5.3 | Temporal integrity & deletion | Audit fixes | **IMPLEMENTED** (soft-delete cascade, cross-ontology edges, reject cascade) |
+This plan tracks work as lettered **Sprints**; `docs/REMAINING_WORK_PLAN.md` and the system review track numbered **Streams**. Mapping:
 
-### Remaining Work Priority (Updated March 31, 2026)
+| Sprint (this doc) | Stream (REMAINING_WORK_PLAN) | Scope |
+|---|---|---|
+| PGT | Stream 0 | Property-collection alignment (ADR-006) |
+| H | Stream 1 | `owl:imports`, standard-ontology catalog, composition |
+| ER | Stream 2 | Entity resolution |
+| I | Stream 3 | Constraints (OWL + SHACL) |
+| F / Q | Stream 4 | Quality metrics, dashboard, history, recall |
+| S | Stream 5 | Schema extraction from ArangoDB |
+| D | Stream 6 | Testing & CI |
+| E | Stream 7 | Production ops |
+| V | Stream 8 | Sigma.js workspace + editor panels |
+| — | Stream 9 | Unified-storage spike |
+| — | Stream 11 | Belief revision (ABD Phases 1–4) |
+| — | Stream 12 | Performance (T-tasks, incl. T10 keyset pagination) |
+| IMG | Stream 13 | Image-aware extraction |
+| — | Stream 15 | Structural quality gate |
+| OWL | — (PRD §6.8b) | OWL/RDFS foundation layer |
 
-| Sprint | Duration | Tasks | Priority | Blocks | Status |
-|--------|----------|-------|----------|--------|--------|
-| ~~C: Data Integrity & Reindex~~ | ~~3 days~~ | ~~4~~ | ~~P0~~ | | **DONE** |
-| ~~A: Critical Bugs & Wiring~~ | ~~1 week~~ | ~~9~~ | ~~P0~~ | | **DONE** |
-| ~~K: Standalone Ontology Editor~~ | ~~1.5 weeks~~ | ~~12~~ | ~~P0~~ | | **DONE** |
-| ~~B: Backend Stubs~~ | ~~1 week~~ | ~~8~~ | ~~P1~~ | | **DONE** |
-| ~~G: Multi-Doc & Incremental~~ | ~~1.5 weeks~~ | ~~8~~ | ~~P1~~ | | **DONE** |
-| ~~F: Quality Metrics~~ | ~~1.5 weeks~~ | ~~18~~ | ~~P1~~ | | **MOSTLY DONE** (dashboard page done; history tracking, gold-standard recall pending) |
-| ~~J: CRUD, Search & Organization~~ | ~~1 week~~ | ~~9~~ | ~~P1~~ | | **DONE** |
-| H: Imports & Dependencies | 1.5 weeks | 9 | **P1** | Standard ontology support | PENDING |
-| ER: Entity Resolution Integration | 1.5 weeks | 9 | **P1** | Deduplication | PENDING |
-| Q: Quality Dashboard + History | 3 days | 5 | **P1** | PRD §6.13 completeness | PARTIALLY DONE (Q.1 radar dashboard done; Q.2–Q.5 pending) |
-| I: Constraints (OWL + SHACL) | 1 week | 9 | **P2** | Formal constraints | PENDING |
-| S: Schema Extraction | 1 week | 6 | **P2** | Reverse engineering | PENDING |
-| IMG: Image-Aware Extraction | 1 week | 8 | **P1** | PPTX/PDF ontology quality | PENDING |
-| D: Test Coverage & CI | 1 week | 7 | **P2** | Quality gate | PENDING |
-| E: Production Polish | 1 week | 7 | **P2** | v1.0.0 readiness | PENDING |
-| PGT: Property Collection Alignment | 1.5 weeks | 12 | **P0** | Schema alignment (ADR-006) | PENDING — on `object-centric-ux` branch |
-| OWL: Foundation Layer (Metamodel) | 1 week | 7 | **P1** | Formal OWL completeness (depends on PGT) | PENDING |
-| V: Sigma.js Migration | 2–3 weeks | 11 | **P1** (post-v1.0) | Scalability | PENDING |
-| **Total remaining** | **~9–10 weeks** | **~78 tasks** | | |
-
-See `docs/REMAINING_WORK_PLAN.md` for detailed task breakdowns per stream.
+Consult `docs/REMAINING_WORK_PLAN.md` for which of these are open. Do not re-derive status from the sprint tables above; they are kept only for historical traceability and task breakdowns.
 
 ---
 
