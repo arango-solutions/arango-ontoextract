@@ -106,6 +106,20 @@ class TestRegistryLookup:
         with pytest.raises(ValueError, match="ont-missing"):
             compute_effective_ontology(db, ontology_id="ont-missing")
 
+    def test_collection_metadata_is_probed_once_not_per_check(self) -> None:
+        """Perf guardrail: python-arango's has_collection / collections each do
+        a full WAN round-trip. compute_effective_ontology must snapshot the
+        collection set ONCE (one collections() call, no has_collection calls),
+        not re-probe per collection — this is what halves remote canvas latency.
+        """
+        db = _make_db(
+            registry_entries={"ont-self": {"_key": "ont-self", "name": "Solo", "updated_at": 1}},
+            aql_responses={},
+        )
+        compute_effective_ontology(db, ontology_id="ont-self")
+        assert db.has_collection.call_count == 0
+        assert db.collections.call_count == 1
+
 
 # --- Self-only (no imports) -----------------------------------------------
 

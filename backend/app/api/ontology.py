@@ -75,38 +75,50 @@ _LIBRARY_EDGE_COLLECTIONS = (
 )
 
 
-def _batch_edge_counts_for_ontology_ids(db: Any, ontology_ids: list[str]) -> dict[str, int]:
-    """One AQL per edge collection, grouped by ontology_id (avoids N x 5 round-trips).
+def _batch_edge_counts_for_ontology_ids(
+    db: Any, ontology_ids: list[str], *, existing: set[str] | None = None
+) -> dict[str, int]:
+    """Edge counts per ontology in a SINGLE AQL round-trip across all collections.
 
-    The previous per-entry loop blocked the asyncio event loop and stalled other
-    API routes (e.g. GET /documents) on the same worker.
+    python-arango's ``has_collection`` issues a full ``GET /_api/collection``
+    every call, and the old shape did one ``has_collection`` + one AQL *per* edge
+    collection — up to 10 round-trips. On a remote (cloud, WAN) ArangoDB that
+    dominates the ``/library`` latency. We instead snapshot the collection set
+    once (``existing``, ideally passed by the caller) and union per-collection
+    grouped counts in one query: each subquery does an efficient server-side
+    ``COLLECT … WITH COUNT``, then we sum the partials by ontology_id.
     """
     if not ontology_ids:
         return {}
     counts: dict[str, int] = {oid: 0 for oid in ontology_ids}
     unique_ids = sorted(set(ontology_ids))
-    never = NEVER_EXPIRES
-    for edge_col in _LIBRARY_EDGE_COLLECTIONS:
-        if not db.has_collection(edge_col):
-            continue
-        try:
-            rows = list(
-                run_aql(
-                    db,
-                    f"FOR e IN {edge_col} "
-                    "FILTER e.ontology_id IN @oids AND e.expired == @never "
-                    "COLLECT oid = e.ontology_id WITH COUNT INTO cnt "
-                    "RETURN {{ oid: oid, cnt: cnt }}",
-                    bind_vars={"oids": unique_ids, "never": never},
-                )
-            )
-        except Exception:
-            log.debug("batch edge count failed for %s", edge_col, exc_info=True)
-            continue
-        for row in rows:
-            oid = row.get("oid")
-            if oid in counts:
-                counts[oid] += int(row.get("cnt") or 0)
+
+    if existing is None:
+        existing = {c["name"] for c in (db.collections() or []) if isinstance(c, dict)}
+    edge_cols = tuple(c for c in _LIBRARY_EDGE_COLLECTIONS if c in existing)
+    if not edge_cols:
+        return counts
+
+    subqueries = ",\n            ".join(
+        f"(FOR e IN {col} FILTER e.ontology_id IN @oids AND e.expired == @never "
+        "COLLECT oid = e.ontology_id WITH COUNT INTO cnt RETURN {oid: oid, cnt: cnt})"
+        for col in edge_cols
+    )
+    query = (
+        f"LET partials = FLATTEN([\n            {subqueries}\n        ], 1)\n"
+        "FOR p IN partials\n"
+        "  COLLECT oid = p.oid AGGREGATE total = SUM(p.cnt)\n"
+        "  RETURN { oid: oid, cnt: total }"
+    )
+    try:
+        rows = list(run_aql(db, query, bind_vars={"oids": unique_ids, "never": NEVER_EXPIRES}))
+    except Exception:
+        log.debug("batch edge count failed", exc_info=True)
+        return counts
+    for row in rows:
+        oid = row.get("oid")
+        if oid in counts:
+            counts[oid] += int(row.get("cnt") or 0)
     return counts
 
 
@@ -125,14 +137,20 @@ async def list_ontology_library(
     try:
         entries, next_cursor = registry_repo.list_registry_entries(cursor=cursor, limit=limit)
         db = get_db()
-        has_col = db.has_collection("ontology_registry")
+        # Snapshot collection names once (each has_collection/collections call is
+        # a full WAN round-trip on a remote ArangoDB). Reused for the registry
+        # existence check and the batched edge-count query below.
+        existing = {
+            c["name"] for c in cast("list[dict[str, Any]]", db.collections() or []) if "name" in c
+        }
+        has_col = "ontology_registry" in existing
         total_count = db.collection("ontology_registry").count() if has_col else 0
 
         if tag:
             entries = [e for e in entries if tag in (e.get("tags") or [])]
 
         oids = [str(e.get("_key", "")) for e in entries if e.get("_key")]
-        batch_counts = _batch_edge_counts_for_ontology_ids(db, oids)
+        batch_counts = _batch_edge_counts_for_ontology_ids(db, oids, existing=existing)
 
         for entry in entries:
             entry.setdefault("tags", [])

@@ -120,7 +120,15 @@ def compute_effective_ontology(
     ValueError
         If ``ontology_id`` is not present in ``ontology_registry``.
     """
-    if not db.has_collection("ontology_registry"):
+    # Fetch the collection-name set ONCE per request. python-arango's
+    # ``has_collection`` / ``collections`` each issue a full ``GET
+    # /_api/collection`` round-trip, and this handler probes collection
+    # existence ~6 times (registry, imports, classes, plus the edge/property
+    # allow-lists twice). On a remote (cloud, WAN) ArangoDB those metadata
+    # round-trips dominate latency, so we snapshot the set here and thread it
+    # through every helper instead of re-probing. Stable within one request.
+    existing = _existing_collection_names(db)
+    if "ontology_registry" not in existing:
         raise ValueError("ontology_registry collection is not available")
 
     profile = normalize_include(include)
@@ -134,13 +142,16 @@ def compute_effective_ontology(
         db,
         self_entry=self_entry,
         max_depth=safe_depth,
+        existing=existing,
     )
 
     self_oid = ontology_id
     source_keys = [s["_key"] for s in sources]
     source_name_by_key = {s["_key"]: s.get("name") or s["_key"] for s in sources}
 
-    classes_raw, edges_raw, props_raw = _fetch_entities_for_ontologies(db, source_keys)
+    classes_raw, edges_raw, props_raw = _fetch_entities_for_ontologies(
+        db, source_keys, existing=existing
+    )
 
     classes = _annotate_and_project(
         classes_raw,
@@ -198,6 +209,7 @@ def _compute_source_closure(
     *,
     self_entry: dict[str, Any],
     max_depth: int,
+    existing: set[str],
 ) -> list[dict[str, Any]]:
     """Return ``[self] + transitive imports``, each with depth + is_self.
 
@@ -224,7 +236,7 @@ def _compute_source_closure(
         "depth": 0,
     }
 
-    if not db.has_collection("imports"):
+    if "imports" not in existing:
         return [self_source]
 
     target_id = f"ontology_registry/{self_key}"
@@ -296,6 +308,8 @@ def _coerce_updated_at(entry: dict[str, Any]) -> Any:
 def _fetch_entities_for_ontologies(
     db: StandardDatabase,
     ontology_ids: list[str],
+    *,
+    existing: set[str],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """Pull live classes / edges / properties for all ontologies in one shot.
 
@@ -304,15 +318,16 @@ def _fetch_entities_for_ontologies(
     O(1) round-trips regardless of closure size, which matters when an
     ontology imports several large library ontologies.
 
-    Only includes collections that actually exist. Missing collections
-    contribute no rows, mirroring the behaviour of the per-ontology
-    ``/classes`` and ``/edges`` endpoints on fresh databases.
+    ``existing`` is the caller's one-shot snapshot of collection names, so
+    collection-existence checks here cost zero extra round-trips. Missing
+    collections contribute no rows, mirroring the behaviour of the
+    per-ontology ``/classes`` and ``/edges`` endpoints on fresh databases.
     """
     if not ontology_ids:
         return [], [], []
 
     classes: list[dict[str, Any]] = []
-    if db.has_collection("ontology_classes"):
+    if "ontology_classes" in existing:
         classes = list(
             run_aql(
                 db,
@@ -326,8 +341,8 @@ def _fetch_entities_for_ontologies(
             )
         )
 
-    edges = _fetch_edges_across_ontologies(db, ontology_ids)
-    properties = _fetch_properties_across_ontologies(db, ontology_ids)
+    edges = _fetch_edges_across_ontologies(db, ontology_ids, existing=existing)
+    properties = _fetch_properties_across_ontologies(db, ontology_ids, existing=existing)
 
     return classes, edges, properties
 
@@ -335,6 +350,8 @@ def _fetch_entities_for_ontologies(
 def _fetch_edges_across_ontologies(
     db: StandardDatabase,
     ontology_ids: list[str],
+    *,
+    existing: set[str],
 ) -> list[dict[str, Any]]:
     """Union live edges across every edge collection in the allow-list.
 
@@ -342,7 +359,6 @@ def _fetch_edges_across_ontologies(
     so downstream consumers can distinguish (e.g.) ``subclass_of`` from
     ``rdfs_range_class`` -- the canvas styles them differently.
     """
-    existing = _existing_collection_names(db)
     edge_cols = tuple(c for c in LIVE_EDGE_COLLECTIONS if c in existing)
     if not edge_cols:
         return []
@@ -369,9 +385,10 @@ def _fetch_edges_across_ontologies(
 def _fetch_properties_across_ontologies(
     db: StandardDatabase,
     ontology_ids: list[str],
+    *,
+    existing: set[str],
 ) -> list[dict[str, Any]]:
     """Union live property docs across the property collection allow-list."""
-    existing = _existing_collection_names(db)
     prop_cols = tuple(c for c in LIVE_PROP_COLLECTIONS if c in existing)
     if not prop_cols:
         return []
