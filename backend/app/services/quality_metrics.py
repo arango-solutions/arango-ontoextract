@@ -7,19 +7,30 @@ for individual ontologies and aggregate summaries (PRD §6.13, §3.2).
 from __future__ import annotations
 
 import logging
+import threading
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
 from arango.database import StandardDatabase
 
 from app.db import quality_history_repo
 from app.db.temporal_constants import NEVER_EXPIRES
-from app.db.utils import run_aql
+from app.db.utils import existing_collection_names, run_aql
 
 log = logging.getLogger(__name__)
 
 
-def _has(db: StandardDatabase, name: str) -> bool:
-    """Check whether a collection exists, swallowing errors."""
+def _has(db: StandardDatabase, name: str, existing: set[str] | None = None) -> bool:
+    """Check whether a collection exists, swallowing errors.
+
+    When *existing* (a snapshot from ``existing_collection_names``) is given,
+    membership-test it instead of issuing a ``has_collection`` HTTP round-trip.
+    This module probes ~24 collections per ontology; on a remote (cloud/WAN)
+    ArangoDB those probes alone cost seconds per ontology without the snapshot.
+    """
+    if existing is not None:
+        return name in existing
     try:
         return cast(bool, db.has_collection(name))
     except Exception:
@@ -31,8 +42,12 @@ def compute_ontology_quality(
     ontology_id: str,
     *,
     include_estimated_cost: bool = True,
+    existing: set[str] | None = None,
 ) -> dict[str, Any]:
     """Compute structural and confidence quality metrics for a single ontology.
+
+    Pass *existing* (collection-name snapshot) when calling in a loop so the
+    snapshot is taken once, not once per ontology.
 
     Returns
     -------
@@ -40,6 +55,9 @@ def compute_ontology_quality(
         avg_confidence, class_count, property_count, completeness,
         orphan_count, has_cycles, classes_without_properties
     """
+    if existing is None:
+        existing = existing_collection_names(db)
+
     class_count = 0
     property_count = 0
     avg_confidence: float | None = None
@@ -47,7 +65,7 @@ def compute_ontology_quality(
     avg_faithfulness: float | None = None
     avg_semantic_validity: float | None = None
 
-    if _has(db, "ontology_classes"):
+    if _has(db, "ontology_classes", existing=existing):
         rows = list(
             run_aql(
                 db,
@@ -67,13 +85,15 @@ def compute_ontology_quality(
             avg_faithfulness = rows[0].get("avg_faith")
             avg_semantic_validity = rows[0].get("avg_sem")
 
-    _use_pgt = _has(db, "ontology_datatype_properties") or _has(db, "ontology_object_properties")
+    _use_pgt = _has(db, "ontology_datatype_properties", existing=existing) or _has(
+        db, "ontology_object_properties", existing=existing
+    )
 
     datatype_property_count = 0
     object_property_count = 0
 
     if _use_pgt:
-        if _has(db, "ontology_datatype_properties"):
+        if _has(db, "ontology_datatype_properties", existing=existing):
             rows = list(
                 run_aql(
                     db,
@@ -84,7 +104,7 @@ def compute_ontology_quality(
                 )
             )
             datatype_property_count = rows[0] if rows else 0
-        if _has(db, "ontology_object_properties"):
+        if _has(db, "ontology_object_properties", existing=existing):
             rows = list(
                 run_aql(
                     db,
@@ -96,7 +116,7 @@ def compute_ontology_quality(
             )
             object_property_count = rows[0] if rows else 0
         property_count = datatype_property_count + object_property_count
-    elif _has(db, "ontology_properties"):
+    elif _has(db, "ontology_properties", existing=existing):
         rows = list(
             run_aql(
                 db,
@@ -110,7 +130,7 @@ def compute_ontology_quality(
 
     classes_with_props = 0
     if class_count > 0:
-        if _use_pgt and _has(db, "rdfs_domain"):
+        if _use_pgt and _has(db, "rdfs_domain", existing=existing):
             rows = list(
                 run_aql(
                     db,
@@ -123,7 +143,7 @@ def compute_ontology_quality(
                 )
             )
             classes_with_props = rows[0] if rows else 0
-        elif _has(db, "has_property"):
+        elif _has(db, "has_property", existing=existing):
             rows = list(
                 run_aql(
                     db,
@@ -140,13 +160,13 @@ def compute_ontology_quality(
     completeness = (classes_with_props / class_count * 100) if class_count > 0 else 0.0
     classes_without_properties = max(0, class_count - classes_with_props)
 
-    orphan_count = _count_orphans(db, ontology_id)
-    has_cycles = _detect_cycles(db, ontology_id)
+    orphan_count = _count_orphans(db, ontology_id, existing=existing)
+    has_cycles = _detect_cycles(db, ontology_id, existing=existing)
 
     relationship_count = 0
     classes_with_relationships = 0
     if class_count > 0:
-        if _use_pgt and _has(db, "rdfs_range_class"):
+        if _use_pgt and _has(db, "rdfs_range_class", existing=existing):
             rows = list(
                 run_aql(
                     db,
@@ -157,7 +177,7 @@ def compute_ontology_quality(
                 )
             )
             relationship_count = rows[0] if rows else 0
-            if relationship_count > 0 and _has(db, "rdfs_domain"):
+            if relationship_count > 0 and _has(db, "rdfs_domain", existing=existing):
                 rows2 = list(
                     run_aql(
                         db,
@@ -177,7 +197,7 @@ def compute_ontology_quality(
                     )
                 )
                 classes_with_relationships = rows2[0] if rows2 else 0
-        elif _has(db, "related_to"):
+        elif _has(db, "related_to", existing=existing):
             rows = list(
                 run_aql(
                     db,
@@ -204,7 +224,7 @@ def compute_ontology_quality(
     connectivity = (classes_with_relationships / class_count * 100) if class_count > 0 else 0.0
 
     chunk_count = 0
-    if _has(db, "has_chunk"):
+    if _has(db, "has_chunk", existing=existing):
         rows = list(
             run_aql(
                 db,
@@ -222,8 +242,9 @@ def compute_ontology_quality(
         class_count,
         property_count,
         relationship_count,
-        subclass_edge_count=_count_edges(db, "subclass_of", ontology_id),
+        subclass_edge_count=_count_edges(db, "subclass_of", ontology_id, existing=existing),
         attribute_count=datatype_property_count if _use_pgt else None,
+        existing=existing,
     )
 
     health_score: int | None = None
@@ -243,7 +264,7 @@ def compute_ontology_quality(
     estimated_cost: float | None = None
     ontology_name: str = ontology_id
     ontology_tier: str = "unknown"
-    if _has(db, "ontology_registry"):
+    if _has(db, "ontology_registry", existing=existing):
         try:
             reg_rows = list(
                 run_aql(
@@ -257,7 +278,11 @@ def compute_ontology_quality(
                 ontology_name = reg_rows[0].get("name") or ontology_id
                 ontology_tier = reg_rows[0].get("tier") or "unknown"
                 ext_run_id = reg_rows[0].get("run_id")
-                if include_estimated_cost and ext_run_id and _has(db, "extraction_runs"):
+                if (
+                    include_estimated_cost
+                    and ext_run_id
+                    and _has(db, "extraction_runs", existing=existing)
+                ):
                     from app.services.extraction import get_run_cost
 
                     cost_data = get_run_cost(
@@ -269,7 +294,7 @@ def compute_ontology_quality(
         except Exception:
             log.debug("could not fetch cost for ontology %s", ontology_id, exc_info=True)
 
-    assertion_metrics = compute_assertion_evidence_metrics(db, ontology_id)
+    assertion_metrics = compute_assertion_evidence_metrics(db, ontology_id, existing=existing)
 
     # Structural integrity (0-1), surfaced as a first-class metric to match the
     # UPM empirical baseline (docs/research/Ontologies_27_05.pdf: 0.11 -> 0.7
@@ -288,7 +313,9 @@ def compute_ontology_quality(
     # of the function on purpose: the unit tests mock AQL by call ordinal, so
     # new queries must come after the existing numbered ones to avoid shifting
     # them. Strictly stronger than orphan_count (see _island_classes docstring).
-    island_count, island_classes = _island_classes(db, ontology_id, use_pgt=_use_pgt)
+    island_count, island_classes = _island_classes(
+        db, ontology_id, use_pgt=_use_pgt, existing=existing
+    )
 
     return {
         "ontology_id": ontology_id,
@@ -320,21 +347,29 @@ def compute_ontology_quality(
 def compute_assertion_evidence_metrics(
     db: StandardDatabase,
     ontology_id: str,
+    *,
+    existing: set[str] | None = None,
 ) -> dict[str, Any]:
     """Compute assertion-level evidence coverage by ontology element type."""
     by_type = {
-        "classes": _evidence_coverage_for_collection(db, "ontology_classes", ontology_id),
+        "classes": _evidence_coverage_for_collection(
+            db, "ontology_classes", ontology_id, existing=existing
+        ),
         "attributes": _evidence_coverage_for_collection(
             db,
             "ontology_datatype_properties",
             ontology_id,
+            existing=existing,
         ),
         "relationships": _evidence_coverage_for_collection(
             db,
             "ontology_object_properties",
             ontology_id,
+            existing=existing,
         ),
-        "subclass_links": _evidence_coverage_for_collection(db, "subclass_of", ontology_id),
+        "subclass_links": _evidence_coverage_for_collection(
+            db, "subclass_of", ontology_id, existing=existing
+        ),
     }
 
     total = sum(item["total"] for item in by_type.values())
@@ -352,9 +387,11 @@ def _evidence_coverage_for_collection(
     db: StandardDatabase,
     collection: str,
     ontology_id: str,
+    *,
+    existing: set[str] | None = None,
 ) -> dict[str, Any]:
     """Count active docs in a collection and how many carry source evidence."""
-    if not _has(db, collection):
+    if not _has(db, collection, existing=existing):
         return {"total": 0, "evidenced": 0, "coverage": None}
 
     rows = list(
@@ -382,9 +419,15 @@ def _evidence_coverage_for_collection(
     }
 
 
-def _count_edges(db: StandardDatabase, collection: str, ontology_id: str) -> int:
+def _count_edges(
+    db: StandardDatabase,
+    collection: str,
+    ontology_id: str,
+    *,
+    existing: set[str] | None = None,
+) -> int:
     """Count active edges in a collection for an ontology."""
-    if not _has(db, collection):
+    if not _has(db, collection, existing=existing):
         return 0
     rows = list(
         run_aql(
@@ -407,6 +450,7 @@ def _compute_schema_metrics(
     subclass_edge_count: int,
     *,
     attribute_count: int | None = None,
+    existing: set[str] | None = None,
 ) -> dict[str, Any]:
     """Compute OntoQA/OQuaRE-aligned schema metrics.
 
@@ -420,7 +464,11 @@ def _compute_schema_metrics(
     attribute_richness = (attr_numerator / class_count) if class_count > 0 else 0.0
 
     max_depth = 0
-    if _has(db, "ontology_classes") and _has(db, "subclass_of") and subclass_edge_count > 0:
+    if (
+        _has(db, "ontology_classes", existing=existing)
+        and _has(db, "subclass_of", existing=existing)
+        and subclass_edge_count > 0
+    ):
         rows = list(
             run_aql(
                 db,
@@ -447,7 +495,7 @@ def _compute_schema_metrics(
         max_depth = rows[0] if rows and rows[0] else 0
 
     annotation_completeness = 0.0
-    if class_count > 0 and _has(db, "ontology_classes"):
+    if class_count > 0 and _has(db, "ontology_classes", existing=existing):
         rows = list(
             run_aql(
                 db,
@@ -469,15 +517,20 @@ def _compute_schema_metrics(
     }
 
 
-def _count_orphans(db: StandardDatabase, ontology_id: str) -> int:
+def _count_orphans(
+    db: StandardDatabase,
+    ontology_id: str,
+    *,
+    existing: set[str] | None = None,
+) -> int:
     """Count classes with no subclass_of parent that are not root classes.
 
     A root class is one where at least one other class is a subclass of it.
     An orphan is a class with no parent AND no children — truly disconnected.
     """
-    if not _has(db, "ontology_classes"):
+    if not _has(db, "ontology_classes", existing=existing):
         return 0
-    if not _has(db, "subclass_of"):
+    if not _has(db, "subclass_of", existing=existing):
         rows = list(
             run_aql(
                 db,
@@ -525,6 +578,7 @@ def _island_classes(
     *,
     use_pgt: bool,
     limit: int = 50,
+    existing: set[str] | None = None,
 ) -> tuple[int, list[dict[str, str]]]:
     """Find zero-degree "island" classes — the deck's "connects to nothing".
 
@@ -543,7 +597,7 @@ def _island_classes(
     ``{"key", "label"}`` dicts for the workspace "connects to nothing" lens.
     Counts are exact; only the enumerated examples are truncated.
     """
-    if not _has(db, "ontology_classes"):
+    if not _has(db, "ontology_classes", existing=existing):
         return 0, []
 
     all_classes = list(
@@ -561,7 +615,7 @@ def _island_classes(
     connected: set[str] = set()
 
     def _collect_both_ends(collection: str) -> None:
-        if not _has(db, collection):
+        if not _has(db, collection, existing=existing):
             return
         for row in run_aql(
             db,
@@ -574,7 +628,7 @@ def _island_classes(
             connected.add(row["t"])
 
     def _collect_to(collection: str) -> None:
-        if not _has(db, collection):
+        if not _has(db, collection, existing=existing):
             return
         for row in run_aql(
             db,
@@ -599,9 +653,16 @@ def _island_classes(
     return len(islands), examples
 
 
-def _detect_cycles(db: StandardDatabase, ontology_id: str) -> bool:
+def _detect_cycles(
+    db: StandardDatabase,
+    ontology_id: str,
+    *,
+    existing: set[str] | None = None,
+) -> bool:
     """Detect cycles in the subclass_of hierarchy via AQL traversal."""
-    if not _has(db, "subclass_of") or not _has(db, "ontology_classes"):
+    if not _has(db, "subclass_of", existing=existing) or not _has(
+        db, "ontology_classes", existing=existing
+    ):
         return False
 
     rows = list(
@@ -679,6 +740,8 @@ def compute_health_score(
 def compute_extraction_quality(
     db: StandardDatabase,
     ontology_id: str,
+    *,
+    existing: set[str] | None = None,
 ) -> dict[str, Any]:
     """Compute extraction-process quality metrics (curation acceptance, time-to-ontology).
 
@@ -687,7 +750,7 @@ def compute_extraction_quality(
     dict with keys: acceptance_rate, time_to_ontology_ms
     """
     acceptance_rate: float | None = None
-    if _has(db, "curation_decisions"):
+    if _has(db, "curation_decisions", existing=existing):
         rows = list(
             run_aql(
                 db,
@@ -713,7 +776,9 @@ def compute_extraction_quality(
                 acceptance_rate = round((r.get("accepted") or 0) / total, 4)
 
     time_to_ontology_ms: int | None = None
-    if _has(db, "ontology_registry") and _has(db, "extraction_runs"):
+    if _has(db, "ontology_registry", existing=existing) and _has(
+        db, "extraction_runs", existing=existing
+    ):
         rows = list(
             run_aql(
                 db,
@@ -741,7 +806,9 @@ def compute_extraction_quality(
         "ontology_id": ontology_id,
         "acceptance_rate": acceptance_rate,
         "time_to_ontology_ms": time_to_ontology_ms,
-        "confidence_calibration": compute_confidence_calibration_metrics(db, ontology_id),
+        "confidence_calibration": compute_confidence_calibration_metrics(
+            db, ontology_id, existing=existing
+        ),
     }
 
 
@@ -752,8 +819,9 @@ def compute_quality_report(
     record_snapshot: bool = True,
 ) -> dict[str, Any]:
     """Compute the public per-ontology quality report and optionally persist it."""
-    ontology_quality = compute_ontology_quality(db, ontology_id)
-    extraction_quality = compute_extraction_quality(db, ontology_id)
+    existing = existing_collection_names(db)
+    ontology_quality = compute_ontology_quality(db, ontology_id, existing=existing)
+    extraction_quality = compute_extraction_quality(db, ontology_id, existing=existing)
     report = {
         **ontology_quality,
         **extraction_quality,
@@ -785,9 +853,13 @@ def get_quality_history(
 def compute_confidence_calibration_metrics(
     db: StandardDatabase,
     ontology_id: str,
+    *,
+    existing: set[str] | None = None,
 ) -> dict[str, Any]:
     """Compare extraction confidence buckets against HITL acceptance outcomes."""
-    if not _has(db, "curation_decisions") or not _has(db, "ontology_classes"):
+    if not _has(db, "curation_decisions", existing=existing) or not _has(
+        db, "ontology_classes", existing=existing
+    ):
         return {
             "bucket_count": 0,
             "total_decisions": 0,
@@ -933,9 +1005,11 @@ def _summarise_ontologies(ontologies: list[dict[str, Any]]) -> dict[str, Any]:
 def get_class_scores(
     db: StandardDatabase,
     ontology_id: str,
+    *,
+    existing: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Return per-class faithfulness + semantic validity for distribution charts."""
-    if not _has(db, "ontology_classes"):
+    if not _has(db, "ontology_classes", existing=existing):
         return []
 
     return list(
@@ -959,9 +1033,13 @@ def get_class_scores(
 def get_qualitative_evaluation(
     db: StandardDatabase,
     ontology_id: str,
+    *,
+    existing: set[str] | None = None,
 ) -> dict[str, Any] | None:
     """Retrieve the qualitative evaluation from the extraction run linked to this ontology."""
-    if not _has(db, "ontology_registry") or not _has(db, "extraction_runs"):
+    if not _has(db, "ontology_registry", existing=existing) or not _has(
+        db, "extraction_runs", existing=existing
+    ):
         return None
 
     rows = list(
@@ -978,18 +1056,55 @@ def get_qualitative_evaluation(
     return None
 
 
-def compute_dashboard_payload(db: StandardDatabase) -> dict[str, Any]:
-    """Assemble the full dashboard payload: summary + per-ontology scorecards."""
+def compute_dashboard_payload(
+    db: StandardDatabase,
+    *,
+    db_factory: Callable[[], StandardDatabase] | None = None,
+    max_workers: int = 4,
+) -> dict[str, Any]:
+    """Assemble the full dashboard payload: summary + per-ontology scorecards.
+
+    Per-ontology quality is WAN-latency-bound (~15-20 AQL round-trips each),
+    so when *db_factory* is provided the per-ontology computations run on a
+    thread pool, each worker thread holding its OWN connection from the
+    factory — the shared handle wraps one ``requests.Session`` and must not
+    be used concurrently. Without a factory (unit tests, single-ontology
+    registries) the loop stays sequential on the caller's connection, which
+    keeps ordinal-based AQL mocks deterministic.
+    """
+    existing = existing_collection_names(db)
     ontology_ids: list[str] = []
-    if _has(db, "ontology_registry"):
+    if _has(db, "ontology_registry", existing=existing):
         ontology_ids = list(run_aql(db, "FOR o IN ontology_registry RETURN o._key"))
 
-    ontologies: list[dict[str, Any]] = []
-    for oid in ontology_ids:
+    def _quality_for(oid: str, worker_db: StandardDatabase) -> dict[str, Any] | None:
         try:
-            ontologies.append(compute_ontology_quality(db, oid))
+            return compute_ontology_quality(worker_db, oid, existing=existing)
         except Exception:
             log.warning("dashboard: quality failed for %s", oid, exc_info=True)
+            return None
+
+    ontologies: list[dict[str, Any]] = []
+    if db_factory is not None and len(ontology_ids) > 1:
+        local = threading.local()
+
+        def _worker(oid: str) -> dict[str, Any] | None:
+            worker_db = getattr(local, "db", None)
+            if worker_db is None:
+                worker_db = db_factory()
+                local.db = worker_db
+            return _quality_for(oid, worker_db)
+
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(ontology_ids))) as pool:
+            # pool.map preserves input order, so scorecard order matches the
+            # registry listing exactly as the sequential path does.
+            results = list(pool.map(_worker, ontology_ids))
+        ontologies = [r for r in results if r is not None]
+    else:
+        for oid in ontology_ids:
+            result = _quality_for(oid, db)
+            if result is not None:
+                ontologies.append(result)
 
     summary = _summarise_ontologies(ontologies)
 

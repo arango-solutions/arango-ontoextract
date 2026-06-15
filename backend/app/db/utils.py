@@ -16,6 +16,26 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def existing_collection_names(db: StandardDatabase) -> set[str] | None:
+    """Snapshot the database's collection names in ONE round-trip.
+
+    python-arango's ``has_collection`` issues a full HTTP request per probe;
+    code paths that probe many collections against a remote (cloud/WAN)
+    ArangoDB pay ~0.2s per probe. Fetching ``db.collections()`` once and
+    membership-testing the returned set replaces N round-trips with one.
+
+    Returns ``None`` when the snapshot cannot be taken or comes back empty
+    (mocked connections in unit tests iterate as empty, and a real database
+    always exposes at least its system collections) so callers can fall back
+    to per-call ``has_collection`` probes.
+    """
+    try:
+        names = {c["name"] for c in db.collections()}  # type: ignore[union-attr]
+    except Exception:
+        return None
+    return names or None
+
+
 def run_aql(
     db: StandardDatabase,
     query: str,

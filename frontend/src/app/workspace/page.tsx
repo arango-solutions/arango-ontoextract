@@ -685,6 +685,11 @@ function WorkspacePageInner() {
     name: string;
     data: PerOntologyQualityApiShape;
   } | null>(null);
+  // Quality report computes ~20 live AQL checks server-side (seconds on a
+  // remote DB), so the request needs visible busy/error states of its own.
+  const [qualityLoading, setQualityLoading] = useState<string | null>(null);
+  const [qualityLoadError, setQualityLoadError] = useState<string | null>(null);
+  const qualityAbortRef = useRef<AbortController | null>(null);
 
   const handleSelectDocument = useCallback(async (docId: string) => {
     try {
@@ -1138,12 +1143,19 @@ function WorkspacePageInner() {
       const id = String(base._key ?? base.ontology_id ?? "").trim();
       const name = String(base.label ?? base.name ?? id);
       if (!id) return;
+      qualityAbortRef.current?.abort();
+      const controller = new AbortController();
+      qualityAbortRef.current = controller;
+      setQualityLoadError(null);
+      setQualityLoading(name);
       try {
         const quality = await api.get<PerOntologyQualityApiShape>(
           `/api/v1/quality/${encodeURIComponent(id)}`,
+          { signal: controller.signal },
         );
         setQualityOverlay({ name, data: quality });
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         const message =
           err instanceof ApiError
             ? err.body.message
@@ -1151,6 +1163,12 @@ function WorkspacePageInner() {
               ? err.message
               : "Failed to load quality report";
         console.error("Quality report error:", message);
+        setQualityLoadError(message);
+      } finally {
+        if (qualityAbortRef.current === controller) {
+          qualityAbortRef.current = null;
+          setQualityLoading(null);
+        }
       }
     },
     [],
@@ -1491,6 +1509,45 @@ function WorkspacePageInner() {
           onClose={() => setReleaseOntology(null)}
           onReleased={() => setExplorerLibraryNonce((n) => n + 1)}
         />
+      )}
+
+      {qualityLoading && !qualityOverlay && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-xl px-8 py-6 flex flex-col items-center gap-3 max-w-sm text-center">
+            <div className="animate-spin h-8 w-8 border-2 border-indigo-400 border-t-transparent rounded-full" />
+            <p className="text-sm font-medium text-gray-900">
+              Computing quality report for &ldquo;{qualityLoading}&rdquo;…
+            </p>
+            <p className="text-xs text-gray-500">
+              Running ~20 live checks against the database — this usually takes a few seconds.
+            </p>
+            <button
+              onClick={() => {
+                qualityAbortRef.current?.abort();
+                qualityAbortRef.current = null;
+                setQualityLoading(null);
+              }}
+              className="text-xs text-gray-500 hover:text-gray-700 underline"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {qualityLoadError && !qualityLoading && !qualityOverlay && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-xl px-8 py-6 flex flex-col items-center gap-3 max-w-sm text-center">
+            <p className="text-sm font-medium text-red-600">Quality report failed</p>
+            <p className="text-xs text-gray-500 break-words">{qualityLoadError}</p>
+            <button
+              onClick={() => setQualityLoadError(null)}
+              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
+            >
+              Close
+            </button>
+          </div>
+        </div>
       )}
 
       {qualityOverlay && (

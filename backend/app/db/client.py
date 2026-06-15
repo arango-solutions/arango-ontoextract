@@ -96,6 +96,27 @@ def get_db() -> StandardDatabase:
     return _db
 
 
+def new_db_connection() -> StandardDatabase:
+    """Create a FRESH client + database handle, bypassing the module singleton.
+
+    For worker threads: the singleton returned by :func:`get_db` wraps a single
+    ``requests.Session``, which must not be shared across threads. Each call
+    returns an independent connection; the caller owns its lifetime (it is
+    released with the object — python-arango holds no server-side session
+    state).
+    """
+    settings = _get_settings()
+    kwargs: dict[str, Any] = {"hosts": settings.effective_arango_host}
+    if settings.is_cluster and not settings.arango_verify_ssl:
+        kwargs["verify_override"] = False
+    client = ArangoClient(**kwargs)
+    return client.db(
+        settings.arango_db,
+        username=settings.arango_user,
+        password=settings.arango_password,
+    )
+
+
 def close_db() -> None:
     global _client, _db, _config_signature
     if _client is not None:

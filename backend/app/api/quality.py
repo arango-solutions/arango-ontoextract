@@ -1,15 +1,21 @@
 """Quality metrics API endpoints (PRD §6.13, §3.2).
 
 Thin route handlers that delegate to the quality_metrics service.
+
+The dashboard and per-ontology reports issue dozens of synchronous AQL
+round-trips; against a remote (cloud/WAN) ArangoDB that takes seconds. Those
+handlers run the service call via ``asyncio.to_thread`` so the event loop
+keeps serving other requests while the report computes.
 """
 
+import asyncio
 import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.db.client import get_db
+from app.db.client import get_db, new_db_connection
 from app.services.belief_revision_metrics import revisions_dashboard
 from app.services.quality_metrics import (
     compute_dashboard_payload,
@@ -30,7 +36,11 @@ async def dashboard() -> dict[str, Any]:
     """Full dashboard payload: summary + per-ontology scorecards + alerts."""
     try:
         db = get_db()
-        return compute_dashboard_payload(db)
+        return await asyncio.to_thread(
+            compute_dashboard_payload,
+            db,
+            db_factory=new_db_connection,
+        )
     except Exception as exc:
         log.exception("Failed to compute dashboard payload")
         raise HTTPException(status_code=500, detail="Internal server error") from exc
@@ -41,7 +51,12 @@ async def quality_for_ontology(ontology_id: str) -> dict[str, Any]:
     """Return structural and extraction quality scores for an ontology."""
     try:
         db = get_db()
-        return compute_quality_report(db, ontology_id, record_snapshot=True)
+        return await asyncio.to_thread(
+            compute_quality_report,
+            db,
+            ontology_id,
+            record_snapshot=True,
+        )
     except Exception as exc:
         log.exception("Failed to compute quality for ontology %s", ontology_id)
         raise HTTPException(status_code=500, detail="Internal server error") from exc

@@ -279,8 +279,10 @@ class TestQualityReportHistory:
             "health_score": 82,
             "acceptance_rate": 0.75,
         }
-        mock_ontology.assert_called_once_with(db, "onto_1")
-        mock_extraction.assert_called_once_with(db, "onto_1")
+        # The report takes one collection-name snapshot and shares it across
+        # both halves (None here: a MagicMock yields no usable snapshot).
+        mock_ontology.assert_called_once_with(db, "onto_1", existing=None)
+        mock_extraction.assert_called_once_with(db, "onto_1", existing=None)
         mock_save.assert_called_once_with("onto_1", result, db=db)
 
     def test_get_quality_history_delegates_to_repository(self):

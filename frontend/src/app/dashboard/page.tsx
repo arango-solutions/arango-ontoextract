@@ -52,6 +52,15 @@ function DashboardPageInner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Elapsed-seconds ticker so a long compute reads as "working", not frozen.
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  useEffect(() => {
+    if (!loading) return;
+    setElapsedSec(0);
+    const timer = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, [loading]);
 
   const fetchDashboard = useCallback(async () => {
     setLoading(true);
@@ -188,11 +197,15 @@ function DashboardPageInner() {
           <>
             {/* Loading */}
             {loading && !data && (
-              <div className="flex flex-col items-center justify-center py-20 gap-2">
-                <p className="text-gray-400 animate-pulse">Loading dashboard…</p>
+              <div className="flex flex-col items-center justify-center py-20 gap-3">
+                <div className="animate-spin h-8 w-8 border-2 border-indigo-400 border-t-transparent rounded-full" />
+                <p className="text-gray-600 font-medium">Computing quality scores…</p>
                 <p className="text-xs text-gray-400 max-w-md text-center">
-                  Computing quality for each ontology can take up to a few minutes on large libraries.
+                  The server runs live structural checks for every ontology in your
+                  library. This usually takes 5&ndash;15 seconds, and can take longer on
+                  large libraries or remote databases.
                 </p>
+                <p className="text-xs text-gray-300 tabular-nums">{elapsedSec}s elapsed</p>
               </div>
             )}
 
