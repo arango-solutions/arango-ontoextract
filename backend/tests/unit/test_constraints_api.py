@@ -11,8 +11,14 @@ from unittest.mock import patch
 
 import pytest
 
-from app.api.errors import NotFoundError
-from app.api.ontology import list_ontology_constraints
+from app.api.errors import NotFoundError, ValidationError
+from app.api.ontology import (
+    approve_constraint_endpoint,
+    list_ontology_constraints,
+    reject_constraint_endpoint,
+    update_constraint_endpoint,
+)
+from app.models.ontology import UpdateConstraintRequest
 
 
 def _registry_entry() -> dict[str, object]:
@@ -217,3 +223,143 @@ async def test_forwards_class_id_query_param_to_repo() -> None:
     assert kwargs["ontology_id"] == "onto_1"
     assert kwargs["constraint_type"] is None
     assert kwargs["include_unresolved"] is True
+
+
+# ---------------------------------------------------------------------------
+# Constraint curation mutations (I.7)
+# ---------------------------------------------------------------------------
+
+
+def _live_constraint(ontology_id: str = "onto_1") -> dict[str, object]:
+    return {
+        "_key": "c1",
+        "ontology_id": ontology_id,
+        "constraint_type": "owl:Restriction",
+        "on_class": "ontology_classes/Account",
+        "restriction_type": "minCardinality",
+        "restriction_value": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_approve_constraint_sets_status_approved() -> None:
+    with (
+        patch("app.api.ontology.get_db", return_value=object()),
+        patch(
+            "app.api.ontology.constraints_repo.get_constraint",
+            return_value=_live_constraint(),
+        ),
+        patch(
+            "app.api.ontology.constraints_repo.update_constraint",
+            return_value={"_key": "c2", "status": "approved", "version": 2},
+        ) as mock_update,
+    ):
+        out = await approve_constraint_endpoint("onto_1", "c1")
+
+    assert out["status"] == "approved"
+    assert mock_update.call_args.kwargs["data"] == {"status": "approved"}
+    assert mock_update.call_args.kwargs["key"] == "c1"
+
+
+@pytest.mark.asyncio
+async def test_approve_constraint_404_when_missing() -> None:
+    with (
+        patch("app.api.ontology.get_db", return_value=object()),
+        patch("app.api.ontology.constraints_repo.get_constraint", return_value=None),
+        pytest.raises(NotFoundError),
+    ):
+        await approve_constraint_endpoint("onto_1", "missing")
+
+
+@pytest.mark.asyncio
+async def test_approve_constraint_rejects_cross_ontology() -> None:
+    with (
+        patch("app.api.ontology.get_db", return_value=object()),
+        patch(
+            "app.api.ontology.constraints_repo.get_constraint",
+            return_value=_live_constraint(ontology_id="other"),
+        ),
+        pytest.raises(ValidationError),
+    ):
+        await approve_constraint_endpoint("onto_1", "c1")
+
+
+@pytest.mark.asyncio
+async def test_reject_constraint_expires_it() -> None:
+    with (
+        patch("app.api.ontology.get_db", return_value=object()),
+        patch(
+            "app.api.ontology.constraints_repo.get_constraint",
+            return_value=_live_constraint(),
+        ),
+        patch(
+            "app.api.ontology.constraints_repo.expire_constraint",
+            return_value={"_key": "c1", "expired": 123.0},
+        ) as mock_expire,
+    ):
+        out = await reject_constraint_endpoint("onto_1", "c1")
+
+    assert out == {
+        "status": "rejected",
+        "constraint_key": "c1",
+        "ontology_id": "onto_1",
+    }
+    assert mock_expire.call_args.kwargs["key"] == "c1"
+
+
+@pytest.mark.asyncio
+async def test_reject_constraint_404_when_already_gone() -> None:
+    # get_constraint passes (race: still live at read) but expire returns None.
+    with (
+        patch("app.api.ontology.get_db", return_value=object()),
+        patch(
+            "app.api.ontology.constraints_repo.get_constraint",
+            return_value=_live_constraint(),
+        ),
+        patch(
+            "app.api.ontology.constraints_repo.expire_constraint",
+            return_value=None,
+        ),
+        pytest.raises(NotFoundError),
+    ):
+        await reject_constraint_endpoint("onto_1", "c1")
+
+
+@pytest.mark.asyncio
+async def test_update_constraint_edits_value_and_resets_status_to_pending() -> None:
+    with (
+        patch("app.api.ontology.get_db", return_value=object()),
+        patch(
+            "app.api.ontology.constraints_repo.get_constraint",
+            return_value=_live_constraint(),
+        ),
+        patch(
+            "app.api.ontology.constraints_repo.update_constraint",
+            return_value={"_key": "c2", "restriction_value": 5, "status": "pending"},
+        ) as mock_update,
+    ):
+        out = await update_constraint_endpoint(
+            "onto_1",
+            "c1",
+            UpdateConstraintRequest(restriction_value=5, description="loosened"),
+        )
+
+    assert out["restriction_value"] == 5
+    data = mock_update.call_args.kwargs["data"]
+    assert data["restriction_value"] == 5
+    assert data["description"] == "loosened"
+    # Editing a bound resets curation status so it is re-reviewed.
+    assert data["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_update_constraint_requires_a_field() -> None:
+    with (
+        patch("app.api.ontology.get_db", return_value=object()),
+        patch(
+            "app.api.ontology.constraints_repo.get_constraint",
+            return_value=_live_constraint(),
+        ),
+        pytest.raises(ValidationError),
+    ):
+        await update_constraint_endpoint("onto_1", "c1", UpdateConstraintRequest())

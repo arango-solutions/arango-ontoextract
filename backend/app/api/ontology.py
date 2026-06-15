@@ -33,6 +33,7 @@ from app.models.ontology import (
     CreateEdgeRequest,
     CreatePropertyRequest,
     UpdateClassRequest,
+    UpdateConstraintRequest,
     UpdateEdgeRequest,
     UpdatePropertyRequest,
 )
@@ -771,6 +772,114 @@ async def list_ontology_constraints(
         "constraints": enriched,
         "total": len(enriched),
     }
+
+
+# ---------------------------------------------------------------------------
+# Constraint curation mutations (Stream 3 I.7)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_live_constraint(ontology_id: str, constraint_key: str) -> dict[str, Any]:
+    """Fetch a live constraint and assert it belongs to ``ontology_id``.
+
+    Raises ``NotFoundError`` if the constraint doesn't exist (or was already
+    rejected/superseded), and ``ValidationError`` if it belongs to another
+    ontology — the same guard pattern the class/edge mutation endpoints use.
+    """
+    db = get_db()
+    constraint = constraints_repo.get_constraint(db, key=constraint_key)
+    if constraint is None:
+        raise NotFoundError(
+            f"Constraint '{constraint_key}' not found",
+            details={"ontology_id": ontology_id, "constraint_key": constraint_key},
+        )
+    if constraint.get("ontology_id") != ontology_id:
+        raise ValidationError("Constraint belongs to a different ontology")
+    return constraint
+
+
+@router.post("/{ontology_id}/constraints/{constraint_key}/approve")
+async def approve_constraint_endpoint(
+    ontology_id: str,
+    constraint_key: str,
+) -> dict[str, Any]:
+    """Approve a constraint — set ``status='approved'`` (Stream 3 I.7).
+
+    Non-destructive: the constraint stays live and continues to be enforced
+    by the rule engine. Uses temporal versioning so the approval is an
+    auditable new version, consistent with edge/class status changes.
+    """
+    _resolve_live_constraint(ontology_id, constraint_key)
+    db = get_db()
+    try:
+        return constraints_repo.update_constraint(
+            db,
+            key=constraint_key,
+            data={"status": "approved"},
+            created_by="workspace",
+            change_summary=f"Constraint {constraint_key} approved",
+        )
+    except ValueError as exc:
+        raise NotFoundError(str(exc)) from exc
+
+
+@router.post("/{ontology_id}/constraints/{constraint_key}/reject")
+async def reject_constraint_endpoint(
+    ontology_id: str,
+    constraint_key: str,
+) -> dict[str, Any]:
+    """Reject a constraint — soft-delete it (Stream 3 I.7).
+
+    Expires the constraint so it drops out of the constraints list, the rule
+    engine, and exports (all filter on ``expired == NEVER_EXPIRES``). The
+    version is retained in temporal history, so a reject is auditable and
+    recoverable rather than a hard delete.
+    """
+    _resolve_live_constraint(ontology_id, constraint_key)
+    db = get_db()
+    expired = constraints_repo.expire_constraint(db, key=constraint_key)
+    if expired is None:
+        raise NotFoundError(f"Constraint '{constraint_key}' not found")
+    return {"status": "rejected", "constraint_key": constraint_key, "ontology_id": ontology_id}
+
+
+@router.put("/{ontology_id}/constraints/{constraint_key}")
+async def update_constraint_endpoint(
+    ontology_id: str,
+    constraint_key: str,
+    body: UpdateConstraintRequest,
+) -> dict[str, Any]:
+    """Edit a constraint's value or description (Stream 3 I.7).
+
+    Expires the old version and creates a new one carrying the edited fields.
+    Editing resets ``status`` to ``'pending'`` — a curator-changed bound
+    should be re-reviewed rather than inherit the prior approval.
+    """
+    _resolve_live_constraint(ontology_id, constraint_key)
+
+    update_data: dict[str, Any] = {
+        k: v
+        for k, v in {
+            "restriction_value": body.restriction_value,
+            "description": body.description,
+        }.items()
+        if v is not None
+    }
+    if not update_data:
+        raise ValidationError("No fields to update")
+    update_data["status"] = "pending"
+
+    db = get_db()
+    try:
+        return constraints_repo.update_constraint(
+            db,
+            key=constraint_key,
+            data=update_data,
+            created_by="workspace",
+            change_summary=f"Edited constraint {constraint_key}: {', '.join(update_data.keys())}",
+        )
+    except ValueError as exc:
+        raise NotFoundError(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

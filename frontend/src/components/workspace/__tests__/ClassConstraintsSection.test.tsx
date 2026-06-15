@@ -15,7 +15,7 @@
  *      constraints, so the parent panel stays compact).
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import ClassConstraintsSection, {
   groupConstraintsByProperty,
@@ -23,6 +23,8 @@ import ClassConstraintsSection, {
 import type { OntologyConstraint } from "@/types/timeline";
 
 const apiGet = jest.fn();
+const apiPost = jest.fn();
+const apiPut = jest.fn();
 
 jest.mock("@/lib/api-client", () => {
   class ApiError extends Error {
@@ -35,7 +37,11 @@ jest.mock("@/lib/api-client", () => {
     }
   }
   return {
-    api: { get: (...args: unknown[]) => apiGet(...args) },
+    api: {
+      get: (...args: unknown[]) => apiGet(...args),
+      post: (...args: unknown[]) => apiPost(...args),
+      put: (...args: unknown[]) => apiPut(...args),
+    },
     ApiError,
   };
 });
@@ -49,6 +55,10 @@ const { ApiError: MockApiError } = require("@/lib/api-client") as {
 
 beforeEach(() => {
   apiGet.mockReset();
+  apiPost.mockReset();
+  apiPut.mockReset();
+  apiPost.mockResolvedValue({});
+  apiPut.mockResolvedValue({});
 });
 
 // ---------------------------------------------------------------------------
@@ -381,5 +391,121 @@ describe("ClassConstraintsSection (rendering)", () => {
     await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(2));
     const lastUrl = apiGet.mock.calls.at(-1)?.[0] as string;
     expect(lastUrl).toContain("class_id=ontology_classes%2FOrder");
+  });
+});
+
+// ===========================================================================
+// Curation actions (I.7) — approve / reject / edit in the Manage view
+// ===========================================================================
+
+describe("ClassConstraintsSection curation actions", () => {
+  const pendingChip = () =>
+    mkConstraint({
+      _key: "c1",
+      constraint_type: "owl:Restriction",
+      restriction_type: "allValuesFrom",
+      restriction_value: "http://ex.org#Currency",
+      property_label: "amount",
+    });
+
+  async function openManage() {
+    await waitFor(() => expect(screen.getByText("Manage")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Manage"));
+  }
+
+  it("POSTs approve and refetches the list", async () => {
+    stubConstraintsResponse([pendingChip()]);
+    render(<ClassConstraintsSection ontologyId="ont1" classKey="Customer" />);
+    await openManage();
+
+    fireEvent.click(screen.getByTitle("Approve constraint"));
+
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenCalledWith(
+        "/api/v1/ontology/ont1/constraints/c1/approve",
+      ),
+    );
+    // Refetch fires after the mutation (initial load + post-action reload).
+    await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(2));
+  });
+
+  it("POSTs reject for the row", async () => {
+    stubConstraintsResponse([pendingChip()]);
+    render(<ClassConstraintsSection ontologyId="ont1" classKey="Customer" />);
+    await openManage();
+
+    fireEvent.click(screen.getByTitle("Reject (remove) constraint"));
+
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenCalledWith(
+        "/api/v1/ontology/ont1/constraints/c1/reject",
+      ),
+    );
+  });
+
+  it("PUTs an edited value + description", async () => {
+    stubConstraintsResponse([
+      mkConstraint({
+        _key: "c9",
+        constraint_type: "owl:Restriction",
+        restriction_type: "maxCardinality",
+        restriction_value: 5,
+        property_label: "holders",
+      }),
+    ]);
+    render(<ClassConstraintsSection ontologyId="ont1" classKey="Customer" />);
+    await openManage();
+
+    fireEvent.click(screen.getByTitle("Edit constraint"));
+    fireEvent.change(screen.getByLabelText("Constraint value"), {
+      target: { value: "3" },
+    });
+    fireEvent.change(screen.getByLabelText("Constraint description"), {
+      target: { value: "loosened bound" },
+    });
+    fireEvent.click(screen.getByText("Save"));
+
+    await waitFor(() =>
+      expect(apiPut).toHaveBeenCalledWith(
+        "/api/v1/ontology/ont1/constraints/c9",
+        // numeric value is coerced from the text input since the original was a number
+        { restriction_value: 3, description: "loosened bound" },
+      ),
+    );
+  });
+
+  it("shows an approved pill and hides the approve button for approved rows", async () => {
+    stubConstraintsResponse([
+      mkConstraint({
+        _key: "c2",
+        status: "approved",
+        constraint_type: "owl:Restriction",
+        restriction_type: "allValuesFrom",
+        restriction_value: "http://ex.org#Currency",
+        property_label: "amount",
+      } as Partial<OntologyConstraint> as never),
+    ]);
+    render(<ClassConstraintsSection ontologyId="ont1" classKey="Customer" />);
+    await openManage();
+
+    expect(screen.getByText("approved")).toBeInTheDocument();
+    expect(screen.queryByTitle("Approve constraint")).toBeNull();
+  });
+
+  it("surfaces a mutation error without blanking the list", async () => {
+    stubConstraintsResponse([pendingChip()]);
+    apiPost.mockRejectedValueOnce(
+      new MockApiError(500, { code: "INTERNAL_ERROR", message: "approve failed" }),
+    );
+    render(<ClassConstraintsSection ontologyId="ont1" classKey="Customer" />);
+    await openManage();
+
+    fireEvent.click(screen.getByTitle("Approve constraint"));
+
+    await waitFor(() =>
+      expect(screen.getByText("approve failed")).toBeInTheDocument(),
+    );
+    // The constraint row is still rendered.
+    expect(screen.getByText("amount")).toBeInTheDocument();
   });
 });

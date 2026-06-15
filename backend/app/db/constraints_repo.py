@@ -45,6 +45,10 @@ log = logging.getLogger(__name__)
 
 CONSTRAINT_COLLECTION = "ontology_constraints"
 
+# Curation status values a constraint may carry (Stream 3 I.7). A row with no
+# ``status`` field is treated as ``"pending"`` (extraction/import never set it).
+CONSTRAINT_STATUS_VALUES = ("pending", "approved", "rejected")
+
 
 def list_constraints_for_ontology(
     db: StandardDatabase | None = None,
@@ -130,6 +134,92 @@ def list_constraints_for_class(
             bind_vars={"class_id": class_id, "never": NEVER_EXPIRES},
         )
     )
+
+
+def get_constraint(
+    db: StandardDatabase | None = None,
+    *,
+    key: str,
+) -> dict[str, Any] | None:
+    """Return the live constraint document for ``key``, or ``None``.
+
+    "Live" means ``expired == NEVER_EXPIRES``; a constraint that has been
+    rejected (expired) or superseded by an edit is not returned.
+    """
+    if db is None:
+        db = get_db()
+    if not db.has_collection(CONSTRAINT_COLLECTION):
+        return None
+    rows = list(
+        run_aql(
+            db,
+            f"FOR c IN {CONSTRAINT_COLLECTION} "
+            "FILTER c._key == @key AND c.expired == @never "
+            "LIMIT 1 RETURN c",
+            bind_vars={"key": key, "never": NEVER_EXPIRES},
+        )
+    )
+    return rows[0] if rows else None
+
+
+def update_constraint(
+    db: StandardDatabase | None = None,
+    *,
+    key: str,
+    data: dict[str, Any],
+    created_by: str = "workspace",
+    change_summary: str = "",
+) -> dict[str, Any]:
+    """Temporally update a constraint: expire the old version, create a new one.
+
+    Used for curator approve (``status``) and edit (``restriction_value`` /
+    ``description``). Constraints link to their class and property by the
+    ``on_class`` / ``property_id`` *fields* (not by edges), so there are no
+    connected edges to re-create — ``update_entity`` copies those fields
+    forward as part of the merged document.
+
+    Returns the new (live) version. Raises ``ValueError`` if no live version
+    exists for ``key``.
+    """
+    if db is None:
+        db = get_db()
+
+    # Imported here (not at module top) to avoid a circular import:
+    # temporal -> ontology_repo -> constraints_repo would otherwise cycle.
+    from app.services import temporal as temporal_svc
+
+    return temporal_svc.update_entity(
+        db,
+        collection=CONSTRAINT_COLLECTION,
+        key=key,
+        new_data=data,
+        created_by=created_by,
+        change_type="edit",
+        change_summary=change_summary or f"Updated constraint {key}",
+    )
+
+
+def expire_constraint(
+    db: StandardDatabase | None = None,
+    *,
+    key: str,
+) -> dict[str, Any] | None:
+    """Soft-delete a constraint (curator reject).
+
+    Sets ``expired = now`` so the row drops out of every live query — the
+    constraints list, the rule engine, and exports all filter on
+    ``expired == NEVER_EXPIRES``. The version is retained in temporal history
+    (and TTL-aged like any other expired row), so a reject is auditable and
+    recoverable, not a hard delete.
+
+    Returns the expired document, or ``None`` if no live version exists.
+    """
+    if db is None:
+        db = get_db()
+
+    from app.services import temporal as temporal_svc
+
+    return temporal_svc.expire_entity(db, collection=CONSTRAINT_COLLECTION, key=key)
 
 
 def count_constraints_for_ontology(

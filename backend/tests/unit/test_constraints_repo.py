@@ -197,3 +197,68 @@ def test_count_constraints_zero_when_empty(mock_run_aql: MagicMock) -> None:
     mock_run_aql.return_value = iter([])
 
     assert constraints_repo.count_constraints_for_ontology(db, ontology_id="o1") == 0
+
+
+# ---------------------------------------------------------------------------
+# get_constraint (I.7)
+# ---------------------------------------------------------------------------
+
+
+def test_get_constraint_none_when_collection_missing() -> None:
+    db = _db_with(False)
+    assert constraints_repo.get_constraint(db, key="k1") is None
+
+
+@patch("app.db.constraints_repo.run_aql")
+def test_get_constraint_returns_live_row(mock_run_aql: MagicMock) -> None:
+    db = _db_with(True)
+    mock_run_aql.return_value = iter([{"_key": "k1", "ontology_id": "o1"}])
+
+    out = constraints_repo.get_constraint(db, key="k1")
+
+    assert out == {"_key": "k1", "ontology_id": "o1"}
+    args, kwargs = mock_run_aql.call_args
+    assert kwargs["bind_vars"] == {"key": "k1", "never": NEVER_EXPIRES}
+    # Only the live version is returned.
+    assert "c.expired == @never" in args[1]
+
+
+@patch("app.db.constraints_repo.run_aql")
+def test_get_constraint_none_when_no_live_version(mock_run_aql: MagicMock) -> None:
+    db = _db_with(True)
+    mock_run_aql.return_value = iter([])
+    assert constraints_repo.get_constraint(db, key="k1") is None
+
+
+# ---------------------------------------------------------------------------
+# update_constraint / expire_constraint (I.7) — delegate to temporal service
+# ---------------------------------------------------------------------------
+
+
+def test_update_constraint_delegates_to_temporal_update_entity() -> None:
+    db = MagicMock()
+    with patch("app.services.temporal.update_entity") as mock_update:
+        mock_update.return_value = {"_key": "k2", "status": "approved", "version": 2}
+        out = constraints_repo.update_constraint(
+            db, key="k1", data={"status": "approved"}, change_summary="approve"
+        )
+
+    assert out["status"] == "approved"
+    _, kwargs = mock_update.call_args
+    assert kwargs["collection"] == "ontology_constraints"
+    assert kwargs["key"] == "k1"
+    assert kwargs["new_data"] == {"status": "approved"}
+    # Field-linked constraints have no edges to re-create.
+    assert "edge_collections" not in kwargs or not kwargs["edge_collections"]
+
+
+def test_expire_constraint_delegates_to_temporal_expire_entity() -> None:
+    db = MagicMock()
+    with patch("app.services.temporal.expire_entity") as mock_expire:
+        mock_expire.return_value = {"_key": "k1", "expired": 123.0}
+        out = constraints_repo.expire_constraint(db, key="k1")
+
+    assert out == {"_key": "k1", "expired": 123.0}
+    _, kwargs = mock_expire.call_args
+    assert kwargs["collection"] == "ontology_constraints"
+    assert kwargs["key"] == "k1"

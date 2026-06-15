@@ -26,7 +26,7 @@
  * and is what a curator actually thinks about.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { api, ApiError } from "@/lib/api-client";
 import type { OntologyConstraint } from "@/types/timeline";
@@ -34,6 +34,13 @@ import type { OntologyConstraint } from "@/types/timeline";
 interface ClassConstraintsSectionProps {
   ontologyId: string;
   classKey: string;
+}
+
+/** Curator status of a constraint row; absent ``status`` is treated as pending. */
+function constraintStatus(c: OntologyConstraint): "pending" | "approved" | "rejected" {
+  const s = (c as { status?: string }).status;
+  if (s === "approved" || s === "rejected") return s;
+  return "pending";
 }
 
 interface ConstraintsResponse {
@@ -163,6 +170,9 @@ interface PropertyGroup {
   chips: OntologyConstraint[];
   /** Sources represented in this group, for the property header pill stack. */
   sources: SourceKey[];
+  /** Every raw row for this property (incl. the collapsed cardinality rows),
+   *  so the curation "Manage" list can act on each constraint individually. */
+  allRows: OntologyConstraint[];
 }
 
 /**
@@ -184,6 +194,7 @@ export function groupConstraintsByProperty(
     exactBound?: number;
     chips: OntologyConstraint[];
     sources: Set<SourceKey>;
+    allRows: OntologyConstraint[];
   };
   const byKey = new Map<string, Working>();
 
@@ -196,9 +207,11 @@ export function groupConstraintsByProperty(
         property_label: c.property_label || "",
         chips: [],
         sources: new Set(),
+        allRows: [],
       };
       byKey.set(key, g);
     }
+    g.allRows.push(c);
     // Keep the first non-empty label encountered -- the import path
     // always populates this, extraction may not.
     if (!g.property_label && c.property_label) {
@@ -237,6 +250,7 @@ export function groupConstraintsByProperty(
       cardinalityBadge: formatCardinality(g),
       chips: g.chips,
       sources: Array.from(g.sources).sort(),
+      allRows: g.allRows,
     });
   }
   // Stable display order: property label > URI fallback.
@@ -298,11 +312,13 @@ export default function ClassConstraintsSection({
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Mutation-side state (curation actions). Kept separate from the load
+  // error so a failed approve doesn't blank the constraint list.
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function fetchConstraints() {
+  const refetch = useCallback(
+    async (signal?: AbortSignal) => {
       setLoading(true);
       setError(null);
       try {
@@ -310,32 +326,80 @@ export default function ClassConstraintsSection({
         const url =
           `/api/v1/ontology/library/${ontologyId}/constraints` +
           `?class_id=${encodeURIComponent(classId)}`;
-        const res = await api.get<ConstraintsResponse>(url);
-        if (!cancelled) {
-          setConstraints(res.constraints);
-        }
+        const res = await api.get<ConstraintsResponse>(url, { signal });
+        if (!signal?.aborted) setConstraints(res.constraints);
       } catch (err) {
-        if (!cancelled) {
-          // Constraint listing is non-critical; a 404 / 500 here should
-          // not blank the rest of the panel. Surface a short message
-          // inline so the curator knows something didn't load.
-          setError(
-            err instanceof ApiError
-              ? err.body.message
-              : "Failed to load constraints",
-          );
-          setConstraints([]);
-        }
+        if (signal?.aborted) return;
+        // Constraint listing is non-critical; a 404 / 500 here should
+        // not blank the rest of the panel. Surface a short message
+        // inline so the curator knows something didn't load.
+        setError(
+          err instanceof ApiError ? err.body.message : "Failed to load constraints",
+        );
+        setConstraints([]);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!signal?.aborted) setLoading(false);
       }
-    }
+    },
+    [ontologyId, classKey],
+  );
 
-    fetchConstraints();
-    return () => {
-      cancelled = true;
-    };
-  }, [ontologyId, classKey]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void refetch(controller.signal);
+    return () => controller.abort();
+  }, [refetch]);
+
+  // Run one curation mutation, then refetch so the list reflects the new
+  // temporal version (approve/edit change the row's _key; reject expires it).
+  const runAction = useCallback(
+    async (key: string, fn: () => Promise<unknown>) => {
+      setBusyKey(key);
+      setActionError(null);
+      try {
+        await fn();
+        await refetch();
+      } catch (err) {
+        setActionError(
+          err instanceof ApiError ? err.body.message : "Constraint action failed",
+        );
+      } finally {
+        setBusyKey(null);
+      }
+    },
+    [refetch],
+  );
+
+  const approve = useCallback(
+    (key: string) =>
+      runAction(key, () =>
+        api.post(
+          `/api/v1/ontology/${ontologyId}/constraints/${encodeURIComponent(key)}/approve`,
+        ),
+      ),
+    [ontologyId, runAction],
+  );
+
+  const reject = useCallback(
+    (key: string) =>
+      runAction(key, () =>
+        api.post(
+          `/api/v1/ontology/${ontologyId}/constraints/${encodeURIComponent(key)}/reject`,
+        ),
+      ),
+    [ontologyId, runAction],
+  );
+
+  const saveEdit = useCallback(
+    (key: string, restriction_value: number | string, description: string) =>
+      runAction(key, () =>
+        api.put(
+          `/api/v1/ontology/${ontologyId}/constraints/${encodeURIComponent(key)}`,
+          { restriction_value, description },
+        ),
+      ),
+    [ontologyId, runAction],
+  );
 
   if (loading) {
     return (
@@ -365,18 +429,45 @@ export default function ClassConstraintsSection({
       {error && (
         <p className="text-xs text-red-500 mb-2">{error}</p>
       )}
+      {actionError && (
+        <p className="text-xs text-red-500 mb-2">{actionError}</p>
+      )}
 
       <div className="space-y-2">
         {groups.map((g) => (
-          <PropertyConstraintRow key={g.property_uri} group={g} />
+          <PropertyConstraintRow
+            key={g.property_uri}
+            group={g}
+            busyKey={busyKey}
+            onApprove={approve}
+            onReject={reject}
+            onSaveEdit={saveEdit}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function PropertyConstraintRow({ group }: { group: PropertyGroup }) {
+interface RowActions {
+  busyKey: string | null;
+  onApprove: (key: string) => void;
+  onReject: (key: string) => void;
+  onSaveEdit: (key: string, value: number | string, description: string) => void;
+}
+
+function PropertyConstraintRow({
+  group,
+  busyKey,
+  onApprove,
+  onReject,
+  onSaveEdit,
+}: { group: PropertyGroup } & RowActions) {
   const propertyDisplay = group.property_label || group.property_uri;
+  const [managing, setManaging] = useState(false);
+  // Rows the curator can act on: those carrying a real _key (every
+  // materialized row does). Pending rows surface an approve affordance.
+  const manageable = group.allRows.filter((r) => r._key);
   return (
     <div className="bg-gray-50 rounded-md px-2.5 py-2">
       <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -389,6 +480,16 @@ function PropertyConstraintRow({ group }: { group: PropertyGroup }) {
         {group.sources.map((s) => (
           <SourcePill key={s} source={s} />
         ))}
+        {manageable.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setManaging((m) => !m)}
+            className="ml-auto text-[10px] text-gray-400 hover:text-indigo-600"
+            title="Approve, reject, or edit individual constraints"
+          >
+            {managing ? "Done" : "Manage"}
+          </button>
+        )}
       </div>
 
       <div className="flex items-center gap-1.5 flex-wrap">
@@ -404,6 +505,145 @@ function PropertyConstraintRow({ group }: { group: PropertyGroup }) {
           <ConstraintChip key={`${c.restriction_type}-${idx}`} constraint={c} />
         ))}
       </div>
+
+      {managing && (
+        <div className="mt-2 space-y-1 border-t border-gray-200 pt-2">
+          {manageable.map((c) => (
+            <ConstraintManageRow
+              key={c._key}
+              constraint={c}
+              busy={busyKey === c._key}
+              onApprove={onApprove}
+              onReject={onReject}
+              onSaveEdit={onSaveEdit}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One editable/actionable line per raw constraint row in the Manage view. */
+function ConstraintManageRow({
+  constraint,
+  busy,
+  onApprove,
+  onReject,
+  onSaveEdit,
+}: {
+  constraint: OntologyConstraint;
+  busy: boolean;
+  onApprove: (key: string) => void;
+  onReject: (key: string) => void;
+  onSaveEdit: (key: string, value: number | string, description: string) => void;
+}) {
+  const key = constraint._key as string;
+  const status = constraintStatus(constraint);
+  const [editing, setEditing] = useState(false);
+  const isNumeric = typeof constraint.restriction_value === "number";
+  const [value, setValue] = useState(() => formatValue(constraint.restriction_value));
+  const [description, setDescription] = useState(constraint.description ?? "");
+
+  const statusPill =
+    status === "approved"
+      ? { text: "approved", cls: "bg-green-50 text-green-700 border-green-200" }
+      : { text: "pending", cls: "bg-gray-100 text-gray-500 border-gray-200" };
+
+  function commit() {
+    const coerced = isNumeric ? Number(value) : value;
+    if (isNumeric && Number.isNaN(coerced as number)) return;
+    onSaveEdit(key, coerced, description);
+    setEditing(false);
+  }
+
+  return (
+    <div className="text-[11px] bg-white border border-gray-200 rounded px-2 py-1">
+      <div className="flex items-center gap-1.5">
+        <span className="text-gray-500">{restrictionLabel(constraint.restriction_type)}</span>
+        {!editing && (
+          <span className="font-mono text-gray-800 truncate max-w-[140px]">
+            {formatValue(constraint.restriction_value)}
+          </span>
+        )}
+        <span
+          className={`text-[10px] uppercase tracking-wide px-1 py-px rounded border ${statusPill.cls}`}
+        >
+          {statusPill.text}
+        </span>
+        <div className="ml-auto flex items-center gap-1">
+          {!editing && status !== "approved" && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onApprove(key)}
+              className="text-green-600 hover:text-green-800 disabled:opacity-40"
+              title="Approve constraint"
+            >
+              ✓
+            </button>
+          )}
+          {!editing && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setEditing(true)}
+              className="text-gray-500 hover:text-indigo-700 disabled:opacity-40"
+              title="Edit constraint"
+            >
+              ✎
+            </button>
+          )}
+          {!editing && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onReject(key)}
+              className="text-red-500 hover:text-red-700 disabled:opacity-40"
+              title="Reject (remove) constraint"
+            >
+              ✗
+            </button>
+          )}
+        </div>
+      </div>
+
+      {editing && (
+        <div className="mt-1.5 space-y-1.5">
+          <input
+            type={isNumeric ? "number" : "text"}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            aria-label="Constraint value"
+            className="w-full border border-gray-300 rounded px-1.5 py-0.5 text-[11px]"
+          />
+          <input
+            type="text"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Description (optional)"
+            aria-label="Constraint description"
+            className="w-full border border-gray-300 rounded px-1.5 py-0.5 text-[11px]"
+          />
+          <div className="flex items-center gap-2 justify-end">
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={commit}
+              className="px-2 py-0.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-40"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

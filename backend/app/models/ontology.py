@@ -108,6 +108,19 @@ class UpdateEdgeRequest(BaseModel):
     status: Literal["pending", "approved", "rejected"]
 
 
+class UpdateConstraintRequest(BaseModel):
+    """Curator edit for a constraint (Stream 3 I.7).
+
+    Only the curator-editable fields are accepted. ``restriction_value`` is
+    overloaded by the constraint's ``restriction_type`` exactly as in
+    ``ExtractedConstraint`` (int for cardinality kinds, class URI for value
+    restrictions, literal for hasValue). At least one field must be set.
+    """
+
+    restriction_value: int | float | bool | str | None = None
+    description: str | None = None
+
+
 class ExtractionClassification(StrEnum):
     EXISTING = "existing"
     EXTENSION = "extension"
