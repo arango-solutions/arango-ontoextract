@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 from typing import Any, cast
 
 from arango.database import StandardDatabase
@@ -120,6 +121,17 @@ def compute_effective_ontology(
     ValueError
         If ``ontology_id`` is not present in ``ontology_registry``.
     """
+    # Stage-level timing so the dev log surfaces where the WTW switch cost
+    # actually goes. The workspace canvas loads ``/effective`` (target +
+    # transitive imports), NOT ``/classes`` or ``/edges`` -- so the T3
+    # telemetry on those handlers never covered the canvas's real hot path.
+    # This mirrors ``list_ontology_edges``' per-stage breakdown: a single
+    # WTW switch on a 1000+ class ontology now reveals whether the cost is
+    # (a) metadata round-trips, (b) the AQL closure walk on a deep import
+    # chain, (c) the 3-AQL entity fetch, (d) Python projection/annotation,
+    # or (e) the O(n^2) conflict grouping + DFS cycle walk on the merged set.
+    t_start = time.perf_counter()
+
     # Fetch the collection-name set ONCE per request. python-arango's
     # ``has_collection`` / ``collections`` each issue a full ``GET
     # /_api/collection`` round-trip, and this handler probes collection
@@ -137,22 +149,28 @@ def compute_effective_ontology(
     self_entry = _get_registry_entry(db, ontology_id)
     if self_entry is None:
         raise ValueError(f"Ontology '{ontology_id}' not found")
+    t_meta = time.perf_counter() - t_start
 
+    t = time.perf_counter()
     sources = _compute_source_closure(
         db,
         self_entry=self_entry,
         max_depth=safe_depth,
         existing=existing,
     )
+    t_closure = time.perf_counter() - t
 
     self_oid = ontology_id
     source_keys = [s["_key"] for s in sources]
     source_name_by_key = {s["_key"]: s.get("name") or s["_key"] for s in sources}
 
+    t = time.perf_counter()
     classes_raw, edges_raw, props_raw = _fetch_entities_for_ontologies(
         db, source_keys, existing=existing
     )
+    t_fetch = time.perf_counter() - t
 
+    t = time.perf_counter()
     classes = _annotate_and_project(
         classes_raw,
         self_oid=self_oid,
@@ -171,18 +189,40 @@ def compute_effective_ontology(
         source_name_by_key=source_name_by_key,
         projector=None,
     )
+    t_project = time.perf_counter() - t
 
+    t = time.perf_counter()
     conflicts = _detect_conflicts(
         classes=classes,
         edges=edges,
         source_name_by_key=source_name_by_key,
         self_oid=self_oid,
     )
+    t_conflicts = time.perf_counter() - t
 
+    t = time.perf_counter()
     etag = _compute_etag(
         ontology_id=ontology_id,
         include=profile,
         sources=sources,
+    )
+    t_etag = time.perf_counter() - t
+
+    _log_timing(
+        ontology_id=ontology_id,
+        profile=profile,
+        sources=sources,
+        classes=classes,
+        edges=edges,
+        properties=properties,
+        conflicts=conflicts,
+        t_meta=t_meta,
+        t_closure=t_closure,
+        t_fetch=t_fetch,
+        t_project=t_project,
+        t_conflicts=t_conflicts,
+        t_etag=t_etag,
+        t_total=time.perf_counter() - t_start,
     )
 
     return {
@@ -708,6 +748,69 @@ def _compute_etag(
         parts.append(f"{key}:{mtime}")
     digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
     return f'W/"{digest[:32]}"'
+
+
+# ---------------------------------------------------------------------------
+# Telemetry (Stream 12 T6)
+# ---------------------------------------------------------------------------
+
+
+def _log_timing(
+    *,
+    ontology_id: str,
+    profile: str,
+    sources: list[dict[str, Any]],
+    classes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    properties: list[dict[str, Any]],
+    conflicts: list[dict[str, Any]],
+    t_meta: float,
+    t_closure: float,
+    t_fetch: float,
+    t_project: float,
+    t_conflicts: float,
+    t_etag: float,
+    t_total: float,
+) -> None:
+    """Emit a single per-stage timing line for one effective-graph computation.
+
+    ``t_total`` is the wall-clock elapsed across the whole computation, not
+    the sum of the stage timers, so it captures the small gaps between
+    stages too. Values are baked into the message string because the dev log
+    formatter only renders the message (not ``extra``); ``extra`` is kept for
+    production JSON loggers that index structured fields.
+    """
+    ms_meta = round(t_meta * 1000, 1)
+    ms_closure = round(t_closure * 1000, 1)
+    ms_fetch = round(t_fetch * 1000, 1)
+    ms_project = round(t_project * 1000, 1)
+    ms_conflicts = round(t_conflicts * 1000, 1)
+    ms_etag = round(t_etag * 1000, 1)
+    ms_total = round(t_total * 1000, 1)
+    log.info(
+        f"compute_effective_ontology timing ont={ontology_id} "
+        f"sources={len(sources)} classes={len(classes)} edges={len(edges)} "
+        f"props={len(properties)} conflicts={len(conflicts)} "
+        f"include={profile} meta={ms_meta}ms closure={ms_closure}ms "
+        f"fetch={ms_fetch}ms project={ms_project}ms conflicts={ms_conflicts}ms "
+        f"etag={ms_etag}ms TOTAL={ms_total}ms",
+        extra={
+            "ontology_id": ontology_id,
+            "source_count": len(sources),
+            "class_count": len(classes),
+            "edge_count": len(edges),
+            "prop_count": len(properties),
+            "conflict_count": len(conflicts),
+            "include": profile,
+            "ms_meta_snapshot": ms_meta,
+            "ms_closure_aql": ms_closure,
+            "ms_fetch_aql": ms_fetch,
+            "ms_project": ms_project,
+            "ms_conflicts": ms_conflicts,
+            "ms_etag": ms_etag,
+            "ms_total_handler": ms_total,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

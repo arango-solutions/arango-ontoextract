@@ -705,3 +705,57 @@ class TestMissingCollections:
     def test_default_max_depth_is_module_constant(self) -> None:
         """Guardrail: keep the public constant at 10 unless deliberately raised."""
         assert DEFAULT_MAX_DEPTH == 10
+
+
+# --- Telemetry (Stream 12 T6) ---------------------------------------------
+
+
+class TestTimingTelemetry:
+    """The canvas loads ``/effective``, so per-stage timing must surface here.
+
+    Pins the Stream 12 T6 telemetry contract: one ``log.info`` line per
+    computation, carrying every stage's ``ms_*`` field plus the entity
+    counts in ``extra`` so production JSON loggers can index the breakdown.
+    """
+
+    def test_emits_one_per_stage_timing_log(self, caplog: pytest.LogCaptureFixture) -> None:
+        db = _make_db(
+            registry_entries={"ont-self": {"_key": "ont-self", "name": "Solo", "updated_at": 1}},
+            aql_responses={
+                "FOR c IN ontology_classes": [
+                    {
+                        "_key": "C1",
+                        "_id": "ontology_classes/C1",
+                        "uri": "http://ex.org/C1",
+                        "ontology_id": "ont-self",
+                        "label": "Person",
+                    }
+                ]
+            },
+        )
+
+        with caplog.at_level("INFO", logger="app.services.ontology_effective"):
+            compute_effective_ontology(db, ontology_id="ont-self")
+
+        timing = [r for r in caplog.records if "compute_effective_ontology timing" in r.message]
+        assert len(timing) == 1, "exactly one timing line per computation"
+
+        rec = timing[0]
+        # Every stage timer is present as a structured field for JSON loggers.
+        for field in (
+            "ms_meta_snapshot",
+            "ms_closure_aql",
+            "ms_fetch_aql",
+            "ms_project",
+            "ms_conflicts",
+            "ms_etag",
+            "ms_total_handler",
+        ):
+            assert isinstance(getattr(rec, field), float), field
+
+        # Counts reflect the merged result, and the human-readable message
+        # bakes them in (the dev log formatter shows only the message).
+        assert rec.class_count == 1
+        assert rec.source_count == 1
+        assert rec.include == "summary"
+        assert "TOTAL=" in rec.message and "classes=1" in rec.message
