@@ -490,6 +490,11 @@ make test-infra-up
 make test-integration
 make test-infra-down
 
+# If port 8540 is already in use, choose an alternate host port
+ARANGO_TEST_PORT=8550 make test-infra-up
+ARANGO_TEST_HOST=http://localhost:8550 REDIS_TEST_URL=redis://localhost:6380/0 make test-integration
+make test-infra-down
+
 # All tests
 make test-all
 

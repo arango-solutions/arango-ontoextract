@@ -56,6 +56,7 @@ def mock_settings(test_db: StandardDatabase):
     and switches Redis to the test instance.
     """
     overrides = {
+        "test_deployment_mode": "local_docker",
         "arango_host": ARANGO_TEST_HOST,
         "arango_db": test_db.name,
         "arango_user": ARANGO_TEST_USER,

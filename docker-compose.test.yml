@@ -3,7 +3,7 @@ services:
     image: arangodb:3.12
     command: ["arangod", "--server.endpoint", "tcp://0.0.0.0:8529", "--vector-index"]
     ports:
-      - "8540:8529"
+      - "${ARANGO_TEST_PORT:-8540}:8529"
     environment:
       ARANGO_NO_AUTH: "1"
     tmpfs:
