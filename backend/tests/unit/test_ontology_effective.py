@@ -597,6 +597,115 @@ class TestConflictDetection:
         ]
         assert cycle_conflicts == []
 
+    def test_long_acyclic_chain_reports_no_cycle(self) -> None:
+        """A deep subclass chain across an import must NOT be a false cycle.
+
+        Regression guard for the Stream 12 T6 cycle-detection rewrite: the
+        old all-paths DFS was both correct here and pathologically slow on
+        exactly this shape (a long chain). The linear three-colour DFS must
+        keep returning zero cycles on an acyclic chain.
+        """
+        chain_len = 200
+        classes = [
+            {
+                "_key": f"C{i}",
+                "_id": f"ontology_classes/C{i}",
+                "uri": f"http://ex/C{i}",
+                "ontology_id": "ont-self" if i % 2 == 0 else "ont-a",
+                "label": f"C{i}",
+            }
+            for i in range(chain_len)
+        ]
+        # C0 -> C1 -> ... -> C{n-1}: a strict chain, no back-edge.
+        edges = [
+            {
+                "_key": f"e{i}",
+                "_from": f"ontology_classes/C{i}",
+                "_to": f"ontology_classes/C{i + 1}",
+                "ontology_id": "ont-a" if i % 2 == 0 else "ont-self",
+                "edge_type": "subclass_of",
+            }
+            for i in range(chain_len - 1)
+        ]
+        db = _make_db(
+            registry_entries=self._registry(),
+            aql_responses={
+                "OUTBOUND @target imports": self._two_imports(),
+                "FOR c IN ontology_classes": classes,
+                "LET edges = FLATTEN": [edges],
+            },
+        )
+
+        result = compute_effective_ontology(db, ontology_id="ont-self")
+
+        assert [c for c in result["conflicts"] if c["kind"] == "subclass_cycle_via_import"] == []
+
+    def test_cycle_embedded_in_a_longer_chain_is_still_detected(self) -> None:
+        """The back-edge closing a cycle deep inside a chain is still found."""
+        # C0 -> C1 -> C2 -> C3, plus C3 -> C1 (back-edge) closing C1->C2->C3->C1.
+        classes = [
+            {
+                "_key": f"C{i}",
+                "_id": f"ontology_classes/C{i}",
+                "uri": f"http://ex/C{i}",
+                "ontology_id": "ont-self",
+                "label": f"C{i}",
+            }
+            for i in range(4)
+        ]
+        edges = [
+            {
+                "_key": "e0",
+                "_from": "ontology_classes/C0",
+                "_to": "ontology_classes/C1",
+                "ontology_id": "ont-self",
+                "edge_type": "subclass_of",
+            },
+            {
+                "_key": "e1",
+                "_from": "ontology_classes/C1",
+                "_to": "ontology_classes/C2",
+                "ontology_id": "ont-self",
+                "edge_type": "subclass_of",
+            },
+            {
+                "_key": "e2",
+                "_from": "ontology_classes/C2",
+                "_to": "ontology_classes/C3",
+                "ontology_id": "ont-self",
+                "edge_type": "subclass_of",
+            },
+            {
+                # Imported back-edge closes the cycle and makes it a merge conflict.
+                "_key": "e3",
+                "_from": "ontology_classes/C3",
+                "_to": "ontology_classes/C1",
+                "ontology_id": "ont-a",
+                "edge_type": "subclass_of",
+            },
+        ]
+        db = _make_db(
+            registry_entries=self._registry(),
+            aql_responses={
+                "OUTBOUND @target imports": self._two_imports(),
+                "FOR c IN ontology_classes": classes,
+                "LET edges = FLATTEN": [edges],
+            },
+        )
+
+        result = compute_effective_ontology(db, ontology_id="ont-self")
+
+        cycle_conflicts = [
+            c for c in result["conflicts"] if c["kind"] == "subclass_cycle_via_import"
+        ]
+        assert len(cycle_conflicts) == 1
+        key = cycle_conflicts[0]["key"]
+        # The cycle is C1->C2->C3->C1; C0 is the lead-in and must NOT appear.
+        assert "ontology_classes/C1" in key
+        assert "ontology_classes/C2" in key
+        assert "ontology_classes/C3" in key
+        assert "ontology_classes/C0" not in key
+
 
 # --- ETag semantics --------------------------------------------------------
 

@@ -639,23 +639,58 @@ def _cycle_conflicts(
     cycles_seen: set[tuple[str, ...]] = set()
     out: list[dict[str, Any]] = []
 
-    for start in list(graph.keys()):
-        stack: list[tuple[str, list[str], list[str]]] = [(start, [start], [])]
+    # Three-colour iterative DFS: WHITE = unvisited, GRAY = on the current
+    # DFS path, BLACK = fully explored. A directed graph has a cycle iff DFS
+    # crosses an edge into a GRAY node (a back-edge), and every cycle contains
+    # at least one such back-edge -- so this surfaces a representative cycle
+    # per back-edge in O(V + E). The previous implementation restarted an
+    # all-paths DFS from every node, copying the path + edge-source lists at
+    # every step; that is super-linear on the long subclass chains real
+    # ontologies produce and dominated effective-graph latency (Stream 12 T6:
+    # ~1.8s of a 1.9s computation on a 3000-class ontology). ``path_nodes`` /
+    # ``path_edge_src`` track the active GRAY path and the source ontology of
+    # the edge that entered each path node, so a closed cycle's edge sources
+    # are exactly ``path_edge_src[idx + 1:] + [closing edge source]``.
+    white, gray, black = 0, 1, 2
+    color: dict[str, int] = {}
+
+    for root in graph:
+        if color.get(root, white) != white:
+            continue
+        color[root] = gray
+        path_nodes: list[str] = [root]
+        path_edge_src: list[str] = [""]
+        stack: list[tuple[str, Any]] = [(root, iter(graph.get(root, [])))]
         while stack:
-            node, path, edge_sources = stack.pop()
-            for nxt, edge_src in graph.get(node, []):
-                if nxt in path:
-                    cycle_nodes = [*path[path.index(nxt) :], nxt]
+            node, it = stack[-1]
+            descended = False
+            for nxt, edge_src in it:
+                state = color.get(nxt, white)
+                if state == white:
+                    color[nxt] = gray
+                    path_nodes.append(nxt)
+                    path_edge_src.append(edge_src)
+                    stack.append((nxt, iter(graph.get(nxt, []))))
+                    descended = True
+                    break
+                if state == gray:
+                    # Back-edge node -> nxt closes a cycle nxt -> ... -> node -> nxt.
+                    idx = path_nodes.index(nxt)
+                    cycle_nodes = [*path_nodes[idx:], nxt]
                     canonical = _canonicalise_cycle(cycle_nodes)
-                    if canonical in cycles_seen:
+                    if not canonical or canonical in cycles_seen:
                         continue
                     cycles_seen.add(canonical)
-                    cycle_edge_sources = [*edge_sources, edge_src]
+                    cycle_edge_sources = [*path_edge_src[idx + 1 :], edge_src]
                     if not _cycle_requires_import(cycle_edge_sources, self_oid):
                         continue
                     out.append(_format_cycle_conflict(canonical, class_by_id, source_name_by_key))
-                else:
-                    stack.append((nxt, [*path, nxt], [*edge_sources, edge_src]))
+                # black nodes are fully explored; nothing to descend into.
+            if not descended:
+                color[node] = black
+                stack.pop()
+                path_nodes.pop()
+                path_edge_src.pop()
 
     return sorted(out, key=lambda c: cast(str, c["key"]))
 
