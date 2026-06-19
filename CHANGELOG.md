@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The backend version is the single source of truth in `backend/app/__init__.py`.
 
+## [1.0.0] - 2026-06-19
+
+First production release. Closes the remaining PRD tail on top of v0.4.0 —
+Stream 3 constraint curation, the Stream 15 self-optimizing structural gate, and
+the Stream 12 T6 workspace-switch performance work — completing the v1.0.0
+functional scope (full PRD §6 feature coverage). ~10 commits since `v0.4.0`.
+
+### Added
+
+- **Constraint curation (Stream 3 I.7):** curator approve / reject / edit of OWL
+  + SHACL constraints — three mutation endpoints
+  (`POST /{id}/constraints/{key}/approve`, `.../reject`, `PUT .../{key}`) backed
+  by temporal repo helpers, plus the `ConstraintManageRow` workspace UI. Closes
+  Stream 3.
+- **Self-optimizing structural gate (Stream 15 SO.1 + SO.2):** flag-gated
+  in-pipeline structural gate (URI normalization + link recovery) between belief
+  revision and filter, now enabled by default with a faithfulness-no-regression
+  guarantee; post-write graph-health metrics (structural integrity, island
+  detection) surfaced on the dashboard.
+- **Arango AI brand theme:** green primary, Inter typeface, favicon.
+
+### Changed
+
+- **Workspace switch performance (Stream 12 T6):** added per-stage `ms_*`
+  telemetry to `compute_effective_ontology` (the endpoint the canvas loads), then
+  rewrote effective-graph subclass-cycle detection from an all-paths DFS to a
+  linear-time three-colour DFS — 3000-class effective graph 1.9s → 42ms (~45×),
+  the conflict-detection stage 1818ms → 3.7ms (~490×). `/edges` + `/effective`
+  pagination is no longer needed. Adds a standalone real-DB profiling harness
+  (`benchmarks/operations/bench_effective_ontology.py`).
+- **Quality dashboard performance:** ~61s → ~9s, with busy states.
+- **Ontology library performance:** batched library edge counts and snapshotted
+  collection names.
+- De-staled the implementation plan and remaining-work plan against the shipped
+  code; fixed system-review errors.
+- Integration-test ArangoDB host port is now configurable (`ARANGO_TEST_PORT`).
+
+### Fixed
+
+- Effective-graph cycle detection no longer mislabels an all-local subclass cycle
+  as import-induced when a pre-cycle path edge originates in an import.
+
 ## [0.4.0] - 2026-06-01
 
 The largest release since the initial cut: closes Belief Revision, Imports &
@@ -101,6 +143,7 @@ belief-revision node behind a feature flag.
 Initial release: end-to-end extraction pipeline, ontology editor, pipeline
 monitor, quality metrics, multi-document support, and the temporal substrate.
 
+[1.0.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.0.0
 [0.4.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v0.4.0
 [0.3.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v0.2.0
