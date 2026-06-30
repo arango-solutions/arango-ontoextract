@@ -762,7 +762,7 @@ Sprint C (data integrity)  ─┐
 
 ### Status Tracking Moved (June 2026)
 
-The PRD-coverage and remaining-work-priority tables that used to live here (last updated March 31, 2026) drifted badly from reality — they still listed Sprints PGT, H, ER, I, S, IMG, OWL, and V as pending long after they shipped. They have been removed. **`docs/REMAINING_WORK_PLAN.md` is the single source of truth for current status**; `SYSTEM_REVIEW_REPORT.md` gives a point-in-time assessment.
+The PRD-coverage and remaining-work-priority tables that used to live here (last updated March 31, 2026) drifted badly from reality — they still listed Sprints PGT, H, ER, I, S, IMG, OWL, and V as pending long after they shipped. They have been removed. **`REMAINING_WORK_PLAN.md` is the single source of truth for current status**; `SYSTEM_REVIEW_REPORT.md` gives a point-in-time assessment.
 
 This plan tracks work as lettered **Sprints**; `docs/REMAINING_WORK_PLAN.md` and the system review track numbered **Streams**. Mapping:
 

@@ -69,3 +69,9 @@ logs/
 data/uploads/
 data/tmp/
 *.tar.gz
+.prd-drift-queue/
+.claude/
+CLAUDE.md
+
+# Generated documentation artifacts (rendered from the .md sources)
+docs/*.pdf
