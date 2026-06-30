@@ -411,6 +411,8 @@ Putting documents, the OWL graph, vectors, and search into one multi-model datab
 
 That's the bet: the future of ontology engineering isn't a better one-shot extractor. It's a living system that proposes, grounds, versions, and revises — with a human holding the pen.
 
+Where we take it next follows the same thread. Domain-aware segmentation and structure-preserving chunking will let a single deck or report fan out into clean, reusable per-domain ontologies under an umbrella, instead of one tangled graph. Relational databases become a first-class source alongside prose, with LLM-enriched descriptions layered additively over the structural extractor rather than replacing it. And as the release-governance signals prove themselves, the autonomy dial turns up — more candidates auto-publishing on policy, fewer waiting on a person — without ever lowering the faithfulness floor or giving up reversibility. The destination is the same: not less human judgment, but human judgment spent where it actually moves the needle.
+
 ---
 
 *Want to go deeper? The companion pieces could cover (a) the temporal data model and how `NEVER_EXPIRES` interval semantics power time travel, (b) the LLM-as-judge faithfulness rater and the multi-signal confidence model, or (c) how MCP turns the whole platform into a set of tools any AI agent can call.*
