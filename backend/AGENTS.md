@@ -35,5 +35,27 @@ The Incremental Belief Revision (IBR) substrate spans several modules:
 
 See `docs/adr/008-belief-revision-substrate.md` for the architectural rationale and per-task implementation status.
 
+## Ontology API package (`app/api/ontology/`)
+The ontology REST surface (~3.6k lines) is split into cohesive sub-routers
+(Stream 14 CQ.3). All endpoints still mount under `/api/v1/ontology` via the
+single `router` assembled in `__init__.py`.
+
+- `library.py` — library CRUD, releases, documents, constraints, search, orgs
+- `domain.py` — domain / local / staging / promote
+- `entities_read.py` — class / property / edge reads + live-edge helpers
+- `mutations.py` — class / property / edge create-update-delete + export
+- `imports_io.py` — RDF file import jobs + create-empty
+- `imports.py` — import-graph management, effective view, catalog
+- `schema_temporal.py` — schema extraction/diff + temporal snapshot/diff/history
+- `_shared.py` — patch-relevant deps (`get_db`, `run_aql`, `paginate`,
+  `import_from_file`, the `*_repo` modules). Sub-routers call these via
+  attribute access (`_shared.get_db(...)`) so a single
+  `patch("app.api.ontology._shared.<name>")` rebinds them everywhere.
+
+`include_router` order in `__init__.py` preserves the original route
+precedence (static paths before `/{ontology_id}` captures); the invariant is
+guarded by `tests/unit/test_ontology_router_assembly.py`. When adding an
+endpoint, extend the matching sub-router — do not reintroduce a monolith.
+
 ## PRD Reference
 Full spec: `PRD.md` — this backend implements Sections 6–7 (features + API spec)

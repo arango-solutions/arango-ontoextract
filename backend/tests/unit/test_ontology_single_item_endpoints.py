@@ -73,7 +73,7 @@ def client_factory(db_with_collections):
         db = db_with_collections(collections)
         # Patch both import paths -- ``get_db`` is re-exported from app.db.client
         # and imported directly at the top of app.api.ontology.
-        patcher_main = patch("app.api.ontology.get_db", return_value=db)
+        patcher_main = patch("app.api.ontology._shared.get_db", return_value=db)
         patcher_main.start()
         from app.main import app
 

@@ -23,7 +23,7 @@ from app.main import app
 # in the router module created an independent binding; patching the
 # service binding would not intercept the call. See the mock-fidelity
 # rule -- "patch at the usage site".
-ROUTE_MODULE = "app.api.ontology"
+ROUTE_MODULE = "app.api.ontology.schema_temporal"
 
 client = TestClient(app)
 

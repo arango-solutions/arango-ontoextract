@@ -24,7 +24,7 @@ def _registry_entry() -> dict[str, object]:
 @pytest.mark.asyncio
 async def test_returns_404_when_ontology_missing() -> None:
     with (
-        patch("app.api.ontology.registry_repo.get_registry_entry", return_value=None),
+        patch("app.api.ontology._shared.registry_repo.get_registry_entry", return_value=None),
         pytest.raises(HTTPException) as excinfo,
     ):
         await export_ontology_endpoint("missing", format="turtle")
@@ -35,7 +35,7 @@ async def test_returns_404_when_ontology_missing() -> None:
 async def test_turtle_format_calls_export_ontology_with_turtle() -> None:
     with (
         patch(
-            "app.api.ontology.registry_repo.get_registry_entry",
+            "app.api.ontology._shared.registry_repo.get_registry_entry",
             return_value=_registry_entry(),
         ),
         patch(
@@ -57,7 +57,7 @@ async def test_shacl_format_calls_export_shacl_with_shapes_filename() -> None:
     next to the main ontology Turtle."""
     with (
         patch(
-            "app.api.ontology.registry_repo.get_registry_entry",
+            "app.api.ontology._shared.registry_repo.get_registry_entry",
             return_value=_registry_entry(),
         ),
         patch(
@@ -84,7 +84,7 @@ async def test_unknown_format_falls_through_to_turtle_default() -> None:
     returns useful output rather than 500."""
     with (
         patch(
-            "app.api.ontology.registry_repo.get_registry_entry",
+            "app.api.ontology._shared.registry_repo.get_registry_entry",
             return_value=_registry_entry(),
         ),
         patch(

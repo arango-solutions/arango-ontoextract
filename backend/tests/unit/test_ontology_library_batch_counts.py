@@ -37,7 +37,7 @@ def test_batch_edge_counts_single_combined_query() -> None:
         # The DB returns already-summed counts (ont_a's 2 + 1 across collections).
         return iter([{"oid": "ont_a", "cnt": 3}, {"oid": "ont_b", "cnt": 5}])
 
-    with patch("app.api.ontology.run_aql", side_effect=fake_run_aql):
+    with patch("app.api.ontology._shared.run_aql", side_effect=fake_run_aql):
         counts = _batch_edge_counts_for_ontology_ids(db, ["ont_a", "ont_b"])
 
     assert calls["n"] == 1  # single round-trip regardless of collection count
@@ -49,7 +49,7 @@ def test_batch_edge_counts_single_combined_query() -> None:
 def test_batch_edge_counts_uses_caller_supplied_collection_set() -> None:
     """When the caller passes ``existing``, we must NOT re-probe collections()."""
     db = MagicMock()
-    with patch("app.api.ontology.run_aql", return_value=iter([{"oid": "o", "cnt": 4}])):
+    with patch("app.api.ontology._shared.run_aql", return_value=iter([{"oid": "o", "cnt": 4}])):
         counts = _batch_edge_counts_for_ontology_ids(db, ["o"], existing={"subclass_of"})
     db.collections.assert_not_called()
     assert counts["o"] == 4
@@ -57,7 +57,7 @@ def test_batch_edge_counts_uses_caller_supplied_collection_set() -> None:
 
 def test_batch_edge_counts_no_edge_collections_returns_zeros() -> None:
     db = MagicMock()
-    with patch("app.api.ontology.run_aql") as run_aql_mock:
+    with patch("app.api.ontology._shared.run_aql") as run_aql_mock:
         counts = _batch_edge_counts_for_ontology_ids(db, ["a", "b"], existing={"ontology_classes"})
     run_aql_mock.assert_not_called()  # nothing to query
     assert counts == {"a": 0, "b": 0}

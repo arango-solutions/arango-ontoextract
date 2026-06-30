@@ -236,7 +236,7 @@ def client_with_mocked_db():
     db.aql.execute = MagicMock(side_effect=lambda *a, **kw: iter([]))
     with (
         patch("app.db.client.get_db", return_value=db),
-        patch("app.api.ontology.get_db", return_value=db),
+        patch("app.api.ontology._shared.get_db", return_value=db),
     ):
         from fastapi.testclient import TestClient
 

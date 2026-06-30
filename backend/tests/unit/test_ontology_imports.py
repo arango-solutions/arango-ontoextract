@@ -37,7 +37,7 @@ def _mock_db():
 def client(_mock_db):
     with (
         patch("app.db.client.get_db", return_value=_mock_db),
-        patch("app.api.ontology.get_db", return_value=_mock_db),
+        patch("app.api.ontology._shared.get_db", return_value=_mock_db),
     ):
         from app.main import app
 
@@ -289,7 +289,7 @@ class TestImportOntologyEndpoint:
             return {"source": "file_import", "registry_key": "my_onto"}
 
         with (
-            patch("app.api.ontology.registry_repo.get_registry_entry", return_value=None),
+            patch("app.api.ontology._shared.registry_repo.get_registry_entry", return_value=None),
             patch("app.api.ontology.asyncio.to_thread", side_effect=slow_to_thread),
         ):
             resp = client.post(
@@ -318,8 +318,8 @@ class TestImportOntologyEndpoint:
             }
 
         with (
-            patch("app.api.ontology.registry_repo.get_registry_entry", return_value=None),
-            patch("app.api.ontology.import_from_file"),
+            patch("app.api.ontology._shared.registry_repo.get_registry_entry", return_value=None),
+            patch("app.api.ontology._shared.import_from_file"),
             patch("app.api.ontology.asyncio.to_thread", side_effect=fake_to_thread),
         ):
             resp = client.post(
@@ -344,8 +344,8 @@ class TestImportOntologyEndpoint:
             raise ValueError("Unsupported file extension")
 
         with (
-            patch("app.api.ontology.registry_repo.get_registry_entry", return_value=None),
-            patch("app.api.ontology.import_from_file"),
+            patch("app.api.ontology._shared.registry_repo.get_registry_entry", return_value=None),
+            patch("app.api.ontology._shared.import_from_file"),
             patch("app.api.ontology.asyncio.to_thread", side_effect=boom),
         ):
             resp = client.post(
@@ -370,8 +370,8 @@ class TestImportOntologyEndpoint:
             return {"source": "file_import", "registry_key": "dup"}
 
         with (
-            patch("app.api.ontology.registry_repo.get_registry_entry", return_value=None),
-            patch("app.api.ontology.import_from_file"),
+            patch("app.api.ontology._shared.registry_repo.get_registry_entry", return_value=None),
+            patch("app.api.ontology._shared.import_from_file"),
             patch("app.api.ontology.asyncio.to_thread", side_effect=pending),
         ):
             first = client.post(
@@ -390,7 +390,7 @@ class TestImportOntologyEndpoint:
 
     def test_import_rejects_existing_registry_entry(self, client):
         with patch(
-            "app.api.ontology.registry_repo.get_registry_entry",
+            "app.api.ontology._shared.registry_repo.get_registry_entry",
             return_value=_registry_doc(key="existing"),
         ):
             resp = client.post(
@@ -405,7 +405,7 @@ class TestImportOntologyEndpoint:
         exists in the registry, status should still report completed."""
 
         with patch(
-            "app.api.ontology.registry_repo.get_registry_entry",
+            "app.api.ontology._shared.registry_repo.get_registry_entry",
             return_value=_registry_doc(
                 key="onto_restart",
                 source_filename="schema.ttl",
@@ -422,7 +422,7 @@ class TestImportOntologyEndpoint:
         assert body["result"]["filename"] == "schema.ttl"
 
     def test_import_status_unknown_id_returns_404(self, client):
-        with patch("app.api.ontology.registry_repo.get_registry_entry", return_value=None):
+        with patch("app.api.ontology._shared.registry_repo.get_registry_entry", return_value=None):
             resp = client.get("/api/v1/ontology/import/nope/status")
         assert resp.status_code == 404
 

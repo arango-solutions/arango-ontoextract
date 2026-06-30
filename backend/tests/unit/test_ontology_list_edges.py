@@ -164,7 +164,7 @@ class TestFetchLiveEdgesAndProperties:
                 "ontology_datatype_properties",
             ]
         )
-        with patch("app.api.ontology.run_aql") as run_aql_mock:
+        with patch("app.api.ontology._shared.run_aql") as run_aql_mock:
             run_aql_mock.return_value = [{"edges": [], "props": []}]
             _fetch_live_edges_and_properties(db, "ont1")
             assert run_aql_mock.call_count == 1, (
@@ -178,7 +178,7 @@ class TestFetchLiveEdgesAndProperties:
         # collections. The query must NOT reference missing collections,
         # otherwise AQL parse-time validation would 500 the request.
         db = _make_db_with_existing(["subclass_of", "has_property", "ontology_object_properties"])
-        with patch("app.api.ontology.run_aql") as run_aql_mock:
+        with patch("app.api.ontology._shared.run_aql") as run_aql_mock:
             run_aql_mock.return_value = [{"edges": [], "props": []}]
             _fetch_live_edges_and_properties(db, "ont1")
             sent_query = run_aql_mock.call_args.args[1]
@@ -199,7 +199,7 @@ class TestFetchLiveEdgesAndProperties:
 
     def test_passes_ontology_id_and_never_expired_sentinel(self):
         db = _make_db_with_existing(["subclass_of"])
-        with patch("app.api.ontology.run_aql") as run_aql_mock:
+        with patch("app.api.ontology._shared.run_aql") as run_aql_mock:
             run_aql_mock.return_value = [{"edges": [], "props": []}]
             _fetch_live_edges_and_properties(db, "ont42")
             bind = run_aql_mock.call_args.kwargs["bind_vars"]
@@ -219,7 +219,7 @@ class TestFetchLiveEdgesAndProperties:
             "label": "owns",
             "ontology_id": "ont1",
         }
-        with patch("app.api.ontology.run_aql") as run_aql_mock:
+        with patch("app.api.ontology._shared.run_aql") as run_aql_mock:
             run_aql_mock.return_value = [{"edges": [edge_doc], "props": [prop_doc]}]
             edges, props_by_id = _fetch_live_edges_and_properties(db, "ont1")
 
@@ -228,7 +228,7 @@ class TestFetchLiveEdgesAndProperties:
 
     def test_empty_envelope_returns_empty_results(self):
         db = _make_db_with_existing(["subclass_of"])
-        with patch("app.api.ontology.run_aql") as run_aql_mock:
+        with patch("app.api.ontology._shared.run_aql") as run_aql_mock:
             run_aql_mock.return_value = [{"edges": [], "props": []}]
             edges, props_by_id = _fetch_live_edges_and_properties(db, "ont1")
         assert edges == []
@@ -241,7 +241,7 @@ class TestFetchLiveEdgesAndProperties:
         # would just ignore the result; saving the round-trip is a
         # nice-to-have correctness/perf win.
         db = _make_db_with_existing([])
-        with patch("app.api.ontology.run_aql") as run_aql_mock:
+        with patch("app.api.ontology._shared.run_aql") as run_aql_mock:
             edges, props_by_id = _fetch_live_edges_and_properties(db, "ont1")
             run_aql_mock.assert_not_called()
         assert edges == []
@@ -257,7 +257,7 @@ class TestFetchLiveEdgesAndProperties:
             "_key": "p1",
             "_id": "ontology_object_properties/p1",
         }
-        with patch("app.api.ontology.run_aql") as run_aql_mock:
+        with patch("app.api.ontology._shared.run_aql") as run_aql_mock:
             run_aql_mock.return_value = [
                 {
                     "edges": [edge_doc, "not-a-dict", None],
@@ -277,7 +277,7 @@ class TestFetchLiveEdgesAndProperties:
 
 class TestListOntologyEdgesEndpoint:
     def _client(self, db: MagicMock) -> TestClient:
-        patcher = patch("app.api.ontology.get_db", return_value=db)
+        patcher = patch("app.api.ontology._shared.get_db", return_value=db)
         patcher.start()
         from app.main import app
 
@@ -310,7 +310,7 @@ class TestListOntologyEdgesEndpoint:
             "expired": NEVER_EXPIRES,
             "edge_type": "rdfs_range_class",
         }
-        with patch("app.api.ontology.run_aql") as run_aql_mock:
+        with patch("app.api.ontology._shared.run_aql") as run_aql_mock:
             run_aql_mock.return_value = [{"edges": [edge_doc], "props": [prop_doc]}]
             client = self._client(db)
             try:
@@ -345,7 +345,7 @@ class TestListOntologyEdgesEndpoint:
             "ontology_id": "ont1",
             "expired": NEVER_EXPIRES,
         }
-        with patch("app.api.ontology.run_aql") as run_aql_mock:
+        with patch("app.api.ontology._shared.run_aql") as run_aql_mock:
             run_aql_mock.return_value = [{"edges": [edge_doc], "props": []}]
             client = self._client(db)
             try:
@@ -364,7 +364,7 @@ class TestListOntologyEdgesEndpoint:
         # An older ontology may not have all 6 edge collections yet --
         # the endpoint must still 200 with whatever subset exists.
         db = _make_db_with_existing(["subclass_of"])  # only one
-        with patch("app.api.ontology.run_aql") as run_aql_mock:
+        with patch("app.api.ontology._shared.run_aql") as run_aql_mock:
             run_aql_mock.return_value = [{"edges": [], "props": []}]
             client = self._client(db)
             try:
@@ -379,7 +379,7 @@ class TestListOntologyEdgesEndpoint:
         # database that hasn't run the bootstrap migrations. The
         # endpoint must 200 with [] and skip the AQL call entirely.
         db = _make_db_with_existing([])
-        with patch("app.api.ontology.run_aql") as run_aql_mock:
+        with patch("app.api.ontology._shared.run_aql") as run_aql_mock:
             client = self._client(db)
             try:
                 r = client.get("/api/v1/ontology/ont1/edges")

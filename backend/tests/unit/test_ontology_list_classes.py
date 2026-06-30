@@ -35,7 +35,7 @@ def _make_db(has_classes: bool = True) -> MagicMock:
 
 
 def _client(db: MagicMock) -> TestClient:
-    patcher = patch("app.api.ontology.get_db", return_value=db)
+    patcher = patch("app.api.ontology._shared.get_db", return_value=db)
     patcher.start()
     from app.main import app
 
@@ -57,8 +57,8 @@ class TestFullListBackCompat:
             {"_key": "c2", "label": "Bond", "ontology_id": "ont1"},
         ]
         with (
-            patch("app.api.ontology.run_aql", return_value=docs) as run_aql_mock,
-            patch("app.api.ontology.paginate") as paginate_mock,
+            patch("app.api.ontology._shared.run_aql", return_value=docs) as run_aql_mock,
+            patch("app.api.ontology._shared.paginate") as paginate_mock,
         ):
             client = _client(db)
             try:
@@ -76,7 +76,7 @@ class TestFullListBackCompat:
 
     def test_missing_collection_returns_empty_full_shape(self):
         db = _make_db(has_classes=False)
-        with patch("app.api.ontology.run_aql") as run_aql_mock:
+        with patch("app.api.ontology._shared.run_aql") as run_aql_mock:
             client = _client(db)
             try:
                 r = client.get("/api/v1/ontology/ont1/classes")
@@ -104,7 +104,7 @@ class TestPaginatedPath:
             has_more=True,
             total_count=10,
         )
-        with patch("app.api.ontology.paginate", return_value=page) as paginate_mock:
+        with patch("app.api.ontology._shared.paginate", return_value=page) as paginate_mock:
             client = _client(db)
             try:
                 r = client.get("/api/v1/ontology/ont1/classes?limit=2")
@@ -131,7 +131,7 @@ class TestPaginatedPath:
     def test_cursor_is_forwarded_to_paginate(self):
         db = _make_db()
         page = PaginatedResponse(data=[], cursor=None, has_more=False, total_count=0)
-        with patch("app.api.ontology.paginate", return_value=page) as paginate_mock:
+        with patch("app.api.ontology._shared.paginate", return_value=page) as paginate_mock:
             client = _client(db)
             try:
                 r = client.get("/api/v1/ontology/ont1/classes?limit=5&cursor=PREV")
@@ -148,7 +148,7 @@ class TestPaginatedPath:
             has_more=False,
             total_count=1,
         )
-        with patch("app.api.ontology.paginate", return_value=page):
+        with patch("app.api.ontology._shared.paginate", return_value=page):
             client = _client(db)
             try:
                 r = client.get("/api/v1/ontology/ont1/classes?limit=25")
@@ -169,7 +169,7 @@ class TestPaginatedPath:
             "evidence": [{"text": "x" * 5000, "evidence_confidence": 0.9}],
         }
         page = PaginatedResponse(data=[heavy], cursor=None, has_more=False, total_count=1)
-        with patch("app.api.ontology.paginate", return_value=page):
+        with patch("app.api.ontology._shared.paginate", return_value=page):
             client = _client(db)
             try:
                 r = client.get("/api/v1/ontology/ont1/classes?limit=10&include=summary")
@@ -203,7 +203,7 @@ class TestPaginatedPath:
 class TestInvalidCursor:
     def test_paginate_value_error_becomes_400(self):
         db = _make_db()
-        with patch("app.api.ontology.paginate", side_effect=ValueError("bad cursor")):
+        with patch("app.api.ontology._shared.paginate", side_effect=ValueError("bad cursor")):
             client = _client(db)
             try:
                 r = client.get("/api/v1/ontology/ont1/classes?limit=5&cursor=garbage")

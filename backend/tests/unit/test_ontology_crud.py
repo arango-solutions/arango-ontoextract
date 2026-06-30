@@ -31,7 +31,7 @@ def client(_mock_db):
     """TestClient with all DB / repo functions patched."""
     with (
         patch("app.db.client.get_db", return_value=_mock_db),
-        patch("app.api.ontology.get_db", return_value=_mock_db),
+        patch("app.api.ontology._shared.get_db", return_value=_mock_db),
     ):
         from app.main import app
 
@@ -79,7 +79,7 @@ def _prop_doc(key="Person_name", label="name", ontology_id="test_onto"):
 class TestDeleteOntology:
     def test_confirm_deprecates_registry_entry_by_default(self, client):
         with (
-            patch("app.api.ontology.registry_repo") as registry_repo,
+            patch("app.api.ontology._shared.registry_repo") as registry_repo,
             patch("app.services.ontology_graphs.delete_ontology_graph", return_value=True),
         ):
             registry_repo.get_registry_entry.return_value = {
@@ -99,7 +99,7 @@ class TestDeleteOntology:
 
     def test_hard_delete_removes_registry_entry(self, client):
         with (
-            patch("app.api.ontology.registry_repo") as registry_repo,
+            patch("app.api.ontology._shared.registry_repo") as registry_repo,
             patch("app.services.ontology_graphs.delete_ontology_graph", return_value=True),
         ):
             registry_repo.get_registry_entry.return_value = {
@@ -120,7 +120,7 @@ class TestDeleteOntology:
 
     def test_hard_delete_removes_already_deprecated_registry_entry(self, client):
         with (
-            patch("app.api.ontology.registry_repo") as registry_repo,
+            patch("app.api.ontology._shared.registry_repo") as registry_repo,
             patch("app.services.ontology_graphs.delete_ontology_graph", return_value=False),
         ):
             registry_repo.get_registry_entry.return_value = {
@@ -140,7 +140,7 @@ class TestDeleteOntology:
         registry_repo.deprecate_registry_entry.assert_not_called()
 
     def test_soft_delete_already_deprecated_still_returns_400(self, client):
-        with patch("app.api.ontology.registry_repo") as registry_repo:
+        with patch("app.api.ontology._shared.registry_repo") as registry_repo:
             registry_repo.get_registry_entry.return_value = {
                 "_key": "test_onto",
                 "name": "Test Ontology",
@@ -180,7 +180,7 @@ class TestDeleteOntology:
             "warnings": ["1 ontology(ies) depend on this one via imports; ..."],
         }
         with (
-            patch("app.api.ontology.registry_repo") as registry_repo,
+            patch("app.api.ontology._shared.registry_repo") as registry_repo,
             patch(
                 "app.services.ontology_dependency.analyze_deletion_impact",
                 return_value=impact,
@@ -284,9 +284,9 @@ class TestGetClassDetail:
                 return iter([rel])
             return iter([])
 
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = cls
-            with patch("app.api.ontology.run_aql", side_effect=_mock_aql):
+            with patch("app.api.ontology._shared.run_aql", side_effect=_mock_aql):
                 resp = client.get("/api/v1/ontology/test_onto/classes/Person")
 
         assert resp.status_code == 200
@@ -298,14 +298,14 @@ class TestGetClassDetail:
         assert data["relationships"][0]["label"] == "knows"
 
     def test_class_not_found_returns_404(self, client, _mock_db):
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = None
             resp = client.get("/api/v1/ontology/test_onto/classes/missing")
         assert resp.status_code == 404
 
     def test_class_wrong_ontology_returns_404(self, client, _mock_db):
         cls = _class_doc(ontology_id="other_onto")
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = cls
             resp = client.get("/api/v1/ontology/test_onto/classes/Person")
         assert resp.status_code == 404
@@ -333,9 +333,9 @@ class TestGetClassDetail:
             captured_queries.append(query)
             return iter([])
 
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = cls
-            with patch("app.api.ontology.run_aql", side_effect=_mock_aql):
+            with patch("app.api.ontology._shared.run_aql", side_effect=_mock_aql):
                 resp = client.get("/api/v1/ontology/test_onto/classes/Person")
 
         assert resp.status_code == 200
@@ -378,9 +378,9 @@ class TestGetClassDetail:
                 return iter([legacy_prop])
             return iter([])
 
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = cls
-            with patch("app.api.ontology.run_aql", side_effect=_mock_aql):
+            with patch("app.api.ontology._shared.run_aql", side_effect=_mock_aql):
                 resp = client.get("/api/v1/ontology/test_onto/classes/Person")
 
         assert resp.status_code == 200
@@ -400,7 +400,7 @@ class TestGetClassDetail:
 class TestCreateClass:
     def test_creates_class_returns_201(self, client, _mock_db):
         created = _class_doc()
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.create_class.return_value = created
             resp = client.post(
                 "/api/v1/ontology/test_onto/classes",
@@ -415,7 +415,7 @@ class TestCreateClass:
     def test_creates_class_with_parent(self, client, _mock_db):
         created = _class_doc(key="Animal", label="Animal")
         parent = _class_doc(key="LivingThing", label="LivingThing")
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.create_class.return_value = created
             repo.get_class.return_value = parent
             repo.create_edge.return_value = {"_key": "edge1"}
@@ -438,7 +438,7 @@ class TestCreateClass:
 
     def test_parent_not_found_returns_404(self, client, _mock_db):
         created = _class_doc()
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.create_class.return_value = created
             repo.get_class.return_value = None
             resp = client.post(
@@ -453,7 +453,7 @@ class TestCreateProperty:
     def test_creates_property_returns_201(self, client, _mock_db):
         domain = _class_doc()
         created = _prop_doc()
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = domain
             repo.create_property.return_value = created
             repo.create_edge.return_value = {"_key": "edge_rd"}
@@ -472,7 +472,7 @@ class TestCreateProperty:
         assert repo.create_edge.call_args.kwargs["edge_collection"] == "rdfs_domain"
 
     def test_missing_domain_class_returns_404(self, client, _mock_db):
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = None
             resp = client.post(
                 "/api/v1/ontology/test_onto/properties",
@@ -488,7 +488,7 @@ class TestCreateProperty:
 
     def test_cross_ontology_domain_returns_400(self, client, _mock_db):
         other = _class_doc(ontology_id="other_onto")
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = other
             resp = client.post(
                 "/api/v1/ontology/test_onto/properties",
@@ -507,7 +507,7 @@ class TestCreateEdge:
         cls_a = _class_doc(key="A", label="A")
         cls_b = _class_doc(key="B", label="B")
         edge = {"_key": "e1", "_from": cls_a["_id"], "_to": cls_b["_id"]}
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.side_effect = [cls_a, cls_b]
             repo.create_edge.return_value = edge
             resp = client.post(
@@ -523,7 +523,7 @@ class TestCreateEdge:
         repo.create_edge.assert_called_once()
 
     def test_source_class_not_found_returns_404(self, client, _mock_db):
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = None
             resp = client.post(
                 "/api/v1/ontology/test_onto/edges",
@@ -552,7 +552,7 @@ class TestUpdateClass:
     def test_updates_class_returns_200(self, client, _mock_db):
         original = _class_doc()
         updated = {**original, "label": "UpdatedPerson", "version": 2}
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = original
             repo.update_class.return_value = updated
             resp = client.put(
@@ -564,7 +564,7 @@ class TestUpdateClass:
         repo.update_class.assert_called_once()
 
     def test_class_not_found_returns_404(self, client, _mock_db):
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = None
             resp = client.put(
                 "/api/v1/ontology/test_onto/classes/missing",
@@ -574,7 +574,7 @@ class TestUpdateClass:
 
     def test_empty_update_returns_400(self, client, _mock_db):
         original = _class_doc()
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = original
             resp = client.put(
                 "/api/v1/ontology/test_onto/classes/Person",
@@ -585,7 +585,7 @@ class TestUpdateClass:
 
     def test_cross_ontology_update_returns_400(self, client, _mock_db):
         cls = _class_doc(ontology_id="other_onto")
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = cls
             resp = client.put(
                 "/api/v1/ontology/test_onto/classes/Person",
@@ -598,7 +598,7 @@ class TestUpdateProperty:
     def test_updates_property_returns_200(self, client, _mock_db):
         original = _prop_doc()
         updated = {**original, "label": "fullName", "version": 2}
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_property.return_value = original
             repo.update_property.return_value = updated
             resp = client.put(
@@ -609,7 +609,7 @@ class TestUpdateProperty:
         assert resp.json()["label"] == "fullName"
 
     def test_property_not_found_returns_404(self, client, _mock_db):
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_property.return_value = None
             resp = client.put(
                 "/api/v1/ontology/test_onto/properties/missing",
@@ -621,7 +621,7 @@ class TestUpdateProperty:
 class TestDeleteClass:
     def test_deletes_class_returns_200(self, client, _mock_db):
         cls = _class_doc()
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = cls
             repo.expire_class_cascade.return_value = cls
             resp = client.delete("/api/v1/ontology/test_onto/classes/Person")
@@ -630,14 +630,14 @@ class TestDeleteClass:
         repo.expire_class_cascade.assert_called_once()
 
     def test_delete_not_found_returns_404(self, client, _mock_db):
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = None
             resp = client.delete("/api/v1/ontology/test_onto/classes/missing")
         assert resp.status_code == 404
 
     def test_cross_ontology_delete_returns_400(self, client, _mock_db):
         cls = _class_doc(ontology_id="other_onto")
-        with patch("app.api.ontology.ontology_repo") as repo:
+        with patch("app.api.ontology._shared.ontology_repo") as repo:
             repo.get_class.return_value = cls
             resp = client.delete("/api/v1/ontology/test_onto/classes/Person")
         assert resp.status_code == 400

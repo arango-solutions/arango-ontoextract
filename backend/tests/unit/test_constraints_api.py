@@ -28,7 +28,7 @@ def _registry_entry() -> dict[str, object]:
 @pytest.mark.asyncio
 async def test_returns_404_when_ontology_missing() -> None:
     with (
-        patch("app.api.ontology.registry_repo.get_registry_entry", return_value=None),
+        patch("app.api.ontology._shared.registry_repo.get_registry_entry", return_value=None),
         pytest.raises(NotFoundError),
     ):
         await list_ontology_constraints("missing")
@@ -38,12 +38,12 @@ async def test_returns_404_when_ontology_missing() -> None:
 async def test_empty_when_no_constraints() -> None:
     with (
         patch(
-            "app.api.ontology.registry_repo.get_registry_entry",
+            "app.api.ontology._shared.registry_repo.get_registry_entry",
             return_value=_registry_entry(),
         ),
-        patch("app.api.ontology.get_db", return_value=object()),
+        patch("app.api.ontology._shared.get_db", return_value=object()),
         patch(
-            "app.api.ontology.constraints_repo.list_constraints_for_ontology",
+            "app.api.ontology._shared.constraints_repo.list_constraints_for_ontology",
             return_value=[],
         ),
     ):
@@ -102,15 +102,15 @@ async def test_enriches_with_class_and_property_labels_and_sorts() -> None:
 
     with (
         patch(
-            "app.api.ontology.registry_repo.get_registry_entry",
+            "app.api.ontology._shared.registry_repo.get_registry_entry",
             return_value=_registry_entry(),
         ),
-        patch("app.api.ontology.get_db", return_value=object()),
+        patch("app.api.ontology._shared.get_db", return_value=object()),
         patch(
-            "app.api.ontology.constraints_repo.list_constraints_for_ontology",
+            "app.api.ontology._shared.constraints_repo.list_constraints_for_ontology",
             return_value=raw,
         ),
-        patch("app.api.ontology.run_aql", side_effect=fake_run_aql),
+        patch("app.api.ontology._shared.run_aql", side_effect=fake_run_aql),
     ):
         out = await list_ontology_constraints("onto_1")
 
@@ -151,15 +151,15 @@ async def test_unresolved_property_id_gets_empty_label() -> None:
 
     with (
         patch(
-            "app.api.ontology.registry_repo.get_registry_entry",
+            "app.api.ontology._shared.registry_repo.get_registry_entry",
             return_value=_registry_entry(),
         ),
-        patch("app.api.ontology.get_db", return_value=object()),
+        patch("app.api.ontology._shared.get_db", return_value=object()),
         patch(
-            "app.api.ontology.constraints_repo.list_constraints_for_ontology",
+            "app.api.ontology._shared.constraints_repo.list_constraints_for_ontology",
             return_value=raw,
         ),
-        patch("app.api.ontology.run_aql", side_effect=fake_run_aql),
+        patch("app.api.ontology._shared.run_aql", side_effect=fake_run_aql),
     ):
         out = await list_ontology_constraints("onto_1")
 
@@ -173,12 +173,12 @@ async def test_unresolved_property_id_gets_empty_label() -> None:
 async def test_forwards_filter_kwargs_to_repo() -> None:
     with (
         patch(
-            "app.api.ontology.registry_repo.get_registry_entry",
+            "app.api.ontology._shared.registry_repo.get_registry_entry",
             return_value=_registry_entry(),
         ),
-        patch("app.api.ontology.get_db", return_value=object()),
+        patch("app.api.ontology._shared.get_db", return_value=object()),
         patch(
-            "app.api.ontology.constraints_repo.list_constraints_for_ontology",
+            "app.api.ontology._shared.constraints_repo.list_constraints_for_ontology",
             return_value=[],
         ) as mock_repo,
     ):
@@ -201,12 +201,12 @@ async def test_forwards_class_id_query_param_to_repo() -> None:
     AQL to one class. The endpoint must forward it verbatim."""
     with (
         patch(
-            "app.api.ontology.registry_repo.get_registry_entry",
+            "app.api.ontology._shared.registry_repo.get_registry_entry",
             return_value=_registry_entry(),
         ),
-        patch("app.api.ontology.get_db", return_value=object()),
+        patch("app.api.ontology._shared.get_db", return_value=object()),
         patch(
-            "app.api.ontology.constraints_repo.list_constraints_for_ontology",
+            "app.api.ontology._shared.constraints_repo.list_constraints_for_ontology",
             return_value=[],
         ) as mock_repo,
     ):
@@ -244,13 +244,13 @@ def _live_constraint(ontology_id: str = "onto_1") -> dict[str, object]:
 @pytest.mark.asyncio
 async def test_approve_constraint_sets_status_approved() -> None:
     with (
-        patch("app.api.ontology.get_db", return_value=object()),
+        patch("app.api.ontology._shared.get_db", return_value=object()),
         patch(
-            "app.api.ontology.constraints_repo.get_constraint",
+            "app.api.ontology._shared.constraints_repo.get_constraint",
             return_value=_live_constraint(),
         ),
         patch(
-            "app.api.ontology.constraints_repo.update_constraint",
+            "app.api.ontology._shared.constraints_repo.update_constraint",
             return_value={"_key": "c2", "status": "approved", "version": 2},
         ) as mock_update,
     ):
@@ -264,8 +264,8 @@ async def test_approve_constraint_sets_status_approved() -> None:
 @pytest.mark.asyncio
 async def test_approve_constraint_404_when_missing() -> None:
     with (
-        patch("app.api.ontology.get_db", return_value=object()),
-        patch("app.api.ontology.constraints_repo.get_constraint", return_value=None),
+        patch("app.api.ontology._shared.get_db", return_value=object()),
+        patch("app.api.ontology._shared.constraints_repo.get_constraint", return_value=None),
         pytest.raises(NotFoundError),
     ):
         await approve_constraint_endpoint("onto_1", "missing")
@@ -274,9 +274,9 @@ async def test_approve_constraint_404_when_missing() -> None:
 @pytest.mark.asyncio
 async def test_approve_constraint_rejects_cross_ontology() -> None:
     with (
-        patch("app.api.ontology.get_db", return_value=object()),
+        patch("app.api.ontology._shared.get_db", return_value=object()),
         patch(
-            "app.api.ontology.constraints_repo.get_constraint",
+            "app.api.ontology._shared.constraints_repo.get_constraint",
             return_value=_live_constraint(ontology_id="other"),
         ),
         pytest.raises(ValidationError),
@@ -287,13 +287,13 @@ async def test_approve_constraint_rejects_cross_ontology() -> None:
 @pytest.mark.asyncio
 async def test_reject_constraint_expires_it() -> None:
     with (
-        patch("app.api.ontology.get_db", return_value=object()),
+        patch("app.api.ontology._shared.get_db", return_value=object()),
         patch(
-            "app.api.ontology.constraints_repo.get_constraint",
+            "app.api.ontology._shared.constraints_repo.get_constraint",
             return_value=_live_constraint(),
         ),
         patch(
-            "app.api.ontology.constraints_repo.expire_constraint",
+            "app.api.ontology._shared.constraints_repo.expire_constraint",
             return_value={"_key": "c1", "expired": 123.0},
         ) as mock_expire,
     ):
@@ -311,13 +311,13 @@ async def test_reject_constraint_expires_it() -> None:
 async def test_reject_constraint_404_when_already_gone() -> None:
     # get_constraint passes (race: still live at read) but expire returns None.
     with (
-        patch("app.api.ontology.get_db", return_value=object()),
+        patch("app.api.ontology._shared.get_db", return_value=object()),
         patch(
-            "app.api.ontology.constraints_repo.get_constraint",
+            "app.api.ontology._shared.constraints_repo.get_constraint",
             return_value=_live_constraint(),
         ),
         patch(
-            "app.api.ontology.constraints_repo.expire_constraint",
+            "app.api.ontology._shared.constraints_repo.expire_constraint",
             return_value=None,
         ),
         pytest.raises(NotFoundError),
@@ -328,13 +328,13 @@ async def test_reject_constraint_404_when_already_gone() -> None:
 @pytest.mark.asyncio
 async def test_update_constraint_edits_value_and_resets_status_to_pending() -> None:
     with (
-        patch("app.api.ontology.get_db", return_value=object()),
+        patch("app.api.ontology._shared.get_db", return_value=object()),
         patch(
-            "app.api.ontology.constraints_repo.get_constraint",
+            "app.api.ontology._shared.constraints_repo.get_constraint",
             return_value=_live_constraint(),
         ),
         patch(
-            "app.api.ontology.constraints_repo.update_constraint",
+            "app.api.ontology._shared.constraints_repo.update_constraint",
             return_value={"_key": "c2", "restriction_value": 5, "status": "pending"},
         ) as mock_update,
     ):
@@ -355,9 +355,9 @@ async def test_update_constraint_edits_value_and_resets_status_to_pending() -> N
 @pytest.mark.asyncio
 async def test_update_constraint_requires_a_field() -> None:
     with (
-        patch("app.api.ontology.get_db", return_value=object()),
+        patch("app.api.ontology._shared.get_db", return_value=object()),
         patch(
-            "app.api.ontology.constraints_repo.get_constraint",
+            "app.api.ontology._shared.constraints_repo.get_constraint",
             return_value=_live_constraint(),
         ),
         pytest.raises(ValidationError),
