@@ -20,6 +20,11 @@ _LONG_DOC_THRESHOLD = 50
 # title-only chunks does.
 _VISUAL_CHUNK_RATIO_THRESHOLD = 0.3
 _VISUAL_PRESENTATION_FORMATS = {"pptx"}
+# CH.1: a deck whose chunks are *predominantly* a presentation format is
+# routed to the presentation prompt even with zero visual markers
+# (text-only decks). A majority is required so a single stray pptx chunk
+# in an otherwise narrative corpus does not flip the whole run.
+_PRESENTATION_FORMAT_RATIO_THRESHOLD = 0.5
 
 _STRATEGIES: dict[str, StrategyConfig] = {
     "short_technical": StrategyConfig(
@@ -71,13 +76,18 @@ _STRATEGIES: dict[str, StrategyConfig] = {
 def _is_visual_heavy(chunks: list[dict[str, Any]]) -> bool:
     """Return True when chunk metadata indicates a visual-heavy source.
 
-    Detects either:
+    Detects any of:
     - ``chunk_kind`` of ``"visual"`` or ``"mixed"`` on >= 30% of chunks
       (the threshold ignores the case where one stray diagram lands in
       an otherwise narrative document), OR
-    - source format == ``"pptx"`` with any visual chunks at all (slides
-      are inherently slide-by-slide so even a few visual chunks justify
-      the presentation prompt).
+    - a *majority* of chunks carry a presentation ``doc_format`` (e.g.
+      ``"pptx"``) -- this routes **text-only decks** to the presentation
+      prompt, the production gap that persisting ``doc_format`` on chunks
+      closes (CH.1 / FR-1.17); without it, a deck with no visual markers
+      never flipped because the visual-marker count was zero, OR
+    - a presentation deck that also has at least some visual chunks
+      (below the global ratio) -- slides are inherently slide-by-slide so
+      even a few visual chunks justify the presentation prompt.
 
     Falls back to scanning chunk text for visual markers when the
     upstream pipeline did not propagate ``chunk_kind`` (legacy chunks
@@ -87,7 +97,7 @@ def _is_visual_heavy(chunks: list[dict[str, Any]]) -> bool:
         return False
 
     visual_chunks = 0
-    pptx_chunks = 0
+    presentation_chunks = 0
     for chunk in chunks:
         kind = chunk.get("chunk_kind")
         if kind in ("visual", "mixed"):
@@ -103,14 +113,19 @@ def _is_visual_heavy(chunks: list[dict[str, Any]]) -> bool:
                 visual_chunks += 1
         doc_format = (chunk.get("doc_format") or chunk.get("format") or "").lower()
         if doc_format in _VISUAL_PRESENTATION_FORMATS:
-            pptx_chunks += 1
+            presentation_chunks += 1
 
-    if not visual_chunks:
-        return False
-    ratio = visual_chunks / len(chunks)
-    if ratio >= _VISUAL_CHUNK_RATIO_THRESHOLD:
+    total = len(chunks)
+    # Strong visual signal: many chunks carry visual placeholders.
+    if visual_chunks / total >= _VISUAL_CHUNK_RATIO_THRESHOLD:
         return True
-    return pptx_chunks > 0
+    # CH.1: predominantly-presentation source routes even text-only decks
+    # to the presentation prompt.
+    if presentation_chunks / total >= _PRESENTATION_FORMAT_RATIO_THRESHOLD:
+        return True
+    # A presentation deck with some (but sub-threshold) visual chunks
+    # still justifies the presentation prompt (original IMG.6 rule).
+    return bool(visual_chunks and presentation_chunks)
 
 
 def _classify_document(chunks: list[dict[str, Any]]) -> str:

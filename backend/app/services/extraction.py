@@ -956,6 +956,38 @@ def get_run_cost(
     }
 
 
+# CH.1: map the document's stored MIME type to the ``doc_format`` string
+# the parsers emit, used to backfill ``doc_format`` on legacy chunks that
+# were persisted before the field existed (see ``_load_document_chunks``).
+# Mirrors the parser dispatch in ``app.tasks._MIME_PARSERS``; ``.doc``
+# resolves to ``docx`` because ``parse_doc`` converts then delegates.
+_MIME_TO_DOC_FORMAT: dict[str, str] = {
+    "application/pdf": "pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "application/msword": "docx",
+    "text/markdown": "markdown",
+}
+
+
+def _doc_format_from_mime(db: StandardDatabase, document_id: str) -> str:
+    """Resolve a chunk's ``doc_format`` from the parent document's MIME type.
+
+    Returns ``""`` when the document or MIME type is unknown; callers must
+    treat an empty result as "leave the chunk unchanged".
+    """
+    from app.db import documents_repo
+
+    try:
+        doc = documents_repo.get_document(document_id, db=db)
+    except Exception:  # pragma: no cover - defensive; never block extraction
+        log.warning("doc_format backfill: failed to load document %s", document_id)
+        return ""
+    if not doc:
+        return ""
+    return _MIME_TO_DOC_FORMAT.get((doc.get("mime_type") or "").lower(), "")
+
+
 def _load_document_chunks(
     db: StandardDatabase,
     document_id: str,
@@ -970,7 +1002,20 @@ FOR chunk IN chunks
   SORT chunk.chunk_index ASC
   RETURN chunk"""
 
-    return list(run_aql(db, query, bind_vars={"doc_id": document_id}))
+    chunks = list(run_aql(db, query, bind_vars={"doc_id": document_id}))
+
+    # CH.1: chunks persisted before ``doc_format`` was stored lack the key
+    # the strategy selector relies on to detect decks. Backfill it once
+    # from the parent document's MIME type so legacy documents still route
+    # correctly. New chunks already carry ``doc_format`` and skip this.
+    if chunks and any(not chunk.get("doc_format") for chunk in chunks):
+        fmt = _doc_format_from_mime(db, document_id)
+        if fmt:
+            for chunk in chunks:
+                if not chunk.get("doc_format"):
+                    chunk["doc_format"] = fmt
+
+    return chunks
 
 
 def _store_results(

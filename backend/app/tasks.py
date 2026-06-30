@@ -273,6 +273,12 @@ def _build_chunk_dicts(
             "token_count": chunk.token_count,
             "embedding": emb,
         }
+        # CH.1 -- persist the source document format so the extraction
+        # strategy selector can detect decks in production (it reads
+        # ``chunk.get("doc_format")``); always emitted when known so the
+        # key is reliably present for text-only decks too (FR-1.17).
+        if chunk.doc_format:
+            entry["doc_format"] = chunk.doc_format
         # IMG.5 -- only emit visual fields when present so legacy
         # consumers and pre-Stream-13 chunks remain byte-for-byte
         # identical in storage.

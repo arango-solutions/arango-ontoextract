@@ -252,6 +252,28 @@ class TestChunkDocument:
         assert len(chunks) == 1
         assert "Root Taxonomy" in chunks[0].text
         assert "[Slide 3: Root Taxonomy]" in chunks[0].text
+        # CH.1: the source format propagates onto every chunk.
+        assert chunks[0].doc_format == "pptx"
+
+    def test_doc_format_propagates_to_chunks(self, _mock_tc: MagicMock):
+        # CH.1: doc_format from ParsedDocument lands on every emitted chunk,
+        # including text-only sections with no page number.
+        for fmt in ("pptx", "pdf", "docx", "markdown"):
+            parsed = ParsedDocument(
+                format=fmt,
+                sections=[
+                    Section(heading="A", text="Text A", page_number=1),
+                    Section(heading="B", text="Text B", page_number=2),
+                ],
+            )
+            chunks = chunk_document(parsed)
+            assert chunks, f"expected chunks for {fmt}"
+            assert all(c.doc_format == fmt for c in chunks)
+
+    def test_doc_format_unknown_when_format_missing(self, _mock_tc: MagicMock):
+        parsed = ParsedDocument(sections=[Section(heading="A", text="Text A", page_number=1)])
+        chunks = chunk_document(parsed)
+        assert all(c.doc_format == "unknown" for c in chunks)
 
     def test_chunk_kind_text_when_no_visual_markers(self, _mock_tc: MagicMock):
         parsed = ParsedDocument(
@@ -464,6 +486,16 @@ class TestParsePptx:
         assert parsed.visual_diagnostics.visual_asset_count == 1
         assert parsed.visual_diagnostics.alt_text_count == 1
         assert "[Visual (alt text):" in parsed.sections[0].text
+
+    def test_chunks_carry_pptx_doc_format_end_to_end(self):
+        # CH.1: the production path (parse_pptx -> chunk_document) stamps
+        # doc_format on every chunk, with no manual injection -- this is
+        # what lets the strategy selector detect text-only decks in prod.
+        from app.services.ingestion import chunk_document, parse_pptx
+
+        chunks = chunk_document(parse_pptx(_build_synthetic_pptx()))
+        assert chunks
+        assert all(c.doc_format == "pptx" for c in chunks)
 
     def test_invalid_bytes_raises(self):
         """Garbage bytes -> the underlying zipfile layer rejects it.

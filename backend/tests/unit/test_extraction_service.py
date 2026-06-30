@@ -214,6 +214,57 @@ class TestLoadDocumentChunks:
         result = _load_document_chunks(db, "doc_1")
         assert result == []
 
+    @patch("app.db.documents_repo.get_document")
+    @patch("app.services.extraction.run_aql")
+    def test_backfills_doc_format_for_legacy_chunks(self, mock_run_aql, mock_get_document):
+        # CH.1: chunks stored before doc_format existed get it backfilled
+        # from the parent document's MIME type.
+        from app.services.extraction import _load_document_chunks
+
+        db = MagicMock()
+        db.has_collection.return_value = True
+        mock_run_aql.return_value = [{"_key": "c1"}, {"_key": "c2"}]
+        mock_get_document.return_value = {
+            "mime_type": (
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            )
+        }
+
+        result = _load_document_chunks(db, "doc_1")
+        assert all(c["doc_format"] == "pptx" for c in result)
+        mock_get_document.assert_called_once()
+
+    @patch("app.db.documents_repo.get_document")
+    @patch("app.services.extraction.run_aql")
+    def test_does_not_backfill_when_chunks_already_tagged(self, mock_run_aql, mock_get_document):
+        # New chunks already carry doc_format; the parent document is never
+        # fetched (no extra round-trip).
+        from app.services.extraction import _load_document_chunks
+
+        db = MagicMock()
+        db.has_collection.return_value = True
+        mock_run_aql.return_value = [
+            {"_key": "c1", "doc_format": "pptx"},
+            {"_key": "c2", "doc_format": "pptx"},
+        ]
+
+        result = _load_document_chunks(db, "doc_1")
+        assert all(c["doc_format"] == "pptx" for c in result)
+        mock_get_document.assert_not_called()
+
+    @patch("app.db.documents_repo.get_document")
+    @patch("app.services.extraction.run_aql")
+    def test_leaves_chunks_unchanged_when_mime_unknown(self, mock_run_aql, mock_get_document):
+        from app.services.extraction import _load_document_chunks
+
+        db = MagicMock()
+        db.has_collection.return_value = True
+        mock_run_aql.return_value = [{"_key": "c1"}]
+        mock_get_document.return_value = {"mime_type": "application/x-mystery"}
+
+        result = _load_document_chunks(db, "doc_1")
+        assert "doc_format" not in result[0]
+
 
 # ---------------------------------------------------------------------------
 # _store_results

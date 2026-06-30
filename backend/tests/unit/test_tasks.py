@@ -18,10 +18,20 @@ class TestBuildChunkDicts:
     def test_basic_mapping(self):
         chunks = [
             Chunk(
-                text="hello", chunk_index=0, source_page=1, section_heading="Intro", token_count=3
+                text="hello",
+                chunk_index=0,
+                source_page=1,
+                section_heading="Intro",
+                token_count=3,
+                doc_format="pptx",
             ),
             Chunk(
-                text="world", chunk_index=1, source_page=2, section_heading="Body", token_count=4
+                text="world",
+                chunk_index=1,
+                source_page=2,
+                section_heading="Body",
+                token_count=4,
+                doc_format="pptx",
             ),
         ]
         embeddings = [[0.1, 0.2], [0.3, 0.4]]
@@ -35,9 +45,27 @@ class TestBuildChunkDicts:
         assert result[0]["section_heading"] == "Intro"
         assert result[0]["token_count"] == 3
         assert result[0]["embedding"] == [0.1, 0.2]
+        # CH.1: doc_format is persisted so the strategy selector can detect decks.
+        assert result[0]["doc_format"] == "pptx"
 
         assert result[1]["chunk_index"] == 1
         assert result[1]["text"] == "world"
+        assert result[1]["doc_format"] == "pptx"
+
+    def test_doc_format_omitted_when_empty(self):
+        # CH.1: an unknown/empty doc_format is not written, so legacy
+        # consumers and pre-CH.1 chunks stay byte-for-byte identical.
+        chunks = [
+            Chunk(
+                text="hello",
+                chunk_index=0,
+                source_page=None,
+                section_heading="",
+                token_count=3,
+            )
+        ]
+        result = _build_chunk_dicts("doc1", chunks, [[0.1, 0.2]])
+        assert "doc_format" not in result[0]
 
     def test_empty_chunks(self):
         result = _build_chunk_dicts("doc1", [], [])

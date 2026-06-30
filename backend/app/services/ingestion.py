@@ -90,6 +90,12 @@ class Chunk:
     #: Per-chunk projection of the visual assets that contributed to
     #: this chunk's text. Mirrors ``VisualAsset.to_dict()`` shape.
     visual_assets: list[dict[str, Any]] = field(default_factory=list)
+    #: Source document format (``"pptx"`` | ``"pdf"`` | ``"docx"`` |
+    #: ``"markdown"`` | ``"unknown"``), copied from
+    #: ``ParsedDocument.format``. Persisted on stored chunks (CH.1) so the
+    #: extraction strategy selector can detect decks in production instead
+    #: of relying on visual markers alone (FR-1.17).
+    doc_format: str = ""
 
 
 def compute_file_hash(content: bytes) -> str:
@@ -592,6 +598,7 @@ def chunk_document(
                     source_page=_section.page_number,
                     section_heading=_section.heading,
                     token_count=_token_count(text),
+                    doc_format=doc_format,
                 )
             )
             chunk_origin_section[idx] = _section

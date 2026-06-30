@@ -76,6 +76,26 @@ class TestClassifyDocument:
         # 1/21 = 0.048 < 0.3 threshold and no pptx format, so narrative wins
         assert _classify_document(chunks) != "visual_heavy_presentation"
 
+    def test_text_only_deck_flips_via_doc_format_majority(self):
+        # CH.1: a text-only PPTX deck (no visual markers at all) is routed
+        # to the presentation prompt because doc_format is now persisted on
+        # the chunks. Previously this fell through to "default" because the
+        # visual-marker count was zero.
+        chunks = [
+            {"text": "[Slide 1: Strategy]\nVision and goals.", "doc_format": "pptx"},
+            {"text": "[Slide 2: Market]\nTAM and segments.", "doc_format": "pptx"},
+            {"text": "[Slide 3: Roadmap]\nQuarterly plan.", "doc_format": "pptx"},
+        ]
+        assert _classify_document(chunks) == "visual_heavy_presentation"
+
+    def test_stray_pptx_chunk_does_not_flip_narrative(self):
+        # A single pptx-tagged chunk in an otherwise narrative corpus must
+        # not flip the whole run: presentation ratio is below the majority
+        # threshold and there are no visual chunks.
+        chunks = [{"text": f"Paragraph {i} of prose."} for i in range(20)]
+        chunks.append({"text": "One imported slide.", "doc_format": "pptx"})
+        assert _classify_document(chunks) != "visual_heavy_presentation"
+
 
 class TestStrategySelectorNode:
     def test_returns_strategy_config(self):
@@ -201,6 +221,30 @@ class TestVisualHeavyStrategyEndToEnd:
 
         step_log = result["step_logs"][0]
         assert step_log["metadata"]["document_type"] == "visual_heavy_presentation"
+
+    def test_text_only_deck_picks_visual_aware_prompt(self):
+        # CH.1 end-to-end: a deck whose chunks carry no visual markers but
+        # do carry doc_format="pptx" still selects the presentation prompt.
+        state: ExtractionPipelineState = {
+            "run_id": "text_deck_run",
+            "document_id": "deck_text",
+            "document_chunks": [
+                {"text": "[Slide 1: Strategy]\nVision.", "doc_format": "pptx"},
+                {"text": "[Slide 2: Market]\nSegments.", "doc_format": "pptx"},
+                {"text": "[Slide 3: Plan]\nRoadmap.", "doc_format": "pptx"},
+            ],
+            "extraction_passes": [],
+            "errors": [],
+            "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "step_logs": [],
+            "current_step": "initialized",
+            "metadata": {},
+        }
+
+        result = strategy_selector_node(state)
+
+        assert result["strategy_config"]["prompt_template_key"] == "tier1_visual_aware"
+        assert result["strategy_config"]["document_type"] == "visual_heavy_presentation"
 
 
 class TestVisualAwarePromptTemplate:
