@@ -24,8 +24,10 @@ import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 
 from arango import ArangoClient
+from arango.cursor import Cursor
 from arango.database import StandardDatabase
 
 log = logging.getLogger(__name__)
@@ -128,7 +130,7 @@ def _ensure_edge(
 ) -> None:
     """Insert an edge if one with the same _from/_to doesn't already exist."""
     col = db.collection(edge_collection)
-    existing = list(col.find({"_from": from_id, "_to": to_id}, limit=1))
+    existing = list(cast(Cursor, col.find({"_from": from_id, "_to": to_id}, limit=1)))
     if existing:
         log.debug("edge %s -> %s already exists in %s", from_id, to_id, edge_collection)
         return
@@ -187,7 +189,7 @@ def _demote_builtin_defaults(db: StandardDatabase, graph_name: str) -> None:
     """Set isDefault=False on any built-in Default themes for this graph
     so the AOE custom theme auto-applies instead."""
     col = db.collection("_graphThemeStore")
-    for doc in col.find({"graphId": graph_name, "name": "Default"}):
+    for doc in cast(Cursor, col.find({"graphId": graph_name, "name": "Default"})):
         if doc.get("_key", "").startswith("aoe_"):
             continue
         if doc.get("isDefault") is True:
@@ -204,7 +206,9 @@ def _ensure_default_theme_placeholder(db: StandardDatabase, graph_name: str) -> 
     needed.
     """
     col = db.collection("_graphThemeStore")
-    existing = list(col.find({"graphId": graph_name, "name": "Default"}, limit=1))
+    existing = list(
+        cast(Cursor, col.find({"graphId": graph_name, "name": "Default"}, limit=1))
+    )
     if existing:
         return
 
@@ -238,7 +242,7 @@ def install_themes(
         graph = db.graph(graph_name)
         vertex_colls: set[str] = set()
         edge_colls: set[str] = set()
-        for edef in graph.edge_definitions():
+        for edef in cast("list[dict[str, Any]]", graph.edge_definitions()):
             edge_colls.add(edef["edge_collection"])
             vertex_colls.update(edef["from_vertex_collections"])
             vertex_colls.update(edef["to_vertex_collections"])
@@ -362,7 +366,9 @@ def ensure_default_viewpoint(db: StandardDatabase, graph_name: str) -> str:
     """Create a 'Default' viewpoint for the given graph. Returns ``_id``."""
     ensure_collection(db, "_viewpoints")
     col = db.collection("_viewpoints")
-    existing = list(col.find({"graphId": graph_name, "name": "Default"}, limit=1))
+    existing = list(
+        cast(Cursor, col.find({"graphId": graph_name, "name": "Default"}, limit=1))
+    )
     if existing:
         vp_id = existing[0]["_id"]
         log.debug("viewpoint for %s already exists: %s", graph_name, vp_id)
@@ -378,7 +384,7 @@ def ensure_default_viewpoint(db: StandardDatabase, graph_name: str) -> str:
             "updatedAt": now,
         }
     )
-    vp_id = result["_id"]
+    vp_id = cast("dict[str, Any]", result)["_id"]
     log.info("created viewpoint for %s: %s", graph_name, vp_id)
     return vp_id
 
@@ -532,7 +538,7 @@ def install_all(
         )
 
     if include_per_ontology:
-        for g in db.graphs():
+        for g in cast("list[dict[str, Any]]", db.graphs()):
             name = g["name"]
             if name.startswith("ontology_") and name not in GRAPH_CONFIGS:
                 results[name] = install_for_ontology_graph(db, name)
@@ -568,7 +574,7 @@ def _connect_standalone(args: argparse.Namespace) -> StandardDatabase:
         username=args.user,
         password=args.password,
     )
-    if args.db not in sys_db.databases():
+    if args.db not in cast(list[str], sys_db.databases()):
         sys_db.create_database(args.db)
     return client.db(args.db, username=args.user, password=args.password)
 
