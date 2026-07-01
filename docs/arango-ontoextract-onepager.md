@@ -1,6 +1,6 @@
 # Arango-OntoExtract: Living Ontologies from Documents and Databases
 
-*An LLM-driven platform that turns prose and schemas into formal, governed knowledge graphs — with configurable autonomy, from agent-reviewed auto-release to expert sign-off — on a single multi-model database.*
+*An LLM-driven platform that turns prose and schemas into formal, governed knowledge graphs on a single multi-model database — where oversight is a dial that runs from expert sign-off to agent-reviewed auto-release.*
 
 **The problem.** Every organization's knowledge is trapped in two places: **documents** (PDFs, decks, specs) that describe how the business thinks, and **databases** whose schemas already encode a working model — but only physically. A formal ontology (OWL 2 / RDFS classes, properties, hierarchies, constraints) is the bridge to machine reasoning, yet authoring one by hand is slow, expensive, and rots the moment the sources change.
 

@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The backend version is the single source of truth in `backend/app/__init__.py`.
 
+## [1.1.0] - 2026-07-01
+
+Incremental release on top of v1.0.0: one ingestion feature, a large internal
+refactor of the ontology API into a package, documentation, and the fixes that
+returned CI to green across the full pyramid. ~9 commits since `v1.0.0`.
+
+### Added
+
+- **Document-format-aware chunking (Stream 17 CH.1):** `doc_format` is now
+  persisted on every chunk (with a legacy fallback that infers it from the
+  parent document's MIME type), so the strategy selector routes text-only decks
+  (`.pptx`) to the presentation extraction strategy instead of the prose default.
+
+### Changed
+
+- **Ontology API package split (Stream 14 CQ.3):** the ~3.6k-line
+  `app/api/ontology.py` module became a cohesive `app/api/ontology/` package of
+  seven sub-routers (`library`, `domain`, `entities_read`, `mutations`,
+  `imports_io`, `imports`, `schema_temporal`) plus a `_shared` module for
+  cross-cutting dependencies. The public surface (`/api/v1/ontology`) and route
+  precedence are unchanged; a new assembly regression test guards both.
+- **Repository housekeeping:** moved stale top-level planning docs under `docs/`
+  and stopped tracking generated PDF artifacts.
+- **Documentation:** added the Medium article and one-pager, framing
+  LLM-assisted release governance and the domain-segmentation / relational-schema
+  roadmap.
+
+### Fixed
+
+- **CI lint tier:** narrowed python-arango `Result[...]` unions
+  (`find`/`insert`/`graphs`/`edge_definitions`/`databases`) in the visualizer
+  installer with `cast(...)`, clearing 14 mypy errors that had kept the pipeline
+  red.
+- **Router-assembly regression test:** re-based on `app.openapi()` so it is
+  robust to FastAPI ≥ 0.139's lazy `_IncludedRouter` mounting (which made the
+  previous `router.routes` introspection read back empty).
+
 ## [1.0.0] - 2026-06-19
 
 First production release. Closes the remaining PRD tail on top of v0.4.0 —
