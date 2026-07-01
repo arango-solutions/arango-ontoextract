@@ -9,25 +9,54 @@ survive that split and any future re-ordering of ``include_router`` calls:
    literal-prefixed route registered after it -- the exact failure the
    original module guarded against with a hand-placed "static routes first"
    comment (e.g. ``/domain/classes`` vs ``/{ontology_id}/classes``).
+
+Why introspect via OpenAPI rather than ``router.routes``
+--------------------------------------------------------
+FastAPI >= 0.139 no longer eagerly flattens an included sub-router's routes
+into the parent ``APIRouter.routes`` list. Each ``include_router`` call is
+stored as a lazy ``fastapi.routing._IncludedRouter`` placeholder that resolves
+its children at request time (the ``effective_candidates`` machinery), and the
+parent prefix is applied then too. As a result ``router.routes`` reads back as
+seven opaque placeholders with no ``.path``/``.methods`` -- an earlier version
+of this test read them directly and silently saw *zero* routes on CI while
+passing locally against an older FastAPI.
+
+The OpenAPI schema of an app that mounts the router is the public,
+version-stable projection of the real routing surface, so we assert against
+that instead. Its ``paths`` mapping preserves registration order, which keeps
+the shadow-ordering check (property 2) meaningful.
 """
 
 from __future__ import annotations
 
-from app.api.ontology import router
+from fastapi import FastAPI
 
-# Pinned so an accidental drop/duplication during a future refactor fails loudly.
+from app.api.ontology import router as ontology_router
+
+# Canonical mount point and the count of (path, method) pairs exposed beneath
+# it. Pinned so an accidental drop/duplication during a future refactor fails
+# loudly.
+ONTOLOGY_PREFIX = "/api/v1/ontology"
 EXPECTED_ROUTE_COUNT = 59
 
 
-def _ordered_routes() -> list[tuple[str, frozenset[str]]]:
-    routes: list[tuple[str, frozenset[str]]] = []
-    for r in router.routes:
-        path = getattr(r, "path", None)
-        methods = getattr(r, "methods", None)
-        if path is None or methods is None:
-            continue
-        routes.append((path, frozenset(methods)))
-    return routes
+def _ontology_openapi_paths() -> dict[str, list[str]]:
+    """Return ``{path: [UPPERCASE methods]}`` for every ontology endpoint.
+
+    Builds a throwaway app so the router's lazy sub-routers are resolved and
+    projected into a stable, public OpenAPI view.
+    """
+    app = FastAPI()
+    app.include_router(ontology_router)
+    return {
+        path: sorted(method.upper() for method in operations)
+        for path, operations in app.openapi().get("paths", {}).items()
+        if path.startswith(ONTOLOGY_PREFIX)
+    }
+
+
+def _route_pairs(paths: dict[str, list[str]]) -> list[tuple[str, str]]:
+    return [(path, method) for path, methods in paths.items() for method in methods]
 
 
 def _segments(path: str) -> list[str]:
@@ -39,12 +68,12 @@ def _is_var(seg: str) -> bool:
 
 
 def test_route_count_is_stable() -> None:
-    assert len(_ordered_routes()) == EXPECTED_ROUTE_COUNT
+    assert len(_route_pairs(_ontology_openapi_paths())) == EXPECTED_ROUTE_COUNT
 
 
 def test_router_mounts_under_canonical_prefix() -> None:
-    assert router.prefix == "/api/v1/ontology"
-    paths = {p for p, _ in _ordered_routes()}
+    assert ontology_router.prefix == ONTOLOGY_PREFIX
+    paths = set(_ontology_openapi_paths())
     # A representative endpoint from each sub-router must be present.
     for expected in (
         "/api/v1/ontology/library",
@@ -81,11 +110,15 @@ def _shadows(general: list[str], specific: list[str]) -> bool:
 
 
 def test_static_routes_register_before_shadowing_dynamic_routes() -> None:
-    routes = _ordered_routes()
-    for i, (general_path, general_methods) in enumerate(routes):
+    paths = _ontology_openapi_paths()
+    # OpenAPI ``paths`` preserves registration order, so index position is a
+    # faithful proxy for "which route FastAPI considers first".
+    ordered = list(paths)
+    for i, general_path in enumerate(ordered):
         gsegs = _segments(general_path)
-        for j, (specific_path, specific_methods) in enumerate(routes):
-            if i == j or general_methods.isdisjoint(specific_methods):
+        general_methods = set(paths[general_path])
+        for j, specific_path in enumerate(ordered):
+            if i == j or general_methods.isdisjoint(paths[specific_path]):
                 continue
             if _shadows(gsegs, _segments(specific_path)):
                 assert j < i, (
