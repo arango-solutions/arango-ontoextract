@@ -259,11 +259,13 @@ def build_relational_owl(
     return ttl, uri_to_table
 
 
-def extract_relational_schema(config: RelationalSchemaExtractionConfig) -> dict[str, Any]:
-    """Introspect a relational source and import the derived ontology into AOE.
+def _introspect(config: RelationalSchemaExtractionConfig) -> tuple[Any, Any, str]:
+    """Connect to the relational source and return ``(physical, source, db_label)``.
 
-    Mirrors :func:`app.services.schema_extraction.extract_schema` for the relational
-    path: introspect -> OWL/SHACL -> ``import_from_file`` -> per-class provenance.
+    Shared by :func:`list_relational_tables` (preview) and
+    :func:`extract_relational_schema` (commit). Raises ``RuntimeError`` when the
+    optional ``relational-schema-analyzer`` library is not installed so both
+    callers surface the same actionable message.
     """
     create_connector = _try_import_relational_analyzer()
     if create_connector is None:
@@ -271,9 +273,6 @@ def extract_relational_schema(config: RelationalSchemaExtractionConfig) -> dict[
             "relational-schema-analyzer is not installed; "
             "install it to extract from relational sources"
         )
-
-    run_id = uuid.uuid4().hex[:12]
-    started = time.time()
 
     physical = create_connector(
         config.source_type,
@@ -289,6 +288,85 @@ def extract_relational_schema(config: RelationalSchemaExtractionConfig) -> dict[
         or config.schema_name
         or "relational"
     )
+    return physical, source, db_label
+
+
+def list_relational_tables(config: RelationalSchemaExtractionConfig) -> dict[str, Any]:
+    """Preview a relational source's topology **without** importing anything.
+
+    The relational analogue of :func:`app.services.schema_extraction.list_named_graphs`:
+    the workspace "connect" step binds to this to show the curator which tables,
+    columns, and foreign keys *will* become classes / datatype properties / object
+    properties before committing the extract.
+
+    Read-only: introspects the source and returns table / column / FK summaries plus
+    the counts the UI's commit gate needs. Credentials are consumed from ``config``
+    and never echoed back in the response.
+
+    Raises:
+        RuntimeError: when ``relational-schema-analyzer`` is not installed.
+        Exception: connection / auth failures propagate (mapped to 502 at the API).
+    """
+    physical, source, db_label = _introspect(config)
+    tables = physical.tables
+
+    table_summaries: list[dict[str, Any]] = []
+    for table_name in sorted(tables):
+        table = tables[table_name]
+        columns = [
+            {
+                "name": col.name,
+                "data_type": col.data_type,
+                "type_category": getattr(col, "type_category", None),
+                "nullable": bool(getattr(col, "is_nullable", True)),
+                "primary_key": bool(getattr(col, "is_primary_key", False)),
+                "unique": bool(getattr(col, "is_unique", False)),
+            }
+            for col in table.columns
+        ]
+        foreign_keys = [
+            {
+                "columns": list(fk.columns),
+                "foreign_table": fk.foreign_table,
+                "foreign_columns": list(fk.foreign_columns),
+            }
+            for fk in table.foreign_keys
+        ]
+        table_summaries.append(
+            {
+                "name": table_name,
+                "is_view": bool(getattr(table, "is_view", False)),
+                "comment": getattr(table, "comment", None),
+                "column_count": len(columns),
+                "primary_key": list(getattr(table, "primary_key", []) or []),
+                "columns": columns,
+                "foreign_keys": foreign_keys,
+            }
+        )
+
+    return {
+        "source_type": config.source_type,
+        "schema_name": config.schema_name,
+        "db_label": db_label,
+        "server_version": getattr(source, "server_version", None) if source else None,
+        "dialect": getattr(source, "dialect", None) if source else None,
+        "tables": table_summaries,
+        "table_count": len(table_summaries),
+        "view_count": sum(1 for t in table_summaries if t["is_view"]),
+        "foreign_key_count": sum(len(t["foreign_keys"]) for t in table_summaries),
+    }
+
+
+def extract_relational_schema(config: RelationalSchemaExtractionConfig) -> dict[str, Any]:
+    """Introspect a relational source and import the derived ontology into AOE.
+
+    Mirrors :func:`app.services.schema_extraction.extract_schema` for the relational
+    path: introspect -> OWL/SHACL -> ``import_from_file`` -> per-class provenance.
+    """
+    run_id = uuid.uuid4().hex[:12]
+    started = time.time()
+
+    physical, source, db_label = _introspect(config)
     ontology_id = config.ontology_id or f"relschema_{db_label}_{run_id}"
 
     ttl_content, uri_to_table = build_relational_owl(

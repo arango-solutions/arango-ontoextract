@@ -264,6 +264,7 @@ class TestCreateMcpServer:
     @patch("app.mcp.server.register_er_tools")
     @patch("app.mcp.server.register_export_tools")
     @patch("app.mcp.server.register_temporal_tools")
+    @patch("app.mcp.server.register_relational_tools")
     @patch("app.mcp.server.register_pipeline_tools")
     @patch("app.mcp.server.register_ontology_tools")
     @patch("app.mcp.server.register_introspection_tools")
@@ -280,6 +281,7 @@ class TestCreateMcpServer:
     @patch("app.mcp.server.register_er_tools")
     @patch("app.mcp.server.register_export_tools")
     @patch("app.mcp.server.register_temporal_tools")
+    @patch("app.mcp.server.register_relational_tools")
     @patch("app.mcp.server.register_pipeline_tools")
     @patch("app.mcp.server.register_ontology_tools")
     @patch("app.mcp.server.register_introspection_tools")
@@ -1428,6 +1430,79 @@ class TestGetMergeCandidates:
         tools = _capture_tools(register_pipeline_tools)
         result = tools["get_merge_candidates"]("o1")
         assert "error" in result[0]
+
+
+# ===========================================================================
+# tools/relational.py
+# ===========================================================================
+
+
+class TestPreviewRelationalSchema:
+    @patch("app.services.relational_schema_extraction.list_relational_tables")
+    def test_returns_topology(self, mock_list):
+        from app.mcp.tools.relational import register_relational_tools
+
+        mock_list.return_value = {
+            "source_type": "postgresql",
+            "db_label": "shop",
+            "table_count": 2,
+            "tables": [{"name": "users"}, {"name": "orders"}],
+        }
+
+        tools = _capture_tools(register_relational_tools)
+        result = tools["preview_relational_schema"]("postgresql", "postgresql://x/shop")
+        assert result["table_count"] == 2
+        called_cfg = mock_list.call_args.args[0]
+        assert called_cfg.source_type == "postgresql"
+        assert called_cfg.url == "postgresql://x/shop"
+
+    @patch(
+        "app.services.relational_schema_extraction.list_relational_tables",
+        side_effect=RuntimeError("relational-schema-analyzer is not installed"),
+    )
+    def test_missing_library_surfaced_as_error(self, mock_list):
+        from app.mcp.tools.relational import register_relational_tools
+
+        tools = _capture_tools(register_relational_tools)
+        result = tools["preview_relational_schema"]("postgresql", "postgresql://x/shop")
+        assert "error" in result
+        assert "relational-schema-analyzer" in result["error"]
+
+
+class TestExtractRelationalSchemaTool:
+    @patch("app.services.relational_schema_extraction.extract_relational_schema")
+    def test_extracts_and_imports(self, mock_extract):
+        from app.mcp.tools.relational import register_relational_tools
+
+        mock_extract.return_value = {
+            "run_id": "r1",
+            "status": "completed",
+            "ontology_id": "relschema_shop_r1",
+            "import_stats": {"triple_count": 10},
+        }
+
+        tools = _capture_tools(register_relational_tools)
+        result = tools["extract_relational_schema"](
+            "postgresql",
+            "postgresql://x/shop",
+            ontology_label="Shop",
+            imports=["foaf"],
+        )
+        assert result["ontology_id"] == "relschema_shop_r1"
+        called_cfg = mock_extract.call_args.args[0]
+        assert called_cfg.ontology_label == "Shop"
+        assert called_cfg.imports == ["foaf"]
+
+    @patch(
+        "app.services.relational_schema_extraction.extract_relational_schema",
+        side_effect=Exception("driver failed"),
+    )
+    def test_error_surfaced(self, mock_extract):
+        from app.mcp.tools.relational import register_relational_tools
+
+        tools = _capture_tools(register_relational_tools)
+        result = tools["extract_relational_schema"]("postgresql", "postgresql://x/shop")
+        assert "error" in result
 
 
 # ===========================================================================

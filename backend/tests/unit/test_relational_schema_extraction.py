@@ -15,7 +15,12 @@ rsa_types = pytest.importorskip("relational_schema_analyzer.types")
 
 from rdflib import OWL, RDF, RDFS, Graph, Namespace  # noqa: E402
 
-from app.services.relational_schema_extraction import build_relational_owl  # noqa: E402
+from app.services import relational_schema_extraction as rse  # noqa: E402
+from app.services.relational_schema_extraction import (  # noqa: E402
+    RelationalSchemaExtractionConfig,
+    build_relational_owl,
+    list_relational_tables,
+)
 
 SH = Namespace("http://www.w3.org/ns/shacl#")
 
@@ -160,3 +165,84 @@ def test_valid_turtle_and_counts():
     assert sum(1 for _ in g.subjects(RDF.type, OWL.Class)) == 3
     assert sum(1 for _ in g.subjects(RDF.type, OWL.ObjectProperty)) == 1
     assert len(uri_to_table) >= 3
+
+
+class _FakeConnector:
+    """Stand-in for a ``relational_schema_analyzer`` connector.
+
+    Mirrors the real ``create_connector(...).get_schema()`` contract: the factory
+    is called with ``(source_type, connection_string, schema_name=..., source_params=...)``
+    and returns an object whose ``.get_schema()`` yields a ``PhysicalSchema``.
+    """
+
+    def __init__(self, physical):
+        self._physical = physical
+        self.calls: list[tuple] = []
+
+    def __call__(self, source_type, connection_string, *, schema_name="public", source_params=None):
+        self.calls.append((source_type, connection_string, schema_name, source_params))
+        return self
+
+    def get_schema(self):
+        return self._physical
+
+
+@pytest.fixture
+def preview_config():
+    return RelationalSchemaExtractionConfig(source_type="postgresql", url="postgresql://x/shop")
+
+
+class TestListRelationalTables:
+    def test_returns_table_topology(self, monkeypatch, preview_config):
+        fake = _FakeConnector(_physical())
+        monkeypatch.setattr(rse, "_try_import_relational_analyzer", lambda: fake)
+
+        result = list_relational_tables(preview_config)
+
+        assert result["source_type"] == "postgresql"
+        assert result["db_label"] == "shop"
+        assert result["dialect"] == "postgresql"
+        assert result["server_version"] == "16.1"
+        assert result["table_count"] == 3
+        assert result["view_count"] == 1
+        assert result["foreign_key_count"] == 1
+        names = {t["name"] for t in result["tables"]}
+        assert names == {"users", "orders", "active_reviews"}
+
+    def test_column_and_fk_detail(self, monkeypatch, preview_config):
+        fake = _FakeConnector(_physical())
+        monkeypatch.setattr(rse, "_try_import_relational_analyzer", lambda: fake)
+
+        result = list_relational_tables(preview_config)
+        by_name = {t["name"]: t for t in result["tables"]}
+
+        users = by_name["users"]
+        assert users["is_view"] is False
+        assert users["primary_key"] == ["id"]
+        email = next(c for c in users["columns"] if c["name"] == "email")
+        assert email["nullable"] is False
+        assert email["unique"] is True
+
+        orders = by_name["orders"]
+        assert orders["foreign_keys"] == [
+            {"columns": ["user_id"], "foreign_table": "users", "foreign_columns": ["id"]}
+        ]
+        assert by_name["active_reviews"]["is_view"] is True
+
+    def test_never_echoes_credentials(self, monkeypatch):
+        fake = _FakeConnector(_physical())
+        monkeypatch.setattr(rse, "_try_import_relational_analyzer", lambda: fake)
+        config = RelationalSchemaExtractionConfig(
+            source_type="postgresql", url="postgresql://user:secret@host/shop"
+        )
+
+        result = list_relational_tables(config)
+
+        assert "secret" not in str(result)
+        # The connector still received the real DSN.
+        assert fake.calls[0][1] == "postgresql://user:secret@host/shop"
+
+    def test_missing_library_raises_runtimeerror(self, monkeypatch, preview_config):
+        monkeypatch.setattr(rse, "_try_import_relational_analyzer", lambda: None)
+        with pytest.raises(RuntimeError, match="relational-schema-analyzer is not installed"):
+            list_relational_tables(preview_config)

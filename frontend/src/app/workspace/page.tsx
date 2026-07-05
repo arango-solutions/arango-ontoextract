@@ -10,6 +10,7 @@ import OntologyReleaseDialog from "@/components/workspace/OntologyReleaseDialog"
 import CreateOntologyDialog from "@/components/workspace/CreateOntologyDialog";
 import CatalogBrowserOverlay from "@/components/workspace/CatalogBrowserOverlay";
 import SchemaExtractionOverlay from "@/components/workspace/SchemaExtractionOverlay";
+import RelationalExtractionOverlay from "@/components/workspace/RelationalExtractionOverlay";
 import SchemaDiffOverlay from "@/components/workspace/SchemaDiffOverlay";
 import ImportsDependencyOverlay from "@/components/workspace/ImportsDependencyOverlay";
 import ConfirmDialog from "@/components/workspace/ConfirmDialog";
@@ -171,6 +172,11 @@ function WorkspacePageInner() {
   // closed flag and an ``onImported`` callback to refresh + switch
   // selection.
   const [showSchemaExtraction, setShowSchemaExtraction] = useState(false);
+  // Relational (SQL) schema-extraction overlay — peer of the ArangoDB
+  // extraction above. Opened from the canvas menu's "Extract from
+  // Relational DB…" action; the overlay owns its connect/preview/commit
+  // state machine, the page just needs an open flag + onImported.
+  const [showRelationalExtraction, setShowRelationalExtraction] = useState(false);
   const [dependencyOverlay, setDependencyOverlay] = useState<{
     key: string;
     name: string;
@@ -1207,6 +1213,7 @@ function WorkspacePageInner() {
     setShowCreateOntology,
     setShowCatalogBrowser,
     setShowSchemaExtraction,
+    setShowRelationalExtraction,
     setManageImports,
     setDependencyOverlay,
     setSchemaDiffOverlay,
@@ -1589,6 +1596,19 @@ function WorkspacePageInner() {
             // workspace to it. The overlay stays open on its "result"
             // step so the user can read the run summary before
             // dismissing.
+            setExplorerLibraryNonce((n) => n + 1);
+            handleSelectOntology(newOntologyId);
+          }}
+        />
+      )}
+
+      {showRelationalExtraction && (
+        <RelationalExtractionOverlay
+          onClose={() => setShowRelationalExtraction(false)}
+          onImported={(newOntologyId) => {
+            // Same post-import dance as the ArangoDB extraction overlay:
+            // nonce-bump the explorer so the new ontology appears, then
+            // switch the workspace to it.
             setExplorerLibraryNonce((n) => n + 1);
             handleSelectOntology(newOntologyId);
           }}

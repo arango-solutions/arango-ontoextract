@@ -131,6 +131,11 @@ export function buildCanvasContextMenu(
       onClick: () => actions.setShowSchemaExtraction(true),
     },
     {
+      label: "Extract from Relational DB…",
+      icon: "🗄",
+      onClick: () => actions.setShowRelationalExtraction(true),
+    },
+    {
       label: "Review Feedback Learning",
       icon: "📊",
       onClick: () =>

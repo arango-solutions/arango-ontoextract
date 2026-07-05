@@ -211,6 +211,13 @@ export interface WorkspaceContextMenuActions {
    *  9. Same surface as Catalog Browse: both are add-an-ontology
    *  actions opened from the canvas right-click menu. */
   setShowSchemaExtraction: (show: boolean) => void;
+  /** Opens the ``RelationalExtractionOverlay`` — connect to a relational
+   *  database (PostgreSQL / MySQL / SQL Server / Snowflake / DuckDB /
+   *  Databricks / CSV), preview its tables + foreign keys, and
+   *  reverse-engineer them into a new AOE ontology. Overlay, not a route,
+   *  per ``ui-architecture.mdc`` rule 9. Same add-an-ontology surface as
+   *  the ArangoDB schema extraction, opened from the canvas menu. */
+  setShowRelationalExtraction: (show: boolean) => void;
   setManageImports: (arg: ManageImportsArg) => void;
   /** Opens the H.7 ``ImportsDependencyOverlay`` — DAG canvas of the
    *  ``owl:imports`` ancestors and dependents of one ontology, sourced

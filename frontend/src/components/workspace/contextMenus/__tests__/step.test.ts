@@ -45,6 +45,7 @@ function makeActions(
     setShowCreateOntology: jest.fn(),
     setShowCatalogBrowser: jest.fn(),
     setShowSchemaExtraction: jest.fn(),
+    setShowRelationalExtraction: jest.fn(),
     setManageImports: jest.fn(),
     setDependencyOverlay: jest.fn(),
     setSchemaDiffOverlay: jest.fn(),

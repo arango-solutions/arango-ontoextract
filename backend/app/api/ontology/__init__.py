@@ -22,6 +22,7 @@ from app.api.ontology import (
     imports_io,
     library,
     mutations,
+    schema_relational,
     schema_temporal,
 )
 from app.services import export as export_svc  # noqa: F401  re-exported for tests
@@ -36,6 +37,7 @@ router.include_router(entities_read.router)
 router.include_router(mutations.router)
 router.include_router(imports_io.router)
 router.include_router(imports.router)
+router.include_router(schema_relational.router)
 router.include_router(schema_temporal.router)
 
 # Re-export handlers / module-level state that callers (mainly tests) still

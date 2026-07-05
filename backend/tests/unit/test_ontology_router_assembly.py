@@ -37,7 +37,7 @@ from app.api.ontology import router as ontology_router
 # it. Pinned so an accidental drop/duplication during a future refactor fails
 # loudly.
 ONTOLOGY_PREFIX = "/api/v1/ontology"
-EXPECTED_ROUTE_COUNT = 59
+EXPECTED_ROUTE_COUNT = 61
 
 
 def _ontology_openapi_paths() -> dict[str, list[str]]:
@@ -84,6 +84,8 @@ def test_router_mounts_under_canonical_prefix() -> None:
         "/api/v1/ontology/{ontology_id}/imports",
         "/api/v1/ontology/catalog",
         "/api/v1/ontology/schema/extract",
+        "/api/v1/ontology/schema/relational/tables",
+        "/api/v1/ontology/schema/relational/extract",
     ):
         assert expected in paths, f"missing endpoint {expected}"
 

@@ -30,6 +30,7 @@ from app.mcp.tools.export import register_export_tools
 from app.mcp.tools.introspection import register_introspection_tools
 from app.mcp.tools.ontology import register_ontology_tools
 from app.mcp.tools.pipeline import register_pipeline_tools
+from app.mcp.tools.relational import register_relational_tools
 from app.mcp.tools.temporal import register_temporal_tools
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -69,6 +70,7 @@ def create_mcp_server(
     register_introspection_tools(mcp)
     register_ontology_tools(mcp)
     register_pipeline_tools(mcp)
+    register_relational_tools(mcp)
     register_temporal_tools(mcp)
     register_export_tools(mcp)
     register_er_tools(mcp)

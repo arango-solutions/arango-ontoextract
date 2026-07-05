@@ -18,6 +18,19 @@ returned CI to green across the full pyramid. ~9 commits since `v1.0.0`.
   persisted on every chunk (with a legacy fallback that infers it from the
   parent document's MIME type), so the strategy selector routes text-only decks
   (`.pptx`) to the presentation extraction strategy instead of the prose default.
+- **Relational (SQL) schema extraction → ontology:** point AOE at a relational
+  database (PostgreSQL / MySQL / SQL Server / Snowflake / DuckDB / Databricks /
+  CSV) via the optional `relational-schema-analyzer` library and reverse-engineer
+  its tables → `owl:Class`, columns → `owl:DatatypeProperty`, foreign keys →
+  `owl:ObjectProperty`, and NOT NULL / UNIQUE / CHECK-enum constraints → SHACL
+  shapes, imported through the standard pipeline with per-class provenance. The
+  full vertical ships in this release: the `list_relational_tables` preview and
+  `extract_relational_schema` service (`app/services/relational_schema_extraction.py`),
+  two POST endpoints (`/schema/relational/tables`, `/schema/relational/extract`),
+  two MCP tools (`preview_relational_schema`, `extract_relational_schema`), and the
+  `RelationalExtractionOverlay` opened from the canvas "Extract from Relational DB…"
+  menu. Extracted ontologies are ordinary AOE ontologies, so all existing curation,
+  temporal, import, export, and quality tooling applies unchanged.
 
 ### Changed
 

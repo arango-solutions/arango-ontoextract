@@ -35,6 +35,7 @@ function makeActions(
     setShowCreateOntology: jest.fn(),
     setShowCatalogBrowser: jest.fn(),
     setShowSchemaExtraction: jest.fn(),
+    setShowRelationalExtraction: jest.fn(),
     setManageImports: jest.fn(),
     setDependencyOverlay: jest.fn(),
     setSchemaDiffOverlay: jest.fn(),
@@ -83,6 +84,7 @@ describe("buildCanvasContextMenu", () => {
       "New Ontology…",
       "Browse Standard Catalog…",
       "Extract from ArangoDB…",
+      "Extract from Relational DB…",
       "Review Feedback Learning",
     ]);
   });
@@ -105,6 +107,7 @@ describe("buildCanvasContextMenu", () => {
       "New Ontology…",
       "Browse Standard Catalog…",
       "Extract from ArangoDB…",
+      "Extract from Relational DB…",
       "Review Feedback Learning",
     ]);
   });
@@ -223,6 +226,16 @@ describe("buildCanvasContextMenu", () => {
 
     items.find((it) => it.label === "Extract from ArangoDB…")!.onClick!();
     expect(actions.setShowSchemaExtraction).toHaveBeenCalledWith(true);
+  });
+
+  // The relational extraction overlay is the SQL peer of the ArangoDB
+  // extraction: same add-an-ontology surface, same overlay-not-route rule.
+  it("Extract from Relational DB… opens the relational extraction overlay", () => {
+    const actions = makeActions();
+    const items = buildCanvasContextMenu({}, actions);
+
+    items.find((it) => it.label === "Extract from Relational DB…")!.onClick!();
+    expect(actions.setShowRelationalExtraction).toHaveBeenCalledWith(true);
   });
 
   it("Review Feedback Learning opens the overlay with no specific ontology", () => {
