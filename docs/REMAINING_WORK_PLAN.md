@@ -1,8 +1,8 @@
 # AOE — Remaining Work Plan
 
-**Document Version:** 3.4
-**Date:** June 16, 2026
-**Baseline:** v0.4.0-dev — supersedes v0.3.0 (perf streams), v0.2.0 (Stream 11 Phase 1+2) and v0.1.0
+**Document Version:** 3.5
+**Date:** July 5, 2026
+**Baseline:** v1.1.0 (released) — supersedes v1.0.0, v0.4.0-dev (perf/IBR streams), v0.3.0, v0.2.0 and v0.1.0
 **PRD Reference:** `PRD.md` — Arango-OntoExtract Product Requirements Document
 
 ---
@@ -12,8 +12,9 @@
 The AOE (Arango-OntoExtract) system has a working end-to-end extraction pipeline, ontology editor, pipeline monitor, quality metrics, multi-document support, **iterative belief-revision substrate**, and **substantial workspace-load performance work**. This document details the remaining work required to achieve full PRD compliance and production readiness.
 
 **Completed (v0.4.0-dev):** ~95% of PRD requirements. Shipped: Streams 1 (Imports + Composition), 2 (Entity Resolution, hand-rolled), 3 (Constraints v1), 4 (Quality Dashboard Q.2–Q.5), 5 (Schema Extraction), 6 (Testing & CI — 5-tier pipeline + coverage gates), 7 (Production Ops), 11 (Belief Revision Phases 1–3), 12 (perf T1–T5, T7–T10), 13 (Image-Aware Extraction), and the **Sigma.js core of Stream 8** (the workspace canvas is WebGL now).
-**Remaining for v1.0.0:** none of the previously-tracked tail items remain. Stream 12 T6 is **closed** — `/effective` gained per-stage `ms_*` telemetry, a real-DB profile pinned the bottleneck to the O(n²) subclass-cycle DFS (1.9s on a 3000-class ontology), and rewriting it as a linear three-colour DFS cut that to 42ms (~45×); `/edges` + `/effective` pagination is now unnecessary. Stream 3 I.7 (curator approve/reject/edit) shipped in `fbb72db`. Stream 4 was never short of its exit criteria. **The v1.0.0 functional scope is complete — what remains is the release cut itself (version bump + CHANGELOG + tag).**
-**Post-v1.0:** Stream 4 RAG-benchmark comparison UI (optional — never a formal Stream 4 task; Q.1–Q.5 shipped and the stream's exit criteria are met); Stream 8 editor panels (semantic zoom, edge bundling, property matrix, restriction editor, namespace manager, validation console); Stream 9 unified-storage spike; legacy-route removal. See the refreshed execution order below.
+**Released — v1.0.0:** the full PRD §6 functional scope. All of the previously-tracked v1.0.0 tail items are closed (Stream 12 T6 — `/effective` per-stage `ms_*` telemetry + a real-DB profile that pinned the O(n²) subclass-cycle DFS at 1.9s on 3000 classes, rewritten as a linear three-colour DFS → 42ms (~45×), making `/edges` + `/effective` pagination unnecessary; Stream 3 I.7 curator approve/reject/edit in `fbb72db`; Stream 4 exit criteria met).
+**Released — v1.1.0:** CH.1 structure-aware chunking foundation (`doc_format` + slide/page index on chunks, `eed591a`), CQ.3 `app/api/ontology.py` split into a cohesive sub-router package (`2ff0c26`), and **Stream 18 — Relational Schema → Ontology** (RS.1–RS.4: `relational-schema-analyzer` adopted, relational→OWL/SHACL mapping, MCP preview/extract tools, `RelationalExtractionOverlay`). The `relational-schema-analyzer` library was extracted from `r2g` and is no longer blocking.
+**Post-v1.1 (remaining):** Stream 16 (Domain Detection & Multi-Ontology Routing, DD.1–DD.5); Stream 17 (Structure-Aware Chunking CH.2–CH.5, deck/slide-aware); Stream 5 PR 4 (Schema-Analyzer LLM enrichment, applies to both ArangoDB and relational output); Stream 19 (LLM-Assisted Release Governance, RR.1–RR.6); Stream 14 code-quality tail (CQ.4(b), CQ.5 rename/reparent wiring); Stream 8 editor panels (semantic zoom, edge bundling, property matrix, restriction editor, namespace manager, validation console) + legacy-route removal; Stream 9 unified-storage spike; Stream 4 RAG-benchmark comparison UI (optional, needs a spec). See the refreshed execution order below.
 
 ### v0.3.0 highlights (since v0.2.0)
 
@@ -1254,11 +1255,11 @@ Multi-hop query traversability was the qualitative test ("Which academic center 
 
 | # | Task | Type | Status | Description |
 |---|------|------|--------|-------------|
-| DD.1 | Domain-segmentation step | Backend | PLANNED | New pre-extraction node (before/within the LangGraph pipeline init, after `strategy_selector`) that clusters `document_chunks` into topical domains via LLM classification, optionally corroborated by embedding clustering over chunk vectors above a confidence threshold. Emits `domain_segments: list[{domain, chunk_ids, confidence}]` into pipeline state. Single-domain docs pass through unchanged (one segment). |
-| DD.2 | `detected_domains` + per-class `domain_tag` | Backend | PLANNED | Persist run-level `detected_domains: list[str]` to `extraction_runs.stats`; stamp each extracted class with `domain_tag` (carried through Pydantic parsing → consistency merge → materialization, mirroring the FR-2.14 evidence-propagation pattern). Always produced, regardless of resolution strategy. |
-| DD.3 | Multi-domain warning (non-blocking, pre-commit) | Backend | PLANNED | When `len(detected_domains) > 1`, append a `type: "multi_domain"` entry to `stats.warnings[]` (same surface as the IMG.7 `visual_heavy_orphans` warning) with per-domain chunk/class counts, available before the curator commits. **Phase 1 (Option A) ends here** — mixed extraction lands in the single target ontology, cross-domain edges preserved, each class tagged. |
+| DD.1 | Domain-segmentation step | Backend | **DONE (Phase 1)** | Pre-extraction node `domain_segmenter_node` (`app/extraction/agents/domain_segmenter.py`), wired between `strategy_selector` and `extractor`, clusters `document_chunks` into topical domains via an LLM classification pass (`domain_segmentation` prompt) and emits `domain_segments: list[{domain, chunk_ids, confidence}]` into pipeline state. Gated behind `settings.domain_detection_enabled` (default OFF, mirroring belief-revision / structural-gate); transparent single-pass-through no-op when disabled. Evenly samples chunks above `domain_detection_max_chunks` and expands the sampled domains back over the full document. Any LLM/parse failure degrades to no segments (never fails the run). Shared LLM factory extracted to `app/extraction/llm.py`. Embedding-cluster corroboration remains an optional follow-up (LLM-only is sufficient for Phase 1). |
+| DD.2 | `detected_domains` + per-class `domain_tag` | Backend | **DONE** | `ExtractedClass.domain_tag` added (default `None`, carried through consistency merge by majority vote). `app/services/domain_detection.py` derives run-level `detected_domains` (persisted to `extraction_runs.stats.detected_domains`) and stamps each class's `domain_tag` by majority vote of its evidence `source_chunk_ids` → domain map (fallback to dominant domain), before store + materialization. Persisted onto the stored class document conditionally (absent when detection is off → byte-identical). |
+| DD.3 | Multi-domain warning (non-blocking, pre-commit) | Backend | **DONE** | `build_multi_domain_warning` appends a `type: "multi_domain"` entry to `stats.warnings[]` (same surface as IMG.7 `visual_heavy_orphans`) with `detected_domains`, per-domain chunk counts, and per-domain class counts when `len(detected_domains) > 1`. **Phase 1 (Option A) complete** — mixed extraction lands in the single target ontology, cross-domain edges preserved, each class tagged. |
 | DD.4 | "Split by domain" umbrella action (Option C) | Backend + Frontend | PLANNED | Curator-invoked action on a multi-domain run: create N per-domain staging ontologies (one per `detected_domains` entry, routing each domain's classes via `domain_tag`) + an umbrella ontology that `owl:imports` them, wiring `imports` edges via the shipped `sync_owl_imports_edges`. Cross-domain edges resolve through the `/effective` graph. A toggle drops the umbrella (Option B). Surfaced from the run/warning context menu per `ui-architecture.mdc` (no new route; overlay + undo-toast). Never auto-applied. |
-| DD.5 | Tests | Backend + Frontend | PLANNED | Single-domain doc → one segment, no warning, byte-identical to today. Two-domain fixture → two segments, `detected_domains`, per-class `domain_tag`, one `multi_domain` warning. Split action → N per-domain ontologies + umbrella with correct `imports` edges + effective-graph reassembles cross-domain edges. |
+| DD.5 | Tests | Backend + Frontend | **DONE (Phase 1)** | `test_domain_detection.py` (helpers), `test_domain_segmenter.py` (node: disabled pass-through, no-chunks, LLM success, graceful failure, parse coverage, sampling/expansion), plus `test_extraction_service.py::TestDomainDetectionStats` (detected_domains + multi_domain warning + in-place tagging) and `_materialize_to_graph` domain_tag persist/omit tests, and updated pipeline-topology / event tests. Phase-2 split-action tests land with DD.4. |
 
 **Exit Criteria:** A mixed-domain document (e.g. a multi-topic deck) produces a non-blocking `multi_domain` warning with `detected_domains` and per-class `domain_tag` **before** commit, without changing single-domain behavior (Phase 1); a curator can then opt into "Split by domain" to get clean per-domain ontologies under an umbrella that composes via the existing imports / `/effective` machinery (Phase 2). Splitting is never automatic.
 
@@ -1284,20 +1285,20 @@ Multi-hop query traversability was the qualitative test ("Which academic center 
 
 ---
 
-### Stream 18: Relational Schema → Ontology  (**BLOCKED**)
+### Stream 18: Relational Schema → Ontology  (**COMPLETE — v1.1.0**)
 **PRD:** §6.9 (extends schema extraction beyond ArangoDB)
 **Priority:** P3 — value-add for RDBMS users
-**Dependencies:** **BLOCKED** on extraction of a standalone `relational-schema-analyzer` library from the `r2g` project (owner-led, separate repo). No work starts in this repo until that library is signaled ready.
+**Dependencies:** ~~BLOCKED on extraction of a standalone `relational-schema-analyzer` library from the `r2g` project.~~ **Unblocked** — the library was extracted and is now an optional, import-guarded dependency.
 **Team Size:** 1 developer
 
-**Framing.** `r2g` (local `~/code/r2g`) does relational→graph migration for ArangoDB but does **not** natively emit OWL/ontologies; the schema-introspection logic is the reusable piece. The owner is extracting it into a clean `relational-schema-analyzer` library so it can be consumed the same way Thread A consumes `arango-schema-analyzer`. When ready, Stream 18 mirrors Stream 5 + PR 4: introspect the RDBMS schema (tables → classes, FKs → object properties with domain/range, columns → datatype properties, constraints → SHACL) → emit TTL → `import_from_file`, with optional LLM enrichment producing a Markdown domain description. **Do not begin until the library is signaled ready.**
+**Framing.** `r2g` (local `~/code/r2g`) does relational→graph migration for ArangoDB but does **not** natively emit OWL/ontologies; the schema-introspection logic is the reusable piece, extracted into a clean `relational-schema-analyzer` library consumed the same way Thread A consumes `arango-schema-analyzer`. Stream 18 mirrors Stream 5: introspect the RDBMS schema (tables → classes, FKs → object properties with domain/range, columns → datatype properties, constraints → SHACL) → emit TTL → `import_from_file`. Shipped end-to-end and verified against a real DuckDB database.
 
 | # | Task | Type | Status | Description |
 |---|------|------|--------|-------------|
-| RS.1 | Adopt `relational-schema-analyzer` | Backend | BLOCKED | Optional, import-guarded dependency mirroring `arango-schema-analyzer`. Connect-config (host/db/user/password/dialect). |
-| RS.2 | Relational → OWL direct mapping | Backend | BLOCKED | Tables → `owl:Class`; FKs → `owl:ObjectProperty` (`rdfs:domain`/`rdfs:range`); columns → `owl:DatatypeProperty` (SQL type → XSD); NOT NULL / UNIQUE / CHECK → SHACL (reuse Stream 3 importer). Per-class provenance (`source_db`/`source_table`). |
-| RS.3 | LLM enrichment + domain description | Backend | BLOCKED | Same additive-enrichment pattern as Stream 5 PR 4 (never replaces the direct mapping). |
-| RS.4 | "Extract from relational DB…" overlay + tests | Backend + Frontend | BLOCKED | Workspace overlay peer of "Extract from ArangoDB…"; tests mirror Stream 5. |
+| RS.1 | Adopt `relational-schema-analyzer` | Backend | **DONE** | Optional, import-guarded dependency mirroring `arango-schema-analyzer`. `backend/app/services/relational_schema_extraction.py` (`_introspect` helper, `create_connector`, connect-config host/db/user/password/dialect). |
+| RS.2 | Relational → OWL direct mapping | Backend | **DONE** | Tables → `owl:Class`; FKs → `owl:ObjectProperty` (`rdfs:domain`/`rdfs:range`); columns → `owl:DatatypeProperty` (SQL type → XSD); NOT NULL / UNIQUE / CHECK → SHACL (reuses Stream 3 importer). `list_relational_tables` read-only preview + `extract_relational_schema`. API sub-router `app/api/ontology/schema_relational.py` (`POST .../schema/relational/tables` + `.../extract`); MCP tools `preview_relational_schema` + `extract_relational_schema`. |
+| RS.3 | LLM enrichment + domain description | Backend | DEFERRED → Stream 5 PR 4 | Same additive-enrichment pattern as Stream 5 PR 4 (never replaces the direct mapping). Tracked under the shared Schema-Analyzer LLM enrichment task so ArangoDB and relational enrichment ship together. |
+| RS.4 | "Extract from relational DB…" overlay + tests | Backend + Frontend | **DONE** | `RelationalExtractionOverlay.tsx` (connect → preview → result), wired via `contextMenus/canvas.ts` "Extract from Relational DB…" + `page.tsx`. Unit tests: service, API (`test_schema_relational_api.py`), MCP (`test_mcp.py`), overlay + canvas menu. Real DuckDB e2e verified. |
 
 **Exit Criteria (when unblocked):** A relational database can be reverse-engineered into an imported ontology with FK-derived object properties, column-derived datatype properties, constraint-derived SHACL, per-class provenance, and optional LLM-generated domain description — surfaced from a workspace overlay, mirroring the ArangoDB path.
 
@@ -1324,12 +1325,13 @@ Multi-hop query traversability was the qualitative test ("Which academic center 
 
 ---
 
-## Recommended Execution Order (refreshed v0.4.0-dev)
+## Recommended Execution Order (refreshed v1.1.0)
 
-Streams 1, 2, 3, 5, 6, 7, 11, 13 and the Sigma.js core of Stream 8 are
+Streams 1, 2, 3, 5, 6, 7, 11, 13, 18 and the Sigma.js core of Stream 8 are
 **shipped**; the original Sprint A–G plan below is kept only as a historical
-record (struck through). What actually remains for v1.0.0 is a short tail of
-follow-ups.
+record. v1.0.0 (full PRD §6 scope) and v1.1.0 (chunking foundation, ontology
+API split, relational schema extraction) are released. What remains is the
+post-v1.1 enhancement backlog, sequenced by value × readiness × dependency.
 
 ```
 DONE:  Stream 1 (Imports + Composition)   Stream 2 (Entity Resolution, hand-rolled)
@@ -1338,31 +1340,33 @@ DONE:  Stream 1 (Imports + Composition)   Stream 2 (Entity Resolution, hand-roll
        Stream 7 (Production Ops)          Stream 11 (Belief Revision)
        Stream 12 (perf: T1–T5, T7–T10)    Stream 13 (Image-Aware Extraction)
        Stream 8 core (Sigma.js workspace canvas: V.1 / V.2 / V.5)
+       Stream 14 CQ.1–CQ.3 (thresholds, belief-metrics wiring, ontology.py split)
+       Stream 17 CH.1 (doc_format + slide/page index on chunks)
+       Stream 18 (Relational Schema → Ontology — RS.1/RS.2/RS.4)   → v1.1.0
 
-REMAINING for v1.0.0:
-  - (functional scope complete) Only the release cut itself remains:
-    drop the -dev suffix, update CHANGELOG, bump version, tag v1.0.0.
-  → v1.0.0 Release
+RELEASED:
+  - v1.0.0 — full PRD §6 functional scope
+  - v1.1.0 — CH.1 chunking foundation, CQ.3 ontology API split, Stream 18 relational
 
-  (Closed since v3.3: Stream 3 I.7 curator approve/reject/edit shipped in commit
-   `fbb72db`; Stream 4 confirmed feature-complete — its exit criteria never
-   included the RAG benchmark UI, which is now post-v1.0; Stream 12 T6 closed —
-   /effective per-stage telemetry + a real-DB profile that pinned the O(n^2)
-   subclass-cycle DFS, rewritten to linear three-colour DFS, 3000-class
-   effective graph 1.9s -> 42ms. /edges + /effective pagination now unnecessary.)
-
-POST-v1.0:
-  - Stream 4 RAG benchmark comparison UI (optional, unscoped — needs a spec first)
-  - Stream 5 PR 4 (Schema-Analyzer LLM enrichment: domain description + rdfs:comment merge)
-  - Stream 8 editor panels (V.3 semantic zoom, V.4 edge bundling, V.6 property
-    matrix, V.7 restriction editor, V.8 namespace manager, V.9 validation console)
-  - Stream 9 (Unified Storage spike)
-  - Stream 14 (Code Quality: CQ.3 ontology.py split DONE; CQ.4 dup consolidations remaining; CQ.5 orphans)
-  - Stream 16 (Domain Detection & Multi-Ontology Routing: DD.1–DD.5, A-now/C-next)
-  - Stream 17 (Structure-Aware Chunking: CH.1 DONE; CH.2–CH.5 deck/slide-aware remaining)
-  - Stream 18 (Relational Schema → Ontology — BLOCKED on r2g library extraction)
-  - Stream 19 (LLM-Assisted Release Governance: RR.1–RR.6, advisory → policy-gated autonomy)
-  - Legacy-route removal (/curation, /ontology/edit, /entity-resolution)
+POST-v1.1 (recommended order):
+  Phase 1 — Extraction depth:
+    1. Stream 16 Domain Detection Phase 1 (DD.1–DD.3: segment, tag, non-blocking warning)
+    2. Stream 17 CH.2–CH.5 (slide-boundary chunker, topic units — feed DD segmentation)
+    3. Stream 16 DD.4–DD.5 ("split by domain" umbrella action + tests)
+  Phase 2 — Polish extraction outputs:
+    4. Stream 5 PR 4 / RS.3 (Schema-Analyzer LLM enrichment: domain description +
+       rdfs:comment merge — applies to both ArangoDB and relational output)
+    5. Stream 14 CQ.5 (wire EditableLabel rename + ReparentSelect/DnD reparent)
+  Phase 3 — Trust & autonomy:
+    6. Stream 19 (Release Governance: RR.1 aggregator → RR.2 critic → RR.3/4 policy+gate → RR.5 UI)
+  Phase 4 — Visualization & cleanup:
+    7. Stream 8 editor panels (V.3/V.4/V.6/V.7/V.8/V.9) + W.8 minimap
+    8. Stream 14 CQ.4(b) collection-allowlist consolidation
+    9. Legacy-route removal (/curation, /ontology/edit, /entity-resolution — V.10/V.11)
+  Deferred until demand justifies:
+    - Stream 9 (Unified Storage spike)
+    - Stream 4 RAG benchmark comparison UI (optional, needs a spec first)
+    - Stream 12 T6 (WTW-switch per-stage profile capture)
 ```
 
 <details><summary>Historical Sprint A–G plan (superseded — all sprints shipped)</summary>

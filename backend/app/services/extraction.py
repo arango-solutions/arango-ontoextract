@@ -34,6 +34,11 @@ from app.extraction.pipeline import run_pipeline
 from app.models.common import PaginatedResponse
 from app.observability import get_tracer
 from app.services.confidence import compute_class_confidence
+from app.services.domain_detection import (
+    assign_domain_tags,
+    build_multi_domain_warning,
+    detected_domains_from_segments,
+)
 from app.services.edge_repair import resolve_range_class
 from app.services.visual_extraction import (
     aggregate_document_visual_diagnostics,
@@ -395,6 +400,39 @@ async def execute_run(
                     exc_info=True,
                 )
 
+        # Stream 16 DD.2/DD.3: turn the domain_segmenter's segments into
+        # run-level detected_domains, stamp each class with its domain_tag
+        # (mutating the consistency_result classes in place BEFORE they are
+        # stored + materialized below), and attach a non-blocking
+        # multi_domain warning when the document spans >1 domain. Empty
+        # segments (detection disabled or a graceful failure) leave classes
+        # untagged and produce no detected_domains -- byte-identical to a
+        # run without domain detection.
+        domain_segments: list[dict[str, Any]] = list(final_state.get("domain_segments") or [])
+        detected_domains: list[str] = []
+        if domain_segments:
+            detected_domains = detected_domains_from_segments(
+                domain_segments, settings.domain_detection_min_confidence
+            )
+            if consistency is not None and detected_domains:
+                class_domain_counts = assign_domain_tags(
+                    consistency.classes,
+                    domain_segments,
+                    min_confidence=settings.domain_detection_min_confidence,
+                )
+                domain_warning = build_multi_domain_warning(
+                    detected_domains=detected_domains,
+                    segments=domain_segments,
+                    class_domain_counts=class_domain_counts,
+                )
+                if domain_warning is not None:
+                    warnings_list.append(domain_warning)
+                    log.info(
+                        "multi-domain warning attached to run %s (domains=%s)",
+                        run_id,
+                        detected_domains,
+                    )
+
         update_data: dict[str, Any] = {
             "completed_at": completed_at,
             "status": status,
@@ -408,6 +446,7 @@ async def execute_run(
                 "pass_agreement_rate": pass_agreement_rate,
                 "belief_revision": belief_revision_summary,
                 "visual_extraction_summary": visual_summary,
+                "detected_domains": detected_domains,
                 "warnings": warnings_list,
             },
         }
@@ -1203,6 +1242,12 @@ def _materialize_to_graph(
             "created": now,
             "expired": NEVER_EXPIRES,
         }
+        # Stream 16 DD.2: persist the topical domain when present. Added
+        # conditionally so detection-disabled runs write the exact same
+        # class document as before (byte-identical).
+        domain_tag = cls_data.get("domain_tag")
+        if domain_tag:
+            class_doc["domain_tag"] = domain_tag
         try:
             cls_col.insert(class_doc, overwrite=True)
         except Exception as exc:

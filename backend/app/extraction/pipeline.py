@@ -1,6 +1,7 @@
 """LangGraph StateGraph for the ontology extraction pipeline.
 
-Nodes: strategy_selector → extractor → consistency_checker → er_agent → filter
+Nodes: strategy_selector → domain_segmenter → extractor → consistency_checker
+→ er_agent → filter
 Conditional edges retry on failure. Checkpointed via MemorySaver.
 Human-in-the-loop breakpoint after pre-curation filter.
 """
@@ -15,6 +16,7 @@ from langgraph.graph import END, StateGraph
 
 from app.extraction.agents.belief_revision import belief_revision_node
 from app.extraction.agents.consistency import consistency_checker_node
+from app.extraction.agents.domain_segmenter import domain_segmenter_node
 from app.extraction.agents.er_agent import er_agent_node
 from app.extraction.agents.extractor import extractor_node
 from app.extraction.agents.filter import filter_agent_node
@@ -28,7 +30,8 @@ log = logging.getLogger(__name__)
 _EVENT_BUS: dict[str, Any] | None = None
 
 _NEXT_STEPS: dict[str, list[str]] = {
-    "strategy_selector": ["extractor"],
+    "strategy_selector": ["domain_segmenter"],
+    "domain_segmenter": ["extractor"],
     "extractor": ["consistency_checker"],
     "consistency_checker": ["quality_judge", "er_agent"],
     "quality_judge": ["belief_revision"],
@@ -77,11 +80,14 @@ def build_pipeline() -> StateGraph[Any]:
 
     Pipeline topology (parallel fork/join after consistency checker):
 
-    Strategy -> Extraction -> Consistency -+-> Quality Judge -+-> Belief Revision
-                                           +-> ER Agent ------+        |
-                                                                       v
-                                              Filter <- Structural Gate
+    Strategy -> Domain Segmenter -> Extraction -> Consistency -+-> Quality Judge -+
+                                                               +-> ER Agent ------+
+                                                                       |
+                                              Filter <- Structural Gate <- Belief Revision
 
+    Domain Segmenter (Stream 16) clusters chunks into topical domains
+    before extraction; it is a transparent pass-through when
+    ``settings.domain_detection_enabled`` is False.
     Quality Judge and ER Agent run in parallel since they both only
     depend on the consistency result and don't depend on each other.
     Belief Revision (Stream 11) joins them: it reads the ER results to
@@ -95,6 +101,7 @@ def build_pipeline() -> StateGraph[Any]:
     graph = StateGraph(ExtractionPipelineState)
 
     graph.add_node("strategy_selector", strategy_selector_node)
+    graph.add_node("domain_segmenter", domain_segmenter_node)
     graph.add_node("extractor", extractor_node)
     graph.add_node("consistency_checker", consistency_checker_node)
     graph.add_node("quality_judge", quality_judge_node)
@@ -104,7 +111,12 @@ def build_pipeline() -> StateGraph[Any]:
     graph.add_node("filter", filter_agent_node)
 
     graph.set_entry_point("strategy_selector")
-    graph.add_edge("strategy_selector", "extractor")
+    # Stream 16 DD.1: domain segmentation runs after strategy selection
+    # (which needs raw chunk metadata) and before extraction. It is a
+    # transparent pass-through when ``settings.domain_detection_enabled``
+    # is False.
+    graph.add_edge("strategy_selector", "domain_segmenter")
+    graph.add_edge("domain_segmenter", "extractor")
 
     graph.add_conditional_edges(
         "extractor",

@@ -150,6 +150,32 @@ class Settings(BaseSettings):
     #: asset count across run documents must exceed this to trigger.
     visual_orphan_warning_min_assets: int = 5
 
+    # -- Domain Detection & Multi-Ontology Routing (Stream 16) -------------
+    #: Master switch for the pre-extraction domain-segmentation node
+    #: (DD.1). Default OFF, mirroring the belief-revision and
+    #: structural-gate nodes: every new pipeline node in this codebase
+    #: ships behind a default-off flag so existing runs are byte-identical
+    #: until an operator opts in. When False the node is a transparent
+    #: pass-through (no LLM call, no ``domain_segments``, no
+    #: ``detected_domains``, no per-class ``domain_tag``, no warning).
+    domain_detection_enabled: bool = False
+    #: Model id for the domain-classification call. Empty string (default)
+    #: falls back to ``llm_extraction_model`` so a deployment only needs to
+    #: override this when it wants a cheaper/faster classifier than the
+    #: main extractor model.
+    domain_detection_model: str = ""
+    #: A chunk's domain assignment below this confidence is treated as
+    #: unassigned (folded into the dominant domain) so a single low-signal
+    #: chunk does not spuriously create a second domain / multi-domain
+    #: warning. Also the floor for a distinct domain to count toward
+    #: ``detected_domains``.
+    domain_detection_min_confidence: float = 0.6
+    #: Upper bound on the number of chunks sent to the classifier in one
+    #: call, bounding cost/latency on very large documents. When a document
+    #: exceeds this, the node samples evenly across the document; unsampled
+    #: chunks inherit the nearest sampled chunk's domain.
+    domain_detection_max_chunks: int = 200
+
     # -- Entity Resolution -------------------------------------------------
     er_vector_similarity_threshold: float = 0.85
     er_vector_weight: float = 0.6

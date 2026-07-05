@@ -1362,6 +1362,118 @@ class TestVisualOrphanWarning:
         assert "visual_heavy_orphans" not in kinds
 
 
+class TestDomainDetectionStats:
+    """Stream 16 DD.2/DD.3: execute_run turns domain_segments into
+    ``stats.detected_domains``, stamps per-class ``domain_tag``, and appends
+    a non-blocking ``multi_domain`` warning when a document spans >1 domain.
+    """
+
+    def _setup_run(self, *, class_chunk_ids: list[list[str]], domain_segments):
+        from app.models.ontology import ExtractedClass, ExtractionResult, SourceEvidence
+
+        classes = [
+            ExtractedClass(
+                uri=f"http://ex.org#C{i}",
+                label=f"C{i}",
+                description="d",
+                confidence=0.9,
+                evidence=[SourceEvidence(source_chunk_ids=cids)],
+            )
+            for i, cids in enumerate(class_chunk_ids)
+        ]
+        consistency = ExtractionResult(classes=classes, pass_number=0, model="m")
+        run_record = {
+            "_key": "run_dd",
+            "doc_ids": ["doc1"],
+            "status": "running",
+            "stats": {
+                "passes": 1,
+                "consistency_threshold": 0.7,
+                "token_usage": {},
+                "errors": [],
+                "step_logs": [],
+            },
+        }
+        pipeline_state: dict[str, Any] = {
+            "consistency_result": consistency,
+            "domain_segments": domain_segments,
+            "errors": [],
+            "step_logs": [],
+            "token_usage": {},
+            "extraction_passes": [],
+        }
+        return run_record, pipeline_state, consistency
+
+    async def _run(self, mock_col, run_record, pipeline_state):
+        with (
+            patch("app.services.extraction.get_db", return_value=MagicMock()),
+            patch("app.services.extraction._get_collection", return_value=mock_col),
+            patch(
+                "app.services.extraction.doc_get",
+                side_effect=[run_record, {"_key": "run_dd", "status": "completed"}],
+            ),
+            patch("app.services.extraction.run_pipeline", new_callable=AsyncMock) as mock_run,
+            patch("app.services.extraction._load_document_chunks", return_value=[{"text": "h"}]),
+            patch("app.services.extraction._store_results"),
+            patch("app.services.extraction._materialize_to_graph"),
+            patch("app.services.extraction._auto_register_ontology", return_value="onto_x"),
+            patch("app.services.extraction._create_produced_by_edge"),
+            patch("app.db.documents_repo.get_document", return_value={"_key": "doc1"}),
+        ):
+            mock_run.return_value = pipeline_state
+            from app.services.extraction import execute_run
+
+            await execute_run(run_id="run_dd", document_ids=["doc1"], event_callback=MagicMock())
+
+    @pytest.mark.asyncio
+    async def test_multi_domain_warning_and_detected_domains(self):
+        mock_col = MagicMock()
+        segments = [
+            {"domain": "Finance", "chunk_ids": ["c1", "c2"], "confidence": 0.9},
+            {"domain": "HR", "chunk_ids": ["c3"], "confidence": 0.85},
+        ]
+        run_record, pipeline_state, consistency = self._setup_run(
+            class_chunk_ids=[["c1"], ["c3"]], domain_segments=segments
+        )
+        await self._run(mock_col, run_record, pipeline_state)
+
+        terminal = _stats_update_args(mock_col)[-1]["stats"]
+        assert terminal["detected_domains"] == ["Finance", "HR"]
+        kinds = {w.get("type") for w in (terminal.get("warnings") or [])}
+        assert "multi_domain" in kinds
+        # Classes were tagged in place.
+        assert consistency.classes[0].domain_tag == "Finance"
+        assert consistency.classes[1].domain_tag == "HR"
+
+    @pytest.mark.asyncio
+    async def test_single_domain_no_warning(self):
+        mock_col = MagicMock()
+        segments = [{"domain": "Finance", "chunk_ids": ["c1", "c2"], "confidence": 0.95}]
+        run_record, pipeline_state, _ = self._setup_run(
+            class_chunk_ids=[["c1"], ["c2"]], domain_segments=segments
+        )
+        await self._run(mock_col, run_record, pipeline_state)
+
+        terminal = _stats_update_args(mock_col)[-1]["stats"]
+        assert terminal["detected_domains"] == ["Finance"]
+        kinds = {w.get("type") for w in (terminal.get("warnings") or [])}
+        assert "multi_domain" not in kinds
+
+    @pytest.mark.asyncio
+    async def test_no_segments_leaves_detection_empty(self):
+        mock_col = MagicMock()
+        run_record, pipeline_state, consistency = self._setup_run(
+            class_chunk_ids=[["c1"]], domain_segments=[]
+        )
+        await self._run(mock_col, run_record, pipeline_state)
+
+        terminal = _stats_update_args(mock_col)[-1]["stats"]
+        assert terminal["detected_domains"] == []
+        kinds = {w.get("type") for w in (terminal.get("warnings") or [])}
+        assert "multi_domain" not in kinds
+        assert consistency.classes[0].domain_tag is None
+
+
 # ---------------------------------------------------------------------------
 # execute_run -- domain context / tier2
 # ---------------------------------------------------------------------------
@@ -1877,6 +1989,47 @@ class TestMaterializeToGraph:
         ef_doc = ef_col.insert.call_args[0][0]
         assert ef_doc["_from"] == "ontology_classes/Animal"
         assert ef_doc["_to"] == "documents/doc_1"
+
+    def test_persists_domain_tag_when_present(self):
+        # Stream 16 DD.2: a class carrying a domain_tag lands it on the
+        # stored class document.
+        from app.services.extraction import _materialize_to_graph
+
+        mock_db, cols = _mock_db(chunk_keys=[])
+        result = _make_result(
+            classes=[
+                {
+                    "label": "Invoice",
+                    "uri": "http://ex.org#Invoice",
+                    "description": "d",
+                    "confidence": 0.8,
+                    "domain_tag": "Finance",
+                }
+            ]
+        )
+        _materialize_to_graph(mock_db, run_id="r", document_id="d", ontology_id="o", result=result)
+        cls_doc = cols["ontology_classes"].insert.call_args[0][0]
+        assert cls_doc["domain_tag"] == "Finance"
+
+    def test_omits_domain_tag_when_absent(self):
+        # Detection-disabled runs write the exact same document as before
+        # (no domain_tag key).
+        from app.services.extraction import _materialize_to_graph
+
+        mock_db, cols = _mock_db(chunk_keys=[])
+        result = _make_result(
+            classes=[
+                {
+                    "label": "Invoice",
+                    "uri": "http://ex.org#Invoice",
+                    "description": "d",
+                    "confidence": 0.8,
+                }
+            ]
+        )
+        _materialize_to_graph(mock_db, run_id="r", document_id="d", ontology_id="o", result=result)
+        cls_doc = cols["ontology_classes"].insert.call_args[0][0]
+        assert "domain_tag" not in cls_doc
 
     def test_inserts_subclass_edges(self):
         from app.services.extraction import _materialize_to_graph

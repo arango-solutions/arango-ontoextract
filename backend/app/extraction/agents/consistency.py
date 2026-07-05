@@ -295,6 +295,15 @@ def consistency_checker_node(state: ExtractionPipelineState) -> dict[str, Any]:
         parent_uris = [v.parent_uri for v in variants if v.parent_uri]
         parent_uri = Counter(parent_uris).most_common(1)[0][0] if parent_uris else None
 
+        # Stream 16 DD.2: carry a per-class domain_tag through the merge by
+        # majority vote across variants (mirrors parent_uri). Today the
+        # extractor never emits domain_tag (it is assigned deterministically
+        # post-merge from evidence), so this is a no-op for the current
+        # flow -- but it keeps the field intact if a future prompt has the
+        # LLM emit domain_tag directly.
+        domain_tags = [v.domain_tag for v in variants if v.domain_tag]
+        domain_tag = Counter(domain_tags).most_common(1)[0][0] if domain_tags else None
+
         llm_confidences = [v.confidence for v in variants]
         avg_llm_confidence = (
             sum(_clamp_confidence(c) for c in llm_confidences) / len(llm_confidences)
@@ -312,6 +321,7 @@ def consistency_checker_node(state: ExtractionPipelineState) -> dict[str, Any]:
                 classification=best_variant.classification,
                 confidence=round(agreement_ratio, 3),
                 evidence=_merge_evidence([v.evidence for v in variants]),
+                domain_tag=domain_tag,
                 llm_confidence=round(_clamp_confidence(avg_llm_confidence), 3),
                 property_agreement=round(_clamp_confidence(prop_agreement), 3),
                 attribute_agreement=round(_clamp_confidence(attr_agreement), 3),

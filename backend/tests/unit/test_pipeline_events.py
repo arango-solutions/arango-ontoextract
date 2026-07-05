@@ -53,6 +53,7 @@ class TestPipelineStepEvents:
 
         async def fake_stream():
             yield {"strategy_selector": {}}
+            yield {"domain_segmenter": {}}
             yield {"extractor": {}}
 
         mock_compiled = MagicMock()
@@ -70,11 +71,14 @@ class TestPipelineStepEvents:
         event_types = [c.kwargs["event_type"] for c in callback.call_args_list]
         event_steps = [c.kwargs["step"] for c in callback.call_args_list]
 
+        # Stream 16 DD.1: domain_segmenter sits between strategy and extractor.
         assert (event_types[0], event_steps[0]) == ("step_started", "strategy_selector")
         assert (event_types[1], event_steps[1]) == ("step_completed", "strategy_selector")
-        assert (event_types[2], event_steps[2]) == ("step_started", "extractor")
-        assert (event_types[3], event_steps[3]) == ("step_completed", "extractor")
-        assert (event_types[4], event_steps[4]) == ("step_started", "consistency_checker")
+        assert (event_types[2], event_steps[2]) == ("step_started", "domain_segmenter")
+        assert (event_types[3], event_steps[3]) == ("step_completed", "domain_segmenter")
+        assert (event_types[4], event_steps[4]) == ("step_started", "extractor")
+        assert (event_types[5], event_steps[5]) == ("step_completed", "extractor")
+        assert (event_types[6], event_steps[6]) == ("step_started", "consistency_checker")
 
     @pytest.mark.asyncio
     async def test_last_node_does_not_emit_next_started(self):

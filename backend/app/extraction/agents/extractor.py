@@ -16,6 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.config import settings
 from app.db.client import get_db
 from app.db.utils import run_aql
+from app.extraction.llm import get_chat_model
 from app.extraction.prompts import get_template
 from app.extraction.state import ExtractionPipelineState, StepLog, TokenUsage
 from app.models.ontology import ExtractionResult
@@ -51,33 +52,12 @@ def _provider_config_error_status(exc: Exception) -> int | None:
 def _get_llm(model_name: str) -> Any:
     """Instantiate the LLM based on model name.
 
-    Both providers receive ``timeout=settings.llm_request_timeout_seconds``
-    so a hung provider connection raises after the configured ceiling
-    instead of pinning an asyncio task forever. See
-    ``Settings.llm_request_timeout_seconds`` for the rationale and
-    incident history.
+    Thin wrapper over :func:`app.extraction.llm.get_chat_model` (the shared
+    single source of truth for provider selection + timeout). Kept as a
+    module-local symbol so existing tests that patch
+    ``app.extraction.agents.extractor._get_llm`` continue to work.
     """
-    timeout = settings.llm_request_timeout_seconds
-    if "claude" in model_name.lower() or "anthropic" in model_name.lower():
-        from langchain_anthropic import ChatAnthropic
-
-        return ChatAnthropic(
-            model=model_name,  # type: ignore[call-arg]
-            api_key=settings.anthropic_api_key,  # type: ignore[arg-type]
-            max_tokens=4096,
-            timeout=timeout,
-        )
-    from langchain_openai import ChatOpenAI
-
-    kwargs: dict[str, Any] = {
-        "model": model_name,
-        "api_key": settings.openai_api_key,
-        "max_tokens": 4096,
-        "timeout": timeout,
-    }
-    if settings.openai_base_url:
-        kwargs["base_url"] = settings.openai_base_url
-    return ChatOpenAI(**kwargs)
+    return get_chat_model(model_name)
 
 
 def _batch_chunks(chunks: list[dict[str, Any]], batch_size: int) -> list[str]:

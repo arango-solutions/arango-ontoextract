@@ -232,6 +232,14 @@ class ExtractedClass(BaseModel):
     classification: ExtractionClassification = ExtractionClassification.NEW
     confidence: float = Field(ge=0.0, le=1.0)
     evidence: list[SourceEvidence] = []
+    # Stream 16 DD.2 -- topical domain this class was extracted from.
+    # ``None`` by default so the LLM is not asked to produce it and
+    # single-domain / detection-disabled runs stay byte-identical. It is
+    # stamped deterministically after consistency-merge by mapping the
+    # class's evidence ``source_chunk_ids`` back to the domain segments
+    # produced by the domain_segmenter node, then carried through
+    # materialization onto the stored class document.
+    domain_tag: str | None = None
     # Legacy field — kept for backward compat during migration
     properties: list["ExtractedProperty"] = []
     # PGT-aligned fields (ADR-006)

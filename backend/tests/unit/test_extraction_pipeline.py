@@ -98,6 +98,7 @@ class TestBuildPipeline:
         node_names = set(graph.nodes.keys())
         expected = {
             "strategy_selector",
+            "domain_segmenter",
             "extractor",
             "consistency_checker",
             "quality_judge",
@@ -148,7 +149,9 @@ class TestSetEventBus:
 
 class TestNextStepsMapping:
     def test_has_expected_transitions(self):
-        assert _NEXT_STEPS["strategy_selector"] == ["extractor"]
+        # Stream 16 DD.1: domain_segmenter sits between strategy and extractor.
+        assert _NEXT_STEPS["strategy_selector"] == ["domain_segmenter"]
+        assert _NEXT_STEPS["domain_segmenter"] == ["extractor"]
         assert _NEXT_STEPS["extractor"] == ["consistency_checker"]
         assert _NEXT_STEPS["consistency_checker"] == ["quality_judge", "er_agent"]
         # Stream 11 IBR.11: belief_revision sits between QJ/ER and filter.

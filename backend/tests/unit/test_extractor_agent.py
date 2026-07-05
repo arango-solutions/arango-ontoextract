@@ -43,7 +43,7 @@ class TestGetLlm:
         mock_module = MagicMock()
         mock_module.ChatAnthropic = mock_anthropic_cls
         with (
-            patch("app.extraction.agents.extractor.settings") as mock_settings,
+            patch("app.extraction.llm.settings") as mock_settings,
             patch.dict("sys.modules", {"langchain_anthropic": mock_module}),
         ):
             mock_settings.anthropic_api_key = "sk-test"
@@ -56,7 +56,7 @@ class TestGetLlm:
         mock_module = MagicMock()
         mock_module.ChatOpenAI = mock_openai_cls
         with (
-            patch("app.extraction.agents.extractor.settings") as mock_settings,
+            patch("app.extraction.llm.settings") as mock_settings,
             patch.dict("sys.modules", {"langchain_openai": mock_module}),
         ):
             mock_settings.openai_api_key = "sk-test"
@@ -80,7 +80,7 @@ class TestGetLlm:
         mock_module = MagicMock()
         mock_module.ChatAnthropic = mock_anthropic_cls
         with (
-            patch("app.extraction.agents.extractor.settings") as mock_settings,
+            patch("app.extraction.llm.settings") as mock_settings,
             patch.dict("sys.modules", {"langchain_anthropic": mock_module}),
         ):
             mock_settings.anthropic_api_key = "sk-test"
@@ -97,7 +97,7 @@ class TestGetLlm:
         mock_module = MagicMock()
         mock_module.ChatOpenAI = mock_openai_cls
         with (
-            patch("app.extraction.agents.extractor.settings") as mock_settings,
+            patch("app.extraction.llm.settings") as mock_settings,
             patch.dict("sys.modules", {"langchain_openai": mock_module}),
         ):
             mock_settings.openai_api_key = "sk-test"
@@ -119,7 +119,7 @@ class TestGetLlm:
         mock_module = MagicMock()
         mock_module.ChatOpenAI = mock_openai_cls
         with (
-            patch("app.extraction.agents.extractor.settings") as mock_settings,
+            patch("app.extraction.llm.settings") as mock_settings,
             patch.dict("sys.modules", {"langchain_openai": mock_module}),
         ):
             mock_settings.openai_api_key = "sk-test"

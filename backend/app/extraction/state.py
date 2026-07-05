@@ -65,6 +65,18 @@ class ExtractionPipelineState(TypedDict, total=False):
 
     domain_context: str
 
+    # Domain detection (Stream 16 DD.1).
+    # The domain_segmenter node runs once per pipeline invocation between
+    # strategy_selector and extractor. It clusters ``document_chunks`` into
+    # topical domains and writes one segment per domain here, each shaped
+    # ``{"domain": str, "chunk_ids": list[str], "confidence": float}``.
+    # Replaced wholesale by the node's single write (no reducer). Empty
+    # list when the node is disabled (``settings.domain_detection_enabled``
+    # is False) or produced no segments -- downstream code treats an empty
+    # list as "no domain routing" and leaves classes untagged, preserving
+    # byte-identical behavior for existing runs.
+    domain_segments: list[dict[str, Any]]
+
     # Belief revision (PRD §6.16, Stream 11 IBR.10)
     # One entry per revision applied OR flagged during this run. Each entry
     # is a dict (not a dataclass) so the value composes cleanly through
