@@ -53,6 +53,13 @@ dependencies = [
 ocr = [
     "pytesseract>=0.3.10",
 ]
+relational = [
+    # Optional: relational (SQL) schema extraction. Enables
+    # app.services.relational_schema_extraction, which introspects
+    # PostgreSQL/MySQL/SQL Server/Snowflake/DuckDB/Databricks/CSV into a
+    # PhysicalSchema and maps it to OWL/SHACL (AOE owns the mapping).
+    "relational-schema-analyzer>=0.1",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
