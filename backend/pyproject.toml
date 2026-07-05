@@ -58,7 +58,12 @@ relational = [
     # app.services.relational_schema_extraction, which introspects
     # PostgreSQL/MySQL/SQL Server/Snowflake/DuckDB/Databricks/CSV into a
     # PhysicalSchema and maps it to OWL/SHACL (AOE owns the mapping).
-    "relational-schema-analyzer>=0.1",
+    # >=0.2 is the corrected release that resolved the r2g<->RSA fork drift;
+    # it adds an additive, omitted-when-empty `extra` passthrough on
+    # Column/Table (which AOE does not consume today), so output is
+    # byte-identical to 0.1.0 for AOE. Aligns with r2g's `[ontology]` floor
+    # and avoids resolving the pre-fix 0.1.0.
+    "relational-schema-analyzer>=0.2",
 ]
 dev = [
     "pytest>=8.3",

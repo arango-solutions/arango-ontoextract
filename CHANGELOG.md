@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The backend version is the single source of truth in `backend/app/__init__.py`.
 
+## [Unreleased]
+
+### Changed
+
+- **Relational extra requires `relational-schema-analyzer>=0.2`:** bumped from
+  `>=0.1` to the corrected release that resolved the r2g<->RSA fork drift. 0.2.0
+  adds an additive, omitted-when-empty `extra` passthrough on `Column`/`Table`
+  (for downstream consumers like r2g's governance classification); AOE does not
+  consume `extra`, so extracted ontologies are byte-identical to 0.1.0. Aligns
+  AOE with r2g's `[ontology]` floor and avoids resolving the pre-fix 0.1.0.
+
 ## [1.1.0] - 2026-07-01
 
 Incremental release on top of v1.0.0: one ingestion feature, a large internal
