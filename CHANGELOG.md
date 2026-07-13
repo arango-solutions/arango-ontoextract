@@ -8,6 +8,25 @@ The backend version is the single source of truth in `backend/app/__init__.py`.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-13
+
+Feature release on top of v1.1.0: domain detection & multi-ontology routing and
+the slide-aware chunking foundation. Also corrects the frontend package version,
+which had drifted from the backend single-source version.
+
+### Added
+
+- **Domain detection & multi-ontology routing (Stream 16 DD.1–DD.3):** segment a
+  document into domain regions, tag chunks by domain, and surface a non-blocking
+  multi-domain warning so a mixed-domain corpus no longer silently collapses into
+  a single ontology.
+- **Slide-aware chunking + topic units (Stream 17 CH.2–CH.5):** a
+  slide-boundary-preserving deck chunker (never merges two slides into one chunk;
+  splits a slide only past `chunk_max_tokens`; speaker notes become a distinct
+  linked chunk), topic-unit grouping of continuation slides with topic-unit-aware
+  extractor batching, categorize-then-chunk ordering, and `Settings`-driven
+  size / overlap / slide-aware knobs. Non-deck documents chunk byte-identically.
+
 ### Changed
 
 - **Relational extra requires `relational-schema-analyzer>=0.2`:** bumped from
@@ -16,6 +35,15 @@ The backend version is the single source of truth in `backend/app/__init__.py`.
   (for downstream consumers like r2g's governance classification); AOE does not
   consume `extra`, so extracted ontologies are byte-identical to 0.1.0. Aligns
   AOE with r2g's `[ontology]` floor and avoids resolving the pre-fix 0.1.0.
+- **Frontend package version corrected** to track the backend single-source
+  version (it had been left at `1.0.0`).
+
+### Documentation
+
+- Recorded multi-source ontology alignment (Contextual Data Fabric M3 / AOE
+  RE-2) as **not built** — a build, not a confirm — and surfaced AOE's shipped
+  structured→ontology path (relational-schema-analyzer wiring) in the README
+  and a new Stream 20 of the remaining-work plan.
 
 ## [1.1.0] - 2026-07-01
 
@@ -204,6 +232,8 @@ belief-revision node behind a feature flag.
 Initial release: end-to-end extraction pipeline, ontology editor, pipeline
 monitor, quality metrics, multi-document support, and the temporal substrate.
 
+[1.2.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.2.0
+[1.1.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.1.0
 [1.0.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.0.0
 [0.4.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v0.4.0
 [0.3.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v0.3.0
