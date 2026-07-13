@@ -1325,6 +1325,38 @@ Multi-hop query traversability was the qualitative test ("Which academic center 
 
 ---
 
+### Stream 20: Multi-Source Ontology Alignment (Contextual Data Fabric M3 / AOE RE-2) — NOT BUILT
+**PRD:** Contextual Data Fabric **M3** (Ontology Alignment) / AOE repo-enhancement **RE-2 (P1)**. See `contextual-data-fabric/docs/architecture/module-03-ontology-alignment/specification.md` (FR-1) and `.../_repo-enhancements/ontology-extractor-structured.md` (RE-2).
+**Priority:** P1 in the CDF program; **net-new in AOE**.
+**Status:** **NOT BUILT.** State this plainly — alignment is a *build*, not a *confirm*.
+**Dependencies:** Stream 1 (imports / effective-graph / conflict detection) ✓; Stream 2 (ER scorer + pairwise merge) ✓; Stream 18 (relational schema → ontology) ✓ — supplies the structured source ontologies to align.
+
+**Framing.** AOE today *produces* and *curates* per-source ontologies and *composes* them **by reference** (`owl:imports` → effective-graph union) with conflict **flagging**. It has **no** primitive that takes N independently-built source ontologies and produces/refines a single reconciled **master** — the RE-2 primitive that CDF's M3 wraps (verbatim: *"given N source ontologies, compute diffs/deltas and produce/refine a master … Minimal for P1"*). The P1 bar is deliberately low: the CDF PRD (M3 FR-1 / task B2) accepts **hand-construction of a small, use-case-scoped master** with a human **"confirm ~2%"** step. So P1 is a thin orchestration + *resolution* layer over primitives AOE already has — not a greenfield ontology-matcher.
+
+**Clarification — the structured/unstructured "split question" is answerable YES.** The CDF PRD gates Phase 1 on confirming AOE has a structured→ontology path. It does: **Stream 18** (relational SQL → OWL/SHACL) + **Stream 5** (ArangoDB schema → OWL/SHACL). AOE *owns* the SQL→OWL/SHACL mapping; `relational-schema-analyzer` is a **read-only `PhysicalSchema` introspector** (per its own 2026-06 "Boundary correction" — AOE does *not* consume its OWL). So AOE is **not** unstructured-only; RE-2 (alignment) is the genuinely missing piece, not the structured path.
+
+| # | Task | Type | Status | Description |
+|---|------|------|--------|-------------|
+| AL.1 | Correspondence discovery API (N sources) | Backend | NOT BUILT | Endpoint taking N ontology ids → candidate correspondence set (equivalence / subsumption) with scores + evidence. Generalize the cross-tier scorer (`er.py::get_cross_tier_candidates`, jaro-winkler label + token-overlap) from the 2-way local↔domain restriction to N arbitrary sources. |
+| AL.2 | Conflict **resolution** (not just flagging) | Backend | NOT BUILT | Extend `ontology_effective._detect_conflicts` (`duplicate_uri` / `duplicate_label` / `subclass_cycle_via_import`) from flag-only to accept/reject/merge **decisions** that write a reconciled result rather than a read-time union. |
+| AL.3 | Master materialization + provenance | Backend | NOT BUILT | Create the master as a registry entry, carrying `source_ontology_id` provenance + `owl:equivalentClass` links (the data model already admits cross-ontology `equivalent_class` / `merge_candidate` edges), temporal-versioned. Supports the P1 "confirm ~2%" human step and hand-assisted small masters. |
+| AL.4 | Iterative refinement (RE-3) | Backend | NOT BUILT | Re-run alignment when a source changes; dependency-directed cascade. Overlaps belief-management (RE-4). P2. |
+| AL.5 | Alignment review UI | Frontend | NOT BUILT | Workspace overlay: candidate correspondences, accept/reject, conflict resolution, master preview. |
+| AL.6 | Tests | Both | NOT BUILT | Correspondence scoring pins; resolution writes a correct master; provenance + equivalence links; confirm-2% flow. |
+
+**Building blocks that already exist (what a build stands on):**
+
+| Primitive | Where | Gap vs. alignment |
+|-----------|-------|-------------------|
+| Effective-graph union + conflict **flagging** | `backend/app/services/ontology_effective.py` | Read-time union for canvas/prompt; flags conflicts "for the importer to disambiguate" — does not resolve or persist a master. |
+| Cross-tier overlap candidate finder | `er.py::get_cross_tier_candidates`, `POST /api/v1/er/cross-tier` | 2-ontology (local↔domain) only, candidate-listing only, marked "Partial". Closest thing to cross-ontology matching. |
+| Pairwise class merge (redirects cross-ontology edges) | `er.py::execute_merge` | Class-level, not ontology-level; no N-source orchestration. |
+| Cross-ontology `equivalent_class` / `merge_candidate` edges | data model (`DELETION_AND_REFERENTIAL_INTEGRITY.md`) | Links are modeled but nothing composes them into a master. |
+
+**Exit Criteria:** Given ≥2 source ontologies (e.g. one relational-derived via Stream 18 + one unstructured-derived), AOE produces a candidate correspondence set, lets a curator accept/reject/merge, and materializes a reconciled master with source provenance + `owl:equivalentClass` links. P1 is met by a small, use-case-scoped master with a hand-assisted "confirm ~2%" step.
+
+---
+
 ## Recommended Execution Order (refreshed v1.1.0)
 
 Streams 1, 2, 3, 5, 6, 7, 11, 13, 18 and the Sigma.js core of Stream 8 are
@@ -1363,6 +1395,11 @@ POST-v1.1 (recommended order):
     7. Stream 8 editor panels (V.3/V.4/V.6/V.7/V.8/V.9) + W.8 minimap
     8. Stream 14 CQ.4(b) collection-allowlist consolidation
     9. Legacy-route removal (/curation, /ontology/edit, /entity-resolution — V.10/V.11)
+  Cross-program (Contextual Data Fabric), gated on the CDF roadmap:
+    - Stream 20 Multi-Source Ontology Alignment (CDF M3 / RE-2, P1) — NOT BUILT.
+      Net-new merge-N-sources-into-a-master primitive; builds on Stream 1/2/18.
+      The structured→ontology gate the CDF PRD worries about is already met
+      (Stream 18 + Stream 5) — alignment is the actually-missing piece.
   Deferred until demand justifies:
     - Stream 9 (Unified Storage spike)
     - Stream 4 RAG benchmark comparison UI (optional, needs a spec first)

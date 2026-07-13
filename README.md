@@ -260,10 +260,12 @@ live Swagger docs at http://localhost:8010/docs.
 |---------|--------|-------------|
 | Document Ingestion | Done | Upload PDF/DOCX/Markdown → parse → chunk → embed |
 | LLM Extraction | Done | N-pass extraction with self-correction via LangGraph |
+| Schema → Ontology (structured) | Done | Structured sources → OWL/SHACL: ArangoDB collection schemas and relational (SQL) schemas mapped to classes/properties/constraints. AOE owns the SQL→OWL/SHACL mapping; `relational-schema-analyzer` is a read-only physical-schema introspector. |
 | Visual Curation | Done | Object-centric `/workspace` canvas (Sigma.js + box-arrow UML view) with context-menu actions, lenses, and floating detail panels |
 | VCR Timeline | Done | Temporal time travel with point-in-time snapshots |
 | Entity Resolution | Partial | Hand-rolled blocking/scoring + workspace **Find Duplicates…** overlay; full `arango-entity-resolution` library integration deferred |
 | Cross-Tier ER | Partial | Find overlaps between local and domain ontologies |
+| Multi-source ontology alignment | Not built | No primitive merges N independently-built source ontologies into a reconciled **master**. Building blocks exist (effective-graph union + import **conflict flagging**, the cross-tier overlap-candidate finder, pairwise class merge), but no alignment/resolution orchestration. This is the Contextual Data Fabric M3 / RE-2 role — a build, not a confirm. |
 | Staging → Production | Done | Promote approved entities with temporal versioning |
 | Import/Export | Done | OWL/TTL import and TTL/JSON-LD/CSV export |
 | MCP Server | Done | 18 tools for AI agent integration (stdio + SSE) |
