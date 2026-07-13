@@ -53,6 +53,13 @@ jobs:
         if: matrix.python-version == '3.12'
         run: bash scripts/sync-requirements.sh --check
         working-directory: ${{ github.workspace }}
+      - name: version parity (frontend ⇄ backend)
+        # Backstop for the pre-commit `version-parity` hook (bypassable with
+        # --no-verify): frontend/package.json "version" must match the backend
+        # single-source __version__. See scripts/check-version-parity.sh.
+        if: matrix.python-version == '3.12'
+        run: bash scripts/check-version-parity.sh
+        working-directory: ${{ github.workspace }}
 
   lint-frontend:
     name: Lint Frontend

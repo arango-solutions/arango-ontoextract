@@ -85,6 +85,23 @@ repos:
         pass_filenames: false
         files: ^backend/pyproject\.toml$
 
+      # ---------------------------------------------------------------------
+      # Version parity: frontend/package.json "version" must match the backend
+      # single-source __version__ (backend/app/__init__.py). Fires when either
+      # file is staged, so a release commit that bumps only one side fails
+      # here — the drift that left the frontend stuck at 1.0.0 through v1.1.0.
+      # Check-only (no auto-fix): rewriting package.json risks clobbering
+      # formatting, and the fix is a one-line human edit. Because
+      # `make pre-commit-run-all` runs Tier A, this also gates release-to-org.
+      # CI runs the same script as a backstop against --no-verify.
+      # ---------------------------------------------------------------------
+      - id: version-parity
+        name: Frontend/backend version parity
+        entry: bash scripts/check-version-parity.sh
+        language: system
+        pass_filenames: false
+        files: ^(backend/app/__init__\.py|frontend/package\.json)$
+
   # =======================================================================
   # Tier B — pre-push only. Runs once per `git push`, not per commit.
   # =======================================================================
