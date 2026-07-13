@@ -20,6 +20,7 @@ from app.services import embedding as embedding_svc
 from app.services.ingestion import (
     Chunk,
     ParsedDocument,
+    categorize_document,
     chunk_document,
     parse_doc,
     parse_docx,
@@ -90,9 +91,15 @@ async def process_document(doc_id: str, file_bytes: bytes, mime_type: str) -> No
                 log.info("[ingest:%s] parsing done, sections=%d", doc_id, len(parsed.sections))
 
             with tracer.start_as_current_span("ingest.chunk") as chunk_span:
-                log.info("[ingest:%s] stage=chunking", doc_id)
+                # CH.4: categorize the parsed document *before* chunking so
+                # the category (deck / narrative / ...) selects the chunk
+                # strategy (slide-boundary-preserving for decks) rather than
+                # inferring it post-hoc from chunk text.
+                category = categorize_document(parsed)
+                log.info("[ingest:%s] stage=chunking category=%s", doc_id, category)
                 documents_repo.update_document_status(doc_id, DocumentStatus.CHUNKING)
-                chunks = chunk_document(parsed)
+                chunks = chunk_document(parsed, category=category)
+                chunk_span.set_attribute("category", category)
                 chunk_span.set_attribute("num_chunks", len(chunks))
                 if not chunks:
                     log.warning(
@@ -286,5 +293,16 @@ def _build_chunk_dicts(
             entry["chunk_kind"] = chunk.chunk_kind
         if chunk.visual_assets:
             entry["visual_assets"] = chunk.visual_assets
+        # CH.2/CH.3 -- deck-aware chunk metadata. Emitted only when it
+        # deviates from the defaults so non-deck / legacy chunk storage is
+        # byte-identical (the deck chunker sets these; the prose chunker
+        # never does).
+        if chunk.chunk_role and chunk.chunk_role != "body":
+            entry["chunk_role"] = chunk.chunk_role
+        if chunk.slide_parts != 1:
+            entry["slide_part"] = chunk.slide_part
+            entry["slide_parts"] = chunk.slide_parts
+        if chunk.topic_unit is not None:
+            entry["topic_unit"] = chunk.topic_unit
         result.append(entry)
     return result

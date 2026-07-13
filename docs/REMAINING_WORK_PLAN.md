@@ -1271,15 +1271,15 @@ Multi-hop query traversability was the qualitative test ("Which academic center 
 **Dependencies:** none hard; pairs with Stream 13 (image-aware) and Stream 16 (topic units feed segmentation)
 **Team Size:** 1 developer
 
-**Framing — what exists vs. the gap.** Chunking is **512 tokens, no overlap, section-aware** (`chunk_document` in `services/ingestion.py`, tiktoken `cl100k_base`), and **happens at ingestion time, before strategy selection** — so the component that knows "this is a deck" (`strategy.py`) cannot influence chunk shape. PPTX is parsed **one `Section` per slide** (`parse_pptx`), but `chunk_document` can still split a large slide across chunks *and* the extractor batches 3–8 consecutive chunks by raw index (`_batch_chunks`), so **multiple slides routinely land in one LLM call** with no 1-slide-1-chunk guarantee. Chunk size/overlap are **hardcoded constants** (not in `Settings`). (**`doc_format` persistence was the one stale gap here — closed by CH.1 in `eed591a`**, so the classifier now detects text-only decks in production; the chunk-shape items CH.2–CH.5 remain.)
+**Framing — what exists vs. the gap.** Chunking is **512 tokens, no overlap, section-aware** (`chunk_document` in `services/ingestion.py`, tiktoken `cl100k_base`), and **happens at ingestion time, before strategy selection** — so the component that knows "this is a deck" (`strategy.py`) cannot influence chunk shape. PPTX is parsed **one `Section` per slide** (`parse_pptx`), but `chunk_document` can still split a large slide across chunks *and* the extractor batches 3–8 consecutive chunks by raw index (`_batch_chunks`), so **multiple slides routinely land in one LLM call** with no 1-slide-1-chunk guarantee. Chunk size/overlap are **hardcoded constants** (not in `Settings`). (**`doc_format` persistence was closed by CH.1 in `eed591a`; the chunk-shape items CH.2–CH.5 are now DONE** — slide-boundary-preserving deck chunking, topic-unit grouping + topic-unit-aware extractor batching, categorize-then-chunk ordering, and `Settings`-driven size/overlap knobs all shipped, non-deck output byte-identical.)
 
 | # | Task | Type | Status | Description |
 |---|------|------|--------|-------------|
 | CH.1 | Persist `doc_format` + slide/page index on chunks | Backend | **DONE** (`eed591a`) | `doc_format` now flows through the `Chunk` dataclass and `_build_chunk_dicts()` into stored `chunks` (persisted only when non-empty), with a legacy fallback in `_load_document_chunks` that backfills `doc_format` from the parent document's MIME type for pre-existing chunks. Closes the `strategy._is_visual_heavy()` production gap: a majority of presentation-formatted chunks now flips a text-only deck to `visual_heavy_presentation`/`tier1_visual_aware` even without visual assets. Covered by new tests in `test_ingestion.py`, `test_tasks.py`, `test_strategy_selector.py`, and `test_extraction_service.py`. |
-| CH.2 | Slide-boundary-preserving chunker | Backend | PLANNED | A deck-aware chunk mode (selected by category — CH.4): never merge two slides into one chunk; never split a slide mid-bullet across chunks (split only when a single slide exceeds `max_tokens`, and record the split); emit speaker notes as a distinct chunk linked to their slide. Configurable target size + optional overlap via `Settings`. |
-| CH.3 | Slide-grouping for spanning topics → topic units | Backend | PLANNED | Detect continuation across consecutive slides (repeated or `(cont'd)` titles, running section headers) and group them into a **topic unit**; the extractor batches by topic unit, not raw chunk index (`_batch_chunks` change). These units double as a finer-grained input for Stream 16 segmentation. |
-| CH.4 | Categorize-then-chunk ordering + config knobs | Backend | PLANNED | Promote document categorization (deck / tabular / narrative / technical) to run **before** chunking so category selects the chunk strategy (today `strategy.py` runs post-chunk and only sets prompt/batch/passes). Move chunk size / overlap / per-format toggles into `Settings` (currently `_DEFAULT_MAX_TOKENS=512` is a module constant). Keep the default path byte-stable for non-deck documents. |
-| CH.5 | Tests | Backend | PLANNED | Deck fixture: 1 slide ≥ 1 chunk, never 2 slides in 1 chunk; oversized slide splits and is recorded; notes are a distinct linked chunk; spanning-topic slides group into one unit and batch together; `doc_format`/slide index persisted; non-deck documents chunk byte-identically to today; config knobs honored. |
+| CH.2 | Slide-boundary-preserving chunker | Backend | **DONE** | Deck-aware chunk mode `_chunk_deck` (selected by category — CH.4; gated by `settings.chunk_slide_aware`, default ON with kill switch): never merges two slides into one chunk; splits a slide only when it exceeds `chunk_max_tokens`, recording the split via `Chunk.slide_part`/`slide_parts`; emits speaker notes as a distinct `chunk_role="notes"` chunk linked to the slide (`parse_pptx` now carries notes on `Section.notes` instead of folding `[Notes]` into the body). Target size + optional overlap come from `Settings` (CH.4). Notes-only slides skip the bare slide-marker body chunk. |
+| CH.3 | Slide-grouping for spanning topics → topic units | Backend | **DONE** | `_assign_topic_units` groups consecutive slides whose normalized titles match (strips `(cont'd)`/trailing-number suffixes; untitled slides never merge) into a shared `Chunk.topic_unit`, persisted on stored chunks. `extractor._batch_chunks` is now topic-unit-aware: a unit is never split across LLM calls, units pack up to `chunk_batch_size`, and an oversized unit becomes its own batch. Falls back to byte-identical index batching when no chunk carries `topic_unit` (non-deck/legacy). |
+| CH.4 | Categorize-then-chunk ordering + config knobs | Backend | **DONE** | `categorize_document(parsed)` runs **before** chunking in `tasks.process_document` and selects the chunk strategy (`deck` → slide-aware; `narrative` → prose); `chunk_document(parsed, category=…)` dispatches on it. Chunk size / overlap / slide-aware toggle are now `Settings` (`chunk_max_tokens`, `chunk_overlap_tokens`, `chunk_slide_aware`); the old `_DEFAULT_MAX_TOKENS=512` module constant is removed. Non-deck documents chunk byte-identically (overlap default 0). `tabular`/`technical` pre-chunk categorization is a cheap follow-up on this hook (still handled post-chunk by `strategy.py` for prompt/batch/passes). |
+| CH.5 | Tests | Backend | **DONE** | `test_ingestion.py`: `TestCategorizeDocument`, `TestDeckChunking` (1 slide ≥ 1 chunk, never 2 slides in 1 chunk, oversized split recorded, notes distinct + linked, notes-only slide, continuation/repeated-title grouping, untitled-no-merge, kill-switch fallback, non-deck byte-identity), `TestChunkConfigKnobs` (settings/explicit max_tokens, overlap repeats trailing content, overlap never crosses slide boundary). `test_extractor_agent.py`: topic-unit batching (never split, packing, sequential numbering, legacy unchanged). `test_tasks.py`: deck metadata persist/omit + `chunk_document(parsed, category=…)` wiring. |
 
 **Exit Criteria:** A multi-topic deck chunks with slide boundaries preserved, speaker notes separated, and topics that span slides grouped into a single extraction unit; `doc_format` + slide index are persisted so strategy selection detects decks in production; chunk size/overlap are `Settings`-configurable; non-deck documents are unchanged.
 
@@ -1373,8 +1373,9 @@ DONE:  Stream 1 (Imports + Composition)   Stream 2 (Entity Resolution, hand-roll
        Stream 12 (perf: T1–T5, T7–T10)    Stream 13 (Image-Aware Extraction)
        Stream 8 core (Sigma.js workspace canvas: V.1 / V.2 / V.5)
        Stream 14 CQ.1–CQ.3 (thresholds, belief-metrics wiring, ontology.py split)
-       Stream 17 CH.1 (doc_format + slide/page index on chunks)
+       Stream 17 CH.1–CH.5 (doc_format + slide-boundary chunking, topic units, config knobs)
        Stream 18 (Relational Schema → Ontology — RS.1/RS.2/RS.4)   → v1.1.0
+       Stream 16 DD.1–DD.3 (domain detection: segment, tag, multi-domain warning)
 
 RELEASED:
   - v1.0.0 — full PRD §6 functional scope
@@ -1382,9 +1383,9 @@ RELEASED:
 
 POST-v1.1 (recommended order):
   Phase 1 — Extraction depth:
-    1. Stream 16 Domain Detection Phase 1 (DD.1–DD.3: segment, tag, non-blocking warning)
-    2. Stream 17 CH.2–CH.5 (slide-boundary chunker, topic units — feed DD segmentation)
-    3. Stream 16 DD.4–DD.5 ("split by domain" umbrella action + tests)
+    1. Stream 16 Domain Detection Phase 1 (DD.1–DD.3: segment, tag, non-blocking warning)  ✓ DONE
+    2. Stream 17 CH.2–CH.5 (slide-boundary chunker, topic units — feed DD segmentation)  ✓ DONE
+    3. Stream 16 DD.4–DD.5 ("split by domain" umbrella action + tests)  ← next
   Phase 2 — Polish extraction outputs:
     4. Stream 5 PR 4 / RS.3 (Schema-Analyzer LLM enrichment: domain description +
        rdfs:comment merge — applies to both ArangoDB and relational output)

@@ -191,6 +191,53 @@ class TestBatchChunks:
     def test_empty_chunks(self):
         assert _batch_chunks([], batch_size=5) == []
 
+    def test_legacy_batching_unchanged_when_no_topic_unit(self):
+        # Chunks without topic_unit must batch exactly as before (byte-identical).
+        chunks = [{"text": f"chunk{i}"} for i in range(7)]
+        assert _batch_chunks(chunks, batch_size=3) == _batch_chunks(
+            [{**c} for c in chunks], batch_size=3
+        )
+        batches = _batch_chunks(chunks, batch_size=3)
+        assert len(batches) == 3
+
+    def test_topic_unit_never_split_across_batches(self):
+        # A 3-chunk topic unit must stay whole even when batch_size is 2.
+        chunks = [
+            {"text": "a", "topic_unit": 0},
+            {"text": "b", "topic_unit": 0},
+            {"text": "c", "topic_unit": 0},
+            {"text": "d", "topic_unit": 1},
+        ]
+        batches = _batch_chunks(chunks, batch_size=2)
+        # Unit 0 (3 chunks) exceeds batch_size -> its own batch; unit 1 separate.
+        assert len(batches) == 2
+        # First batch holds all three unit-0 chunks; second holds unit 1.
+        assert batches[0].count("source_chunk_id") == 3
+        assert batches[1].count("source_chunk_id") == 1
+
+    def test_units_packed_up_to_batch_size(self):
+        # Three single-chunk units, batch_size 2 -> [unit0+unit1], [unit2].
+        chunks = [
+            {"text": "a", "topic_unit": 0},
+            {"text": "b", "topic_unit": 1},
+            {"text": "c", "topic_unit": 2},
+        ]
+        batches = _batch_chunks(chunks, batch_size=2)
+        assert len(batches) == 2
+        assert batches[0].count("source_chunk_id") == 2
+        assert batches[1].count("source_chunk_id") == 1
+
+    def test_topic_unit_batches_have_sequential_chunk_numbers(self):
+        chunks = [
+            {"text": "a", "topic_unit": 0},
+            {"text": "b", "topic_unit": 0},
+            {"text": "c", "topic_unit": 1},
+        ]
+        batches = _batch_chunks(chunks, batch_size=2)
+        assert "[Chunk 1 |" in batches[0]
+        assert "[Chunk 2 |" in batches[0]
+        assert "[Chunk 3 |" in batches[1]
+
 
 # ---------------------------------------------------------------------------
 # _parse_llm_response

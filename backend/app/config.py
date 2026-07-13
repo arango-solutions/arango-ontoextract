@@ -150,6 +150,31 @@ class Settings(BaseSettings):
     #: asset count across run documents must exceed this to trigger.
     visual_orphan_warning_min_assets: int = 5
 
+    # -- Chunking (Stream 17 CH.2-CH.5) -----------------------------------
+    #: Target maximum tokens per chunk (tiktoken ``cl100k_base``). Promoted
+    #: from a hardcoded module constant in ``app.services.ingestion`` to a
+    #: setting (FR-1.16) so deployments can tune chunk granularity without a
+    #: code change. The default (512) reproduces the pre-Stream-17 behavior.
+    chunk_max_tokens: int = 512
+    #: Token overlap between consecutive chunks emitted from the *same*
+    #: section/slide, applied at paragraph granularity (trailing paragraphs
+    #: up to this token budget are repeated at the head of the next chunk).
+    #: Default 0 = no overlap, byte-identical to pre-Stream-17 chunking.
+    #: Overlap never crosses a section/slide boundary, so slide-boundary
+    #: preservation (CH.2) is unaffected.
+    chunk_overlap_tokens: int = 0
+    #: Master switch for deck-aware, slide-boundary-preserving chunking
+    #: (CH.2/CH.3). Default **ON** (mirroring the deterministic
+    #: ``structural_gate``): it only changes chunking for documents
+    #: categorized as decks (``categorize_document`` -> ``"deck"``, i.e.
+    #: PPTX today), never merges two slides into one chunk, splits a slide
+    #: only when it exceeds ``chunk_max_tokens`` (recording the split), and
+    #: emits speaker notes as a distinct chunk linked to their slide, and
+    #: groups continuation slides into topic units. Set to ``False`` to fall
+    #: back to the legacy paragraph chunker (notes folded into slide body)
+    #: with no code deploy. Non-deck documents are byte-identical either way.
+    chunk_slide_aware: bool = True
+
     # -- Domain Detection & Multi-Ontology Routing (Stream 16) -------------
     #: Master switch for the pre-extraction domain-segmentation node
     #: (DD.1). Default OFF, mirroring the belief-revision and

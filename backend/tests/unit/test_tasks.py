@@ -67,6 +67,66 @@ class TestBuildChunkDicts:
         result = _build_chunk_dicts("doc1", chunks, [[0.1, 0.2]])
         assert "doc_format" not in result[0]
 
+    def test_deck_metadata_omitted_at_defaults(self):
+        # CH.2/CH.3: a default (prose / non-deck) chunk writes none of the
+        # deck-only fields, so non-deck storage is byte-identical.
+        chunks = [
+            Chunk(
+                text="hello",
+                chunk_index=0,
+                source_page=None,
+                section_heading="",
+                token_count=3,
+            )
+        ]
+        result = _build_chunk_dicts("doc1", chunks, [[0.1, 0.2]])
+        assert "chunk_role" not in result[0]
+        assert "slide_part" not in result[0]
+        assert "slide_parts" not in result[0]
+        assert "topic_unit" not in result[0]
+
+    def test_deck_metadata_persisted_when_present(self):
+        # CH.2/CH.3: deck-aware chunk metadata is persisted so the extractor
+        # can batch by topic unit and curators can see slide provenance.
+        chunks = [
+            Chunk(
+                text="[Notes] talk track",
+                chunk_index=0,
+                source_page=4,
+                section_heading="Findings",
+                token_count=5,
+                doc_format="pptx",
+                chunk_role="notes",
+                slide_part=1,
+                slide_parts=2,
+                topic_unit=3,
+            )
+        ]
+        result = _build_chunk_dicts("doc1", chunks, [[0.1, 0.2]])
+        assert result[0]["chunk_role"] == "notes"
+        assert result[0]["slide_part"] == 1
+        assert result[0]["slide_parts"] == 2
+        assert result[0]["topic_unit"] == 3
+
+    def test_unsplit_slide_omits_slide_part_fields(self):
+        # slide_parts == 1 is the default (not split) -> not persisted, but a
+        # deck chunk still carries topic_unit.
+        chunks = [
+            Chunk(
+                text="Body.",
+                chunk_index=0,
+                source_page=1,
+                section_heading="Intro",
+                token_count=2,
+                doc_format="pptx",
+                topic_unit=0,
+            )
+        ]
+        result = _build_chunk_dicts("doc1", chunks, [[0.1, 0.2]])
+        assert "slide_part" not in result[0]
+        assert "slide_parts" not in result[0]
+        assert result[0]["topic_unit"] == 0
+
     def test_empty_chunks(self):
         result = _build_chunk_dicts("doc1", [], [])
         assert result == []
@@ -266,7 +326,8 @@ class TestProcessDocument:
         await process_document("doc1", b"# Hello world", "text/markdown")
 
         mock_parse_md.assert_called_once()
-        mock_chunk.assert_called_once_with(parsed)
+        # CH.4: chunk_document is called with the pre-computed category.
+        mock_chunk.assert_called_once_with(parsed, category="narrative")
         mock_embed_svc.embed_texts.assert_awaited_once_with(["Hello world"])
         mock_docs_repo.create_chunks.assert_called_once()
         mock_docs_repo.update_document_status.assert_any_call("doc1", "ready")
@@ -354,8 +415,9 @@ class TestProcessDocument:
 
         await process_document("doc1", b"pdf-bytes", "application/pdf")
 
-        # parse_pdf is called in a thread, so check chunk_document got the parsed result
-        mock_chunk.assert_called_once_with(parsed)
+        # parse_pdf is called in a thread, so check chunk_document got the
+        # parsed result plus the pre-computed category (CH.4).
+        mock_chunk.assert_called_once_with(parsed, category="narrative")
 
     @pytest.mark.asyncio
     @patch("app.tasks._ensure_vector_index")

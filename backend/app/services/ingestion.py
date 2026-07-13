@@ -48,7 +48,6 @@ log = logging.getLogger(__name__)
 # 60s handles large legacy decks; the convert pass itself rarely exceeds 5s.
 _LIBREOFFICE_TIMEOUT_SECONDS = 60
 
-_DEFAULT_MAX_TOKENS = 512
 _TIKTOKEN_MODEL = "cl100k_base"
 
 
@@ -61,6 +60,12 @@ class Section:
     #: assets attached to this section. Used by chunking (IMG.5) to
     #: propagate per-chunk visual context.
     visual_asset_indexes: list[int] = field(default_factory=list)
+    #: Speaker notes for this section (CH.2). For decks this is the slide's
+    #: notes-pane text (without the ``[Notes]`` marker). The slide-aware
+    #: chunker (``_chunk_deck``) emits it as a distinct chunk linked to the
+    #: slide; the legacy chunker folds it into the section body with a
+    #: ``[Notes]`` marker (preserving pre-Stream-17 behavior).
+    notes: str = ""
 
 
 @dataclass
@@ -96,6 +101,23 @@ class Chunk:
     #: extraction strategy selector can detect decks in production instead
     #: of relying on visual markers alone (FR-1.17).
     doc_format: str = ""
+    #: Role of the chunk within its source section (CH.2). ``"body"`` for
+    #: ordinary slide/section content; ``"notes"`` for a speaker-notes chunk
+    #: emitted separately by the slide-aware deck chunker. Persisted only
+    #: when non-default so legacy/non-deck storage is byte-identical.
+    chunk_role: str = "body"
+    #: When a single slide exceeds ``chunk_max_tokens`` the deck chunker
+    #: splits it across ``slide_parts`` chunks; ``slide_part`` is this
+    #: chunk's 0-based index within that slide (CH.2 "record the split").
+    #: ``slide_parts == 1`` means the slide was not split. Defaults keep
+    #: non-deck chunks byte-identical.
+    slide_part: int = 0
+    slide_parts: int = 1
+    #: Topic-unit id (CH.3): consecutive slides that continue one topic
+    #: (repeated / ``(cont'd)`` titles) share a ``topic_unit`` so the
+    #: extractor batches by topic unit instead of raw chunk index. ``None``
+    #: when topic grouping does not apply (e.g. non-deck documents).
+    topic_unit: int | None = None
 
 
 def compute_file_hash(content: bytes) -> str:
@@ -282,8 +304,12 @@ def parse_pptx(file_bytes: bytes) -> ParsedDocument:
     * ``heading`` = slide title placeholder if present, else "".
     * ``text`` = concatenation of every other text-bearing shape on the
       slide (body placeholders, text boxes, table cells, grouped shapes
-      flattened recursively). Notes pages are appended below the slide
-      body, prefixed with ``[Notes]`` so the LLM can distinguish them.
+      flattened recursively).
+    * ``notes`` = the slide's speaker-notes text (CH.2). It is carried on
+      the :class:`Section` rather than folded into ``text`` so the
+      slide-aware chunker can emit it as a distinct chunk linked to the
+      slide; the legacy chunker re-folds it into the body with a
+      ``[Notes]`` marker.
 
     Empty slides (no extractable text and no notes) are dropped to keep
     chunk counts honest.
@@ -334,11 +360,8 @@ def parse_pptx(file_bytes: bytes) -> ParsedDocument:
             # Don't let a malformed notes pane kill the whole parse.
             log.warning("pptx parse: failed to read notes for slide %d", slide_index, exc_info=True)
 
-        if notes_text:
-            body_parts.append(f"[Notes] {notes_text}")
-
         body = "\n".join(p for p in body_parts if p).strip()
-        if not body and not heading:
+        if not body and not heading and not notes_text:
             continue
 
         parsed.sections.append(
@@ -347,6 +370,7 @@ def parse_pptx(file_bytes: bytes) -> ParsedDocument:
                 text=body,
                 page_number=slide_index,
                 visual_asset_indexes=slide_asset_indexes,
+                notes=notes_text,
             )
         )
 
@@ -547,101 +571,318 @@ def _split_into_paragraphs(text: str) -> list[str]:
     return [p.strip() for p in paragraphs if p.strip()]
 
 
+# CH.3: continuation markers on slide titles ("Financials (cont'd)",
+# "Roadmap - continued", "Agenda 2") signal that a slide continues the
+# previous slide's topic. We strip them to a base title and group
+# consecutive slides sharing a base title into one "topic unit".
+_CONT_SUFFIX_RE = re.compile(
+    r"\s*[\(\[]?\s*(?:cont(?:inued|'d|d)?\.?)\s*[\)\]]?\s*$",
+    re.IGNORECASE,
+)
+_TRAILING_NUM_RE = re.compile(r"\s*[\(\[]?\s*\d+\s*[\)\]]?\s*$")
+
+
+def categorize_document(parsed: ParsedDocument) -> str:
+    """Classify a parsed document into a chunk-strategy category (CH.4).
+
+    Runs **before** chunking (FR-1.16) so the category selects the chunk
+    strategy (boundary rules) rather than being inferred post-hoc from
+    chunk text -- which is what :mod:`app.extraction.agents.strategy` still
+    does for prompt/batch/pass selection at extraction time.
+
+    Today the actionable distinction is *deck* vs. everything else: a deck
+    (currently PPTX) routes to the slide-boundary-preserving chunker
+    (:func:`_chunk_deck`). ``"narrative"`` is returned for all other
+    formats and routes to the paragraph chunker (:func:`_chunk_prose`),
+    which is byte-identical to the pre-Stream-17 behavior. The
+    ``tabular`` / ``technical`` categories are intentionally *not* split
+    out here yet -- those still rely on chunk-text heuristics in the
+    strategy selector; promoting them pre-chunk is a follow-up that this
+    hook makes cheap.
+    """
+    fmt = (parsed.format or "").lower()
+    if fmt == "pptx":
+        return "deck"
+    return "narrative"
+
+
 def chunk_document(
     parsed: ParsedDocument,
-    max_tokens: int = _DEFAULT_MAX_TOKENS,
+    max_tokens: int | None = None,
+    *,
+    category: str | None = None,
+    overlap_tokens: int | None = None,
 ) -> list[Chunk]:
-    """Chunk a parsed document at section / paragraph boundaries.
+    """Chunk a parsed document at section / paragraph (or slide) boundaries.
 
-    Each chunk respects ``max_tokens`` (counted via tiktoken ``cl100k_base``).
-    Chunks preserve source page and section heading metadata.
-    Title-only slides/pages produce a chunk whose text includes the heading.
+    Each chunk respects ``max_tokens`` (counted via tiktoken
+    ``cl100k_base``); when ``max_tokens`` is ``None`` the configured
+    ``settings.chunk_max_tokens`` is used (CH.4 -- the size is no longer a
+    hardcoded constant). Chunks preserve source page and section heading
+    metadata.
+
+    The ``category`` (see :func:`categorize_document`) selects the chunk
+    strategy (CH.4 "categorize-then-chunk ordering"). Decks route to the
+    slide-boundary-preserving chunker (CH.2/CH.3): a slide is never merged
+    with another slide, is split only when it exceeds ``max_tokens`` (the
+    split is recorded on ``slide_part`` / ``slide_parts``), speaker notes
+    become a distinct ``chunk_role="notes"`` chunk linked to their slide,
+    and continuation slides are grouped into ``topic_unit`` s. Deck-aware
+    chunking can be disabled via ``settings.chunk_slide_aware`` (kill
+    switch), in which case decks fall back to the paragraph chunker.
+
+    ``overlap_tokens`` (default ``settings.chunk_overlap_tokens``) repeats
+    trailing paragraphs -- up to that token budget -- at the head of the
+    next chunk from the *same* section/slide; ``0`` (the default) yields no
+    overlap and is byte-identical to the pre-Stream-17 chunker.
 
     IMG.5: chunks carry ``chunk_kind`` (``"text"`` | ``"visual"`` |
     ``"mixed"``) and ``visual_assets`` (the projection of visual assets
     that fell in the source section) so downstream prompts can label
     visual context distinctly without re-scanning the chunk text.
     """
-    chunks: list[Chunk] = []
-    idx = 0
+    resolved_max = settings.chunk_max_tokens if max_tokens is None else max_tokens
+    resolved_overlap = settings.chunk_overlap_tokens if overlap_tokens is None else overlap_tokens
+    # Clamp overlap so it can never consume the whole window (which would
+    # duplicate content without making forward progress).
+    resolved_overlap = max(0, min(resolved_overlap, resolved_max // 2))
+    resolved_category = category or categorize_document(parsed)
     doc_format = parsed.format or "unknown"
-    # Map chunk_index -> the section that produced it. Used to backfill
-    # visual_assets / chunk_kind after the (deliberately branchy) main
-    # chunk loop without weaving visual logic into every emit path.
-    chunk_origin_section: dict[int, Section] = {}
 
-    for section in parsed.sections:
-        section_text = format_section_chunk_text(
-            heading=section.heading,
-            body=section.text,
-            page_number=section.page_number,
-            doc_format=doc_format,
-        )
-        paragraphs = _split_into_paragraphs(section_text)
-        if not paragraphs and section_text.strip():
-            paragraphs = [section_text.strip()]
-        if not paragraphs:
+    if resolved_category == "deck" and settings.chunk_slide_aware:
+        chunks, origin = _chunk_deck(parsed, resolved_max, resolved_overlap, doc_format)
+    else:
+        chunks, origin = _chunk_prose(parsed, resolved_max, resolved_overlap, doc_format)
+
+    _backfill_visual_context(parsed, chunks, origin)
+    return chunks
+
+
+def _split_long_paragraph(para: str, max_tokens: int) -> list[str]:
+    """Split a single oversized paragraph into <= ``max_tokens`` word runs."""
+    pieces: list[str] = []
+    sub_parts: list[str] = []
+    sub_tokens = 0
+    for word in para.split():
+        word_tokens = _token_count(word + " ")
+        if sub_tokens + word_tokens > max_tokens and sub_parts:
+            pieces.append(" ".join(sub_parts))
+            sub_parts = []
+            sub_tokens = 0
+        sub_parts.append(word)
+        sub_tokens += word_tokens
+    if sub_parts:
+        pieces.append(" ".join(sub_parts))
+    return pieces
+
+
+def _overlap_tail(parts: list[str], budget: int) -> tuple[list[str], int]:
+    """Trailing paragraphs (newest-last) whose token sum stays <= ``budget``."""
+    if budget <= 0:
+        return [], 0
+    carry: list[str] = []
+    total = 0
+    for part in reversed(parts):
+        part_tokens = _token_count(part)
+        if total + part_tokens > budget:
+            break
+        carry.insert(0, part)
+        total += part_tokens
+    return carry, total
+
+
+def _pack_paragraphs(
+    paragraphs: list[str],
+    max_tokens: int,
+    overlap_tokens: int,
+) -> list[str]:
+    """Pack paragraphs into <= ``max_tokens`` text pieces.
+
+    With ``overlap_tokens == 0`` this reproduces the pre-Stream-17 packing
+    exactly (paragraph-boundary packing; oversized paragraphs word-split;
+    no overlap). With a positive overlap, trailing paragraphs up to the
+    overlap budget are repeated at the head of the following piece.
+    """
+    pieces: list[str] = []
+    current_parts: list[str] = []
+    current_tokens = 0
+
+    def flush(*, carry_overlap: bool) -> None:
+        nonlocal current_parts, current_tokens
+        if not current_parts:
+            return
+        pieces.append("\n\n".join(current_parts))
+        if carry_overlap and overlap_tokens > 0:
+            current_parts, current_tokens = _overlap_tail(current_parts, overlap_tokens)
+        else:
+            current_parts, current_tokens = [], 0
+
+    for para in paragraphs:
+        para_tokens = _token_count(para)
+
+        if para_tokens > max_tokens:
+            # Emit whatever is buffered (no overlap into a word-split run),
+            # then hard-split the oversized paragraph word-by-word.
+            flush(carry_overlap=False)
+            pieces.extend(_split_long_paragraph(para, max_tokens))
             continue
 
-        current_parts: list[str] = []
-        current_tokens = 0
+        if current_tokens + para_tokens > max_tokens and current_parts:
+            flush(carry_overlap=True)
 
-        # Bind ``section`` explicitly via a default arg so the closure
-        # cannot drift if _emit is ever called after the for-loop exits
-        # (ruff B023 / late-binding pitfall).
-        def _emit(text: str, _section: Section = section) -> None:
-            nonlocal idx
+        current_parts.append(para)
+        current_tokens += para_tokens
+
+    flush(carry_overlap=False)
+    return pieces
+
+
+def _section_paragraphs(section: Section, doc_format: str, *, fold_notes: bool) -> list[str]:
+    """Formatted, paragraph-split text for a section's body.
+
+    ``fold_notes`` re-appends the section's speaker notes (with a
+    ``[Notes]`` marker) into the body before formatting -- the legacy
+    behavior used by the paragraph chunker so decks are unchanged when
+    slide-aware chunking is disabled.
+    """
+    body = section.text
+    if fold_notes and section.notes:
+        body = f"{body}\n[Notes] {section.notes}" if body else f"[Notes] {section.notes}"
+    section_text = format_section_chunk_text(
+        heading=section.heading,
+        body=body,
+        page_number=section.page_number,
+        doc_format=doc_format,
+    )
+    paragraphs = _split_into_paragraphs(section_text)
+    if not paragraphs and section_text.strip():
+        paragraphs = [section_text.strip()]
+    return paragraphs
+
+
+def _chunk_prose(
+    parsed: ParsedDocument,
+    max_tokens: int,
+    overlap_tokens: int,
+    doc_format: str,
+) -> tuple[list[Chunk], dict[int, Section]]:
+    """Paragraph-boundary chunker (legacy path; byte-identical at overlap 0)."""
+    chunks: list[Chunk] = []
+    origin: dict[int, Section] = {}
+    idx = 0
+
+    for section in parsed.sections:
+        paragraphs = _section_paragraphs(section, doc_format, fold_notes=True)
+        if not paragraphs:
+            continue
+        for piece in _pack_paragraphs(paragraphs, max_tokens, overlap_tokens):
             chunks.append(
                 Chunk(
-                    text=text,
+                    text=piece,
                     chunk_index=idx,
-                    source_page=_section.page_number,
-                    section_heading=_section.heading,
-                    token_count=_token_count(text),
+                    source_page=section.page_number,
+                    section_heading=section.heading,
+                    token_count=_token_count(piece),
                     doc_format=doc_format,
                 )
             )
-            chunk_origin_section[idx] = _section
+            origin[idx] = section
             idx += 1
 
-        for para in paragraphs:
-            para_tokens = _token_count(para)
+    return chunks, origin
 
-            if para_tokens > max_tokens:
-                if current_parts:
-                    _emit("\n\n".join(current_parts))
-                    current_parts = []
-                    current_tokens = 0
 
-                words = para.split()
-                sub_parts: list[str] = []
-                sub_tokens = 0
-                for word in words:
-                    word_tokens = _token_count(word + " ")
-                    if sub_tokens + word_tokens > max_tokens and sub_parts:
-                        _emit(" ".join(sub_parts))
-                        sub_parts = []
-                        sub_tokens = 0
-                    sub_parts.append(word)
-                    sub_tokens += word_tokens
+def _slide_title_base(title: str) -> str:
+    """Normalize a slide title for continuation grouping (CH.3)."""
+    base = (title or "").strip()
+    base = _CONT_SUFFIX_RE.sub("", base)
+    base = _TRAILING_NUM_RE.sub("", base)
+    return base.strip().lower()
 
-                if sub_parts:
-                    _emit(" ".join(sub_parts))
-                continue
 
-            if current_tokens + para_tokens > max_tokens and current_parts:
-                _emit("\n\n".join(current_parts))
-                current_parts = []
-                current_tokens = 0
+def _assign_topic_units(sections: list[Section]) -> list[int]:
+    """Map each slide index to a topic-unit id (CH.3).
 
-            current_parts.append(para)
-            current_tokens += para_tokens
+    Consecutive slides whose normalized titles match (e.g. a repeated
+    section header or a ``(cont'd)`` title) share a unit; a slide with no
+    title always starts a new unit (we never merge untitled slides).
+    """
+    units: list[int] = []
+    current = 0
+    prev_base: str | None = None
+    for index, section in enumerate(sections):
+        base = _slide_title_base(section.heading)
+        if index == 0:
+            units.append(0)
+        elif base and prev_base and base == prev_base:
+            units.append(current)
+        else:
+            current += 1
+            units.append(current)
+        prev_base = base or None
+    return units
 
-        if current_parts:
-            _emit("\n\n".join(current_parts))
 
-    _backfill_visual_context(parsed, chunks, chunk_origin_section)
-    return chunks
+def _chunk_deck(
+    parsed: ParsedDocument,
+    max_tokens: int,
+    overlap_tokens: int,
+    doc_format: str,
+) -> tuple[list[Chunk], dict[int, Section]]:
+    """Slide-boundary-preserving deck chunker (CH.2/CH.3).
+
+    Guarantees: two slides are never merged into one chunk; a slide is
+    split only when it exceeds ``max_tokens`` (recorded via ``slide_part`` /
+    ``slide_parts``); speaker notes become a distinct ``chunk_role="notes"``
+    chunk linked to the slide; continuation slides share a ``topic_unit``.
+    """
+    chunks: list[Chunk] = []
+    origin: dict[int, Section] = {}
+    idx = 0
+    topic_units = _assign_topic_units(parsed.sections)
+
+    def emit(section: Section, pieces: list[str], role: str, unit: int) -> None:
+        nonlocal idx
+        parts = len(pieces)
+        for part_index, piece in enumerate(pieces):
+            chunks.append(
+                Chunk(
+                    text=piece,
+                    chunk_index=idx,
+                    source_page=section.page_number,
+                    section_heading=section.heading,
+                    token_count=_token_count(piece),
+                    doc_format=doc_format,
+                    chunk_role=role,
+                    slide_part=part_index,
+                    slide_parts=parts,
+                    topic_unit=unit,
+                )
+            )
+            origin[idx] = section
+            idx += 1
+
+    for section_index, section in enumerate(parsed.sections):
+        unit = topic_units[section_index]
+
+        # Slide body: never merged with another slide's content. Skip a
+        # body chunk that would consist solely of the slide-context prefix
+        # (a notes-only slide has no heading/body of its own -- its notes
+        # are emitted below as a distinct chunk).
+        has_body_content = bool(section.text.strip() or section.heading.strip())
+        body_paragraphs = _section_paragraphs(section, doc_format, fold_notes=False)
+        if body_paragraphs and has_body_content:
+            body_pieces = _pack_paragraphs(body_paragraphs, max_tokens, overlap_tokens)
+            emit(section, body_pieces, "body", unit)
+
+        # Speaker notes: distinct chunk(s) linked to the same slide + unit.
+        if section.notes:
+            notes_text = f"[Notes] {section.notes}"
+            notes_paragraphs = _split_into_paragraphs(notes_text) or [notes_text]
+            notes_pieces = _pack_paragraphs(notes_paragraphs, max_tokens, overlap_tokens)
+            emit(section, notes_pieces, "notes", unit)
+
+    return chunks, origin
 
 
 _VISUAL_BODY_PREFIXES = (

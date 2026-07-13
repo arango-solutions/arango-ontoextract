@@ -60,16 +60,63 @@ def _get_llm(model_name: str) -> Any:
     return get_chat_model(model_name)
 
 
+def _render_chunk_batch(chunks: list[dict[str, Any]], start_index: int) -> str:
+    """Render one batch of chunk dicts into a prompt text block."""
+    text_parts = []
+    for offset, chunk in enumerate(chunks):
+        position = start_index + offset + 1
+        chunk_id = chunk.get("_key") or chunk.get("id") or chunk.get("chunk_id") or str(position)
+        text_parts.append(
+            f"[Chunk {position} | source_chunk_id={chunk_id}]\n{chunk.get('text', '')}"
+        )
+    return "\n\n".join(text_parts)
+
+
+def _group_by_topic_unit(chunks: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Group consecutive chunks that share a ``topic_unit`` (CH.3)."""
+    groups: list[list[dict[str, Any]]] = []
+    for chunk in chunks:
+        unit = chunk.get("topic_unit")
+        if groups and unit is not None and groups[-1][0].get("topic_unit") == unit:
+            groups[-1].append(chunk)
+        else:
+            groups.append([chunk])
+    return groups
+
+
 def _batch_chunks(chunks: list[dict[str, Any]], batch_size: int) -> list[str]:
-    """Combine chunks into batched text blocks for prompt injection."""
-    batches: list[str] = []
-    for i in range(0, len(chunks), batch_size):
-        batch = chunks[i : i + batch_size]
-        text_parts = []
-        for j, chunk in enumerate(batch, start=i + 1):
-            chunk_id = chunk.get("_key") or chunk.get("id") or chunk.get("chunk_id") or str(j)
-            text_parts.append(f"[Chunk {j} | source_chunk_id={chunk_id}]\n{chunk.get('text', '')}")
-        batches.append("\n\n".join(text_parts))
+    """Combine chunks into batched text blocks for prompt injection.
+
+    CH.3: when chunks carry ``topic_unit`` (deck-aware chunking), batching
+    respects topic-unit boundaries -- a topic unit (a run of continuation
+    slides) is never split across two LLM calls, and units are packed into
+    a batch up to ``batch_size`` chunks. A single unit larger than
+    ``batch_size`` becomes its own batch rather than being split. When no
+    chunk carries ``topic_unit`` (non-deck / legacy chunks), batching falls
+    back to the original fixed-size windowing over the raw chunk index, so
+    behavior is byte-identical for those documents.
+    """
+    if not any(c.get("topic_unit") is not None for c in chunks):
+        batches: list[str] = []
+        for i in range(0, len(chunks), batch_size):
+            batches.append(_render_chunk_batch(chunks[i : i + batch_size], i))
+        return batches
+
+    batches = []
+    current: list[dict[str, Any]] = []
+    start_index = 0
+    for unit_chunks in _group_by_topic_unit(chunks):
+        if current and len(current) + len(unit_chunks) > batch_size:
+            batches.append(_render_chunk_batch(current, start_index))
+            start_index += len(current)
+            current = []
+        current.extend(unit_chunks)
+        if len(current) >= batch_size:
+            batches.append(_render_chunk_batch(current, start_index))
+            start_index += len(current)
+            current = []
+    if current:
+        batches.append(_render_chunk_batch(current, start_index))
     return batches
 
 

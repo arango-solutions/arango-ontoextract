@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from app.services.ingestion import (
     ParsedDocument,
     Section,
+    categorize_document,
     chunk_document,
     compute_file_hash,
     parse_markdown,
@@ -331,6 +332,192 @@ class TestChunkDocument:
 
 
 # ---------------------------------------------------------------------------
+# categorize_document (CH.4)
+# ---------------------------------------------------------------------------
+
+
+class TestCategorizeDocument:
+    def test_pptx_is_deck(self):
+        assert categorize_document(ParsedDocument(format="pptx")) == "deck"
+
+    def test_other_formats_are_narrative(self):
+        for fmt in ("pdf", "docx", "markdown", "", "unknown"):
+            assert categorize_document(ParsedDocument(format=fmt)) == "narrative"
+
+    def test_case_insensitive(self):
+        assert categorize_document(ParsedDocument(format="PPTX")) == "deck"
+
+
+# ---------------------------------------------------------------------------
+# Slide-boundary-preserving deck chunker (CH.2 / CH.3)
+# ---------------------------------------------------------------------------
+
+
+def _deck(*slides: tuple[str, str, str]) -> ParsedDocument:
+    """Build a pptx ParsedDocument from (heading, body, notes) triples."""
+    return ParsedDocument(
+        format="pptx",
+        sections=[
+            Section(heading=h, text=b, page_number=i, notes=n)
+            for i, (h, b, n) in enumerate(slides, start=1)
+        ],
+    )
+
+
+@patch("app.services.ingestion._token_count", side_effect=_fake_token_count)
+class TestDeckChunking:
+    def test_deck_category_routes_to_slide_aware(self, _mock_tc: MagicMock):
+        # A deck chunk carries topic_unit (deck-only metadata) — proving the
+        # slide-aware path ran rather than the prose path.
+        chunks = chunk_document(_deck(("Intro", "Body one.", "")))
+        assert chunks[0].topic_unit is not None
+
+    def test_never_merges_two_slides_into_one_chunk(self, _mock_tc: MagicMock):
+        chunks = chunk_document(_deck(("A", "Alpha body.", ""), ("B", "Beta body.", "")))
+        # Every chunk maps to exactly one source slide (page).
+        pages_per_chunk = {c.chunk_index: c.source_page for c in chunks}
+        assert set(pages_per_chunk.values()) == {1, 2}
+        # No chunk text mixes both slide headings.
+        for chunk in chunks:
+            assert not ("Alpha body." in chunk.text and "Beta body." in chunk.text)
+
+    def test_title_only_slide_still_produces_one_chunk(self, _mock_tc: MagicMock):
+        chunks = chunk_document(_deck(("Root Taxonomy", "", "")))
+        assert len(chunks) == 1
+        assert "[Slide 1: Root Taxonomy]" in chunks[0].text
+
+    def test_oversized_slide_split_is_recorded(self, _mock_tc: MagicMock):
+        big_body = " ".join(["word"] * 400)
+        chunks = chunk_document(_deck(("Big", big_body, "")), max_tokens=50)
+        body_chunks = [c for c in chunks if c.chunk_role == "body"]
+        assert len(body_chunks) > 1
+        # slide_parts records the split; slide_part is a 0-based sequence.
+        assert all(c.slide_parts == len(body_chunks) for c in body_chunks)
+        assert [c.slide_part for c in body_chunks] == list(range(len(body_chunks)))
+        # All parts belong to the same slide.
+        assert {c.source_page for c in body_chunks} == {1}
+
+    def test_notes_emitted_as_distinct_linked_chunk(self, _mock_tc: MagicMock):
+        chunks = chunk_document(_deck(("Findings", "The body.", "Talk about caveats here.")))
+        notes = [c for c in chunks if c.chunk_role == "notes"]
+        body = [c for c in chunks if c.chunk_role == "body"]
+        assert len(notes) == 1
+        assert len(body) == 1
+        # Notes chunk is linked to the same slide and marked.
+        assert notes[0].source_page == body[0].source_page == 1
+        assert notes[0].section_heading == "Findings"
+        assert "[Notes]" in notes[0].text
+        assert "caveats" in notes[0].text
+        # Notes content does NOT leak into the body chunk.
+        assert "caveats" not in body[0].text
+
+    def test_notes_only_slide_produces_notes_chunk(self, _mock_tc: MagicMock):
+        chunks = chunk_document(_deck(("", "", "Just some speaker notes.")))
+        assert len(chunks) == 1
+        assert chunks[0].chunk_role == "notes"
+
+    def test_continuation_slides_share_topic_unit(self, _mock_tc: MagicMock):
+        chunks = chunk_document(
+            _deck(
+                ("Financials", "Revenue up.", ""),
+                ("Financials (cont'd)", "Costs down.", ""),
+                ("Roadmap", "Next year.", ""),
+            )
+        )
+        by_page = {c.source_page: c.topic_unit for c in chunks}
+        # Slides 1 and 2 continue one topic; slide 3 is a new topic.
+        assert by_page[1] == by_page[2]
+        assert by_page[3] != by_page[1]
+
+    def test_repeated_title_groups_topic_unit(self, _mock_tc: MagicMock):
+        chunks = chunk_document(_deck(("Agenda", "Item one.", ""), ("Agenda", "Item two.", "")))
+        units = {c.topic_unit for c in chunks}
+        assert len(units) == 1
+
+    def test_untitled_slides_do_not_merge_topics(self, _mock_tc: MagicMock):
+        chunks = chunk_document(_deck(("", "Body A.", ""), ("", "Body B.", "")))
+        by_page = {c.source_page: c.topic_unit for c in chunks}
+        assert by_page[1] != by_page[2]
+
+    def test_kill_switch_falls_back_to_prose(self, _mock_tc: MagicMock):
+        with patch("app.services.ingestion.settings") as mock_settings:
+            mock_settings.chunk_slide_aware = False
+            mock_settings.chunk_max_tokens = 512
+            mock_settings.chunk_overlap_tokens = 0
+            chunks = chunk_document(_deck(("Findings", "Body.", "Notes here.")))
+        # Prose path: no topic_unit, notes folded into the (single) body chunk.
+        assert all(c.topic_unit is None for c in chunks)
+        assert all(c.chunk_role == "body" for c in chunks)
+        assert any("[Notes] Notes here." in c.text for c in chunks)
+
+    def test_non_deck_is_byte_identical_regardless_of_slide_aware(self, _mock_tc: MagicMock):
+        parsed = ParsedDocument(
+            format="pdf",
+            sections=[
+                Section(heading="A", text="Alpha.", page_number=1),
+                Section(heading="B", text="Beta.", page_number=2),
+            ],
+        )
+        deck_on = chunk_document(parsed)
+        with patch("app.services.ingestion.settings") as mock_settings:
+            mock_settings.chunk_slide_aware = False
+            mock_settings.chunk_max_tokens = 512
+            mock_settings.chunk_overlap_tokens = 0
+            deck_off = chunk_document(parsed)
+        assert [c.text for c in deck_on] == [c.text for c in deck_off]
+        # Non-deck chunks never carry deck metadata.
+        assert all(c.topic_unit is None and c.slide_parts == 1 for c in deck_on)
+
+
+# ---------------------------------------------------------------------------
+# Config knobs (CH.4): chunk_max_tokens / chunk_overlap_tokens
+# ---------------------------------------------------------------------------
+
+
+@patch("app.services.ingestion._token_count", side_effect=_fake_token_count)
+class TestChunkConfigKnobs:
+    def test_default_max_tokens_read_from_settings(self, _mock_tc: MagicMock):
+        long_text = " ".join(["word"] * 2000)
+        parsed = ParsedDocument(sections=[Section(heading="L", text=long_text, page_number=1)])
+        with patch("app.services.ingestion.settings") as mock_settings:
+            mock_settings.chunk_max_tokens = 50
+            mock_settings.chunk_overlap_tokens = 0
+            mock_settings.chunk_slide_aware = True
+            chunks = chunk_document(parsed)
+        assert len(chunks) > 1
+
+    def test_explicit_max_tokens_overrides_settings(self, _mock_tc: MagicMock):
+        long_text = " ".join(["word"] * 2000)
+        parsed = ParsedDocument(sections=[Section(heading="L", text=long_text, page_number=1)])
+        one = chunk_document(parsed, max_tokens=100_000)
+        many = chunk_document(parsed, max_tokens=25)
+        assert len(one) == 1
+        assert len(many) > len(one)
+
+    def test_overlap_repeats_trailing_content(self, _mock_tc: MagicMock):
+        text = "\n\n".join(f"Paragraph number {i} with some filler words here." for i in range(8))
+        parsed = ParsedDocument(sections=[Section(heading="S", text=text, page_number=1)])
+        no_overlap = chunk_document(parsed, max_tokens=30, overlap_tokens=0)
+        with_overlap = chunk_document(parsed, max_tokens=30, overlap_tokens=12)
+        assert len(no_overlap) >= 2
+        # Overlap makes at least one paragraph appear in two consecutive chunks.
+        joined_no = sum(c.text.count("Paragraph number") for c in no_overlap)
+        joined_yes = sum(c.text.count("Paragraph number") for c in with_overlap)
+        assert joined_yes > joined_no
+
+    def test_overlap_never_crosses_slide_boundary(self, _mock_tc: MagicMock):
+        # Two short slides: overlap must not pull slide 1 content into slide 2.
+        chunks = chunk_document(
+            _deck(("A", "Alpha only.", ""), ("B", "Beta only.", "")),
+            max_tokens=512,
+            overlap_tokens=100,
+        )
+        for chunk in chunks:
+            if chunk.source_page == 2:
+                assert "Alpha only." not in chunk.text
+
+
+# ---------------------------------------------------------------------------
 # parse_pptx (real round-trip with python-pptx)
 # ---------------------------------------------------------------------------
 
@@ -437,12 +624,17 @@ class TestParsePptx:
         assert "claim costs up 8%" in s1.text
         assert "Mental health utilisation up 15%" in s1.text
 
-    def test_speaker_notes_appended_with_marker(self):
+    def test_speaker_notes_carried_on_section(self):
+        # CH.2: notes now live on ``Section.notes`` (without the ``[Notes]``
+        # marker) rather than being folded into the slide body, so the
+        # slide-aware chunker can emit them as a distinct chunk. The body
+        # must NOT contain the notes text or marker.
         from app.services.ingestion import parse_pptx
 
         parsed = parse_pptx(_build_synthetic_pptx())
-        assert "[Notes]" in parsed.sections[0].text
-        assert "mental-health spike" in parsed.sections[0].text
+        assert "mental-health spike" in parsed.sections[0].notes
+        assert "[Notes]" not in parsed.sections[0].text
+        assert "mental-health spike" not in parsed.sections[0].text
 
     def test_title_not_double_counted_in_body(self):
         from app.services.ingestion import parse_pptx
