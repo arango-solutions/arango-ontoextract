@@ -1,5 +1,12 @@
 # Multi-Source Ontology Alignment & Source-Change Cascade — Feature Spec
 
+> **⚠ SUPERSEDED (2026-07-14).** This first-cut spec has been expanded and definitized by a deep-analysis pass. The authoritative requirements now live in:
+> - **PRD §6.17** — Multi-Source Ontology Alignment & Merging (FR-17.1–FR-17.13; SOTA-grounded: embedding-retrieval-then-selective-LLM, modular incoherence repair, bounded HITL) — supersedes **Part A** below.
+> - **PRD §6.18 / §6.19** — A-box extraction and competency-question-driven requirements (adjacent capabilities this doc didn't cover).
+> - **`docs/IMPLEMENTATION_PLAN_ALIGNMENT_ABOX_CQ.md`** + `docs/REMAINING_WORK_PLAN.md` Streams 20–22 — the work items; source-change cascade / incremental re-alignment is **AL.12** (P3) — supersedes **Parts B & C** below.
+>
+> Kept for the original primitive inventory and open-questions rationale; do not implement from this document.
+
 > **Status:** Planned (no code yet). Drafted July 2026 for the **Contextual Data Fabric** project, which depends on AOE for its M3 (Ontology Alignment) module. Fabric-side requirements: `contextual-data-fabric/docs/architecture/_repo-enhancements/ontology-extractor-structured.md` (RE-2 alignment API, RE-4 source-change cascade, RE-5 change-control hooks) and `module-03-ontology-alignment/specification.md`.
 >
 > **Why this doc exists:** the README Features table is explicit that multi-source alignment is **Not built** — "a build, not a confirm." This spec defines that build in terms of the primitives AOE already has, so the work is orchestration, not greenfield.
