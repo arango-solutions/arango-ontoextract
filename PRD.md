@@ -36,6 +36,10 @@
    - 6.13 Ontology Quality Metrics
    - 6.14 Ontology Constraints (OWL Restrictions & SHACL Shapes)
    - 6.15 Ontology Imports, Composition & Dependency Management
+   - 6.16 Iterative Refinement & Belief Revision
+   - 6.17 Multi-Source Ontology Alignment & Merging
+   - 6.18 Assertion-Graph (A-box) Extraction
+   - 6.19 Use-Case / Competency-Question-Driven Ontology Requirements
 7. [API Specification](#7-api-specification-backend)
    - 7.1–7.7 Endpoint groups
    - 7.8 Frontend Architecture: Object-Centric Workspace
@@ -2722,6 +2726,87 @@ The revision pipeline introduces a new cost dimension. The system records per-re
 | `mean_revision_latency_ms` | End-to-end time for the revision pass |
 
 These metrics feed the Pipeline Monitor (per-run) and the Quality Dashboard (rolling aggregates).
+
+---
+
+### 6.17 Multi-Source Ontology Alignment & Merging
+
+**Description:** §6.15 composes ontologies **by reference** (`owl:imports` → a read-time effective-graph *union* with conflict *flagging*). This section covers the distinct capability of **aligning** two or more *independently-authored* ontologies — discovering cross-ontology correspondences (equivalence, subsumption, relatedness), resolving conflicts, and **merging** them into a single reconciled **master** ontology with provenance and equivalence axioms. Source ontologies may originate anywhere: unstructured extraction (§6.2), relational schemas (`relational-schema-analyzer`), ArangoDB graphs (`arango-schema-analyzer`, §6.9), or imported standards (§6.8). This realizes the Contextual Data Fabric **M3 / AOE RE-2** alignment primitive.
+
+**SOTA basis (2023–2025 research synthesis; sources in Appendix).** Classical matchers (LogMap, AgreementMakerLight/AML) have hit a multi-year **performance plateau** on OAEI schema tracks and are retained as *anchors*, not the primary engine. The current SOTA pattern for cost-efficient, high-quality matching is **embedding-retrieval-then-selective-LLM**: cheap vector retrieval proposes candidate correspondences and the LLM adjudicates only *borderline* pairs — MILA (arXiv 2501.11441) cuts LLM comparisons ~94% via a prioritized-DFS retrieve-identify-prompt loop; GenOM (arXiv 2508.10703) enriches embeddings with LLM-generated concept definitions then FAISS/HNSW cosine top-k → LLM equivalence judgement (0.90 F1 on NCIT-DOID); KROMA (arXiv 2507.14032) adds RAG context + candidate pruning. LLMs do **not** uniformly beat classical systems (LLMs4OM, arXiv 2404.10317, underperformed on Bio-ML), so lexical/structural/classical signals remain ensemble members and humans adjudicate disagreements. Coherence is restored with **minimally-destructive modular repair** (AML core-fragment / AMLR, PLOS ONE 2015: reason over minimal core fragments — 3.8–17% of ontology size — preferring removal of low-confidence mappings). Human effort is bounded via an **OAEI-Interactive / DualLoop** (arXiv 2404.07663) active-learning loop that confirms only borderline correspondences (>50% fewer queries to reach 90% recall). Hallucination is measured against the **OAEI-LLM** benchmark (arXiv 2409.14038). This maps directly onto AOE's existing ArangoDB vector search, LangGraph LLM pipeline, §6.7 pairwise ER scorer, and §6.16 rule engine.
+
+**Requirements:**
+
+| ID | Requirement | Acceptance Criteria |
+|----|-------------|-------------------|
+| FR-17.1 | Alignment session | An `alignment_session` over N≥2 source ontology ids produces a candidate correspondence set plus a target **master** registry entry. Re-runnable; sessions are auditable. |
+| FR-17.2 | Embedding candidate retrieval | For each source class/property, build an embedding from label + description (+ optional LLM-generated NL definition, GenOM-style) and retrieve top-k cross-source candidates via ArangoDB vector search. No LLM cost at this stage. |
+| FR-17.3 | Multi-signal candidate scoring | Combine lexical (label/Jaro-Winkler), structural (shared parents/properties), and embedding-cosine signals into one candidate score. Reuses the §6.7 ER scorer generalized from 2→N sources and beyond the local↔domain restriction. |
+| FR-17.4 | Selective LLM adjudication | Only pairs in a configurable *borderline* score band go to an LLM equivalence/subsumption judge (MILA/KROMA pattern); high-confidence pairs auto-accept, low auto-reject. Each correspondence carries a type (`owl:equivalentClass` / `rdfs:subClassOf` / `skos:relatedMatch`), confidence, and evidence. |
+| FR-17.5 | Incoherence detection & minimally-destructive repair | After a provisional merge, detect logical incoherence + subclass cycles and repair over minimal **core fragments** (AML-style), preferring removal of low-confidence correspondences. Reuses `ontology_rule_engine`. Every removal is reported, never silent. |
+| FR-17.6 | Conflict **resolution** (not just flagging) | Extends §6.15 FR-15.11 `duplicate_uri`/`duplicate_label` detection into accept/reject/merge **decisions** that WRITE the master (vs. the read-time union of §6.15). |
+| FR-17.7 | Master materialization + provenance | Create the master registry entry; each merged entity carries `source_ontology_id[]` provenance; equivalences recorded as `owl:equivalentClass` edges; temporal-versioned; ETag/provenance parity with `/effective`. |
+| FR-17.8 | Bounded human-in-the-loop confirmation | An alignment-review overlay lists borderline correspondences sorted by impact; curator accepts/rejects/edits; active learning re-ranks the remaining pairs after each decision (DualLoop). Target: confirm a small fraction (≈2% per CDF M3 P1) for a use-case-scoped master. |
+| FR-17.9 | Classical-anchor ensemble | Optionally run a classical matcher (LogMap/AML) as an additional signal; LLM-vs-classical disagreements are prioritized for human adjudication. |
+| FR-17.10 | Hallucination control | Validate every LLM-proposed correspondence against source labels/axioms; flag unsupported ("invented"/"Missing" per OAEI-LLM categories); never auto-accept an LLM correspondence lacking a grounded source anchor. |
+| FR-17.11 | Evaluation harness | Precision/recall/F1 vs a reference alignment when available; an interaction-count-vs-F-measure curve (OAEI Interactive) reporting human-effort efficiency; a seeded benchmark fixture. |
+| FR-17.12 | API | `POST /alignment/sessions` (create over N ontologies), `GET .../candidates`, `POST .../candidates/{id}/{accept\|reject\|edit}`, `POST .../materialize` (write master), `GET .../master`. |
+| FR-17.13 | MCP tools | `align_ontologies`, `list_correspondences`, `accept_correspondence`, `reject_correspondence`, `materialize_master`. |
+
+**Phasing:** **P1** — small use-case-scoped master (embedding retrieval + selective LLM + bounded human confirm; hand-assisted acceptable per CDF M3). **P2** — classical-anchor ensemble + modular incoherence repair. **P3** — scale (batched retrieval, incremental re-alignment on source change). Supersedes the placeholder "Stream 20" in `docs/REMAINING_WORK_PLAN.md`.
+
+---
+
+### 6.18 Assertion-Graph (A-box) Extraction
+
+**Description:** Extraction (§6.2) produces the **T-box** (classes, properties, axioms). This section adds extraction of the **A-box** — the *assertion graph* of named individuals (instances), their relationships, and attribute values — from the same unstructured documents, **grounded in the extracted (or merged) T-box**. Because a document set may span multiple domains, the A-box is **partitioned per domain ontology** (building on the resolved multi-domain strategy — Q13 / Stream 16 / FR-2.15): each individual is typed against a class in the *correct* domain ontology, and cross-domain relationships are preserved as cross-ontology edges. (The plural "ontologies" in the driving requirement is deliberate — one document set can yield several domain ontologies, each with its own A-box.)
+
+**SOTA basis.** The reference pattern is **EDC — Extract–Define–Canonicalize (EMNLP 2024, arXiv 2404.03868)**: open extraction → schema definition → **canonicalization against a target schema**, with a **trained schema retriever** that RAG-injects only text-relevant T-box fragments into the prompt so grounding scales to a large ontology without exceeding context (WebNLG Partial F1 0.783→0.820). Ontology-grounded KG construction (arXiv 2412.20942) improves consistency/interpretability; grounding + canonicalization are the primary hallucination controls. **Caveat:** EDC's "schema" is relation-type-level, looser than a full OWL/SHACL T-box — so AOE additionally grounds on class hierarchy + constraints and validates against them.
+
+**Requirements:**
+
+| ID | Requirement | Acceptance Criteria |
+|----|-------------|-------------------|
+| FR-18.1 | A-box data model | Individuals stored in an `ontology_individuals` collection with an `rdf:type` edge to a T-box class; relationship assertions as edges; attribute values as fields. Temporal-versioned; org/ontology-scoped. |
+| FR-18.2 | Schema-grounded extraction | The extraction prompt receives the *relevant* T-box slice (classes + properties + constraints) via a schema retriever (RAG over ArangoDB vector search, EDC-style); the LLM emits typed individuals + property assertions referencing existing T-box URIs. |
+| FR-18.3 | Schema-guided vs open modes | Schema-guided (assert only against the existing T-box) is the default for grounded, consistent output. Open mode may propose new individuals + candidate types that feed belief revision (§6.16) / T-box growth. |
+| FR-18.4 | Canonicalization / entity linking | Coreferent mentions collapse to one individual (reuses §6.7 ER: blocking → scoring → clustering → golden individual), across chunks and documents. |
+| FR-18.5 | Span-level provenance | Every individual and assertion carries `extracted_from` provenance to the source span (doc id + chunk id + char span), so each fact is traceable and auditable. |
+| FR-18.6 | Multi-domain routing | Each individual is assigned to the correct domain ontology via the Stream 16 `domain_tag` (FR-2.15). When a set spans domains, individuals partition across the per-domain ontologies; cross-domain relationships become cross-ontology edges. |
+| FR-18.7 | Constraint validation | Assertions are validated against the T-box's OWL/SHACL constraints (§6.14) — cardinality, datatype, value restrictions; violations are flagged for curation, never silently dropped. |
+| FR-18.8 | Hallucination control | Every assertion must be grounded in a source span (FR-18.5) and reference a real T-box term; ungrounded/invented individuals are rejected or flagged (OAEI-LLM-style validation categories). |
+| FR-18.9 | A-box curation | Individuals/assertions are surfaced in the workspace (an **instance lens**) with approve/reject/edit; all edits temporal. |
+| FR-18.10 | A-box quality metrics | Instance coverage, assertion grounding rate, constraint-violation count, and canonicalization/merge stats. |
+| FR-18.11 | API | `POST /extraction/run?extract_abox=true`; `GET /ontology/{id}/individuals`; `GET /individuals/{id}` (with provenance + history); ER-style merge endpoints for individuals. |
+| FR-18.12 | Export | A-box exported as RDF (individuals as `owl:NamedIndividual` with `rdf:type` + property assertions), separable from or combined with the T-box. |
+
+**Design note:** Builds on §6.2 (extraction), §6.7 (ER, for canonicalization), §6.14 (constraints, for validation), and Stream 16 (domain routing). **Resolves Stream 15 SO.4** ("A-box extraction — NEEDS DECISION") → decided: schema-grounded, EDC-style, per-domain, provenance-first.
+
+---
+
+### 6.19 Use-Case / Competency-Question-Driven Ontology Requirements
+
+**Description:** An ontology is only "good" relative to the use cases it must support. This section adds a way to specify **one or more use cases** — expressed as **competency questions (CQs)** — that a target ontology must satisfy, and to use them to both **(a) SCOPE/prioritize extraction** and **(b) VALIDATE coverage** of the result. It applies uniformly to all source types: relational (`relational-schema-analyzer`), ArangoDB graph (`arango-schema-analyzer`, §6.9), semi-structured, and unstructured (§6.2). These are *ontology-requirement* use cases, distinct from the *workflow/RBAC* use cases in §2a.
+
+**SOTA basis.** Grounded in established ontology-requirements methodology — **competency questions** + the **Ontology Requirements Specification Document (ORSD)** from **NeOn / METHONTOLOGY / SAMOD**. Recent work operationalizes these with LLMs: **NeOn-GPT** (Semantic Web Journal 2025) sequences requirement spec → CQ generation → conceptualization → population; **FrODO** (arXiv 2206.02485) drafts ontology fragments from CQs; **Bench4KE** (arXiv 2505.24554) benchmarks LLM CQ generation (843 gold CQs / 17 projects) and extends toward CQ→SPARQL generation and ontology testing; **VSPO** targets semantic-pitfall detection in generated CQs. **Critical caveat from the evidence:** fully-automated CQ generation is *not reliable* (precision low; roughly ~25% in-scope and ~45% acceptable-quality unaided) — so in AOE, CQs are **human-authored, LLM-assisted, and human-curated**, never auto-committed.
+
+**Requirements:**
+
+| ID | Requirement | Acceptance Criteria |
+|----|-------------|-------------------|
+| FR-19.1 | Requirements spec model | An `ontology_requirements` spec attached to a target ontology (or extraction run), ORSD-style: purpose, scope, intended uses/users, a set of use cases, and per-use-case competency questions with priority + expected answer shape. |
+| FR-19.2 | Human-authored, LLM-assisted CQ authoring | A UI to write CQs; an LLM suggests candidate CQs from a purpose statement + sample sources (NeOn-GPT-style), but **every CQ requires human acceptance** (given automated-CQ unreliability). A pitfall check (VSPO-style) flags malformed CQs. |
+| FR-19.3 | CQ formalization to test queries | Each CQ is paired with a parameterized query over the target store — **AQL** for the ArangoDB-materialized ontology/A-box (SPARQL for RDF export). LLM-assisted, human-verified. |
+| FR-19.4 | Scope injection into extraction | The CQ term set (entities/relations the CQs reference) is injected into extraction prompts across **all** source adapters as *required/priority* concepts, so extraction prioritizes what the use cases need — §6.2 (unstructured), §6.9 + `arango-schema-analyzer` (graph), `relational-schema-analyzer` (relational). |
+| FR-19.5 | Coverage validation | Run every CQ's test query against the resulting ontology (+ A-box when present); classify each CQ answerable / partial / unanswerable; produce a coverage report (% CQs satisfied) with the specific gaps (missing classes/properties/instances). |
+| FR-19.6 | Coverage-driven gap feedback | Unanswerable CQs generate concrete gap items (missing class X, missing relation Y) routed to belief revision (§6.16) / the extraction backlog / curation — closing the loop. |
+| FR-19.7 | Uniform across source types | The same requirements spec drives + validates the ontology whether it is built from relational, graph, semi-structured, or unstructured sources; the adapter differs, the CQ/coverage contract is identical. |
+| FR-19.8 | Release-gate integration | CQ coverage is a signal in the Release Readiness Review (Stream 19): a release can require ≥N% of priority CQs answerable. |
+| FR-19.9 | Requirements-aware alignment + A-box | CQs scope which correspondences (§6.17) and which individuals (§6.18) matter — a use-case-scoped master + selective A-box — tying all three capabilities together. |
+| FR-19.10 | API | CRUD `/ontology/{id}/requirements` (use cases + CQs + queries); `POST /ontology/{id}/coverage` (run validation → report). |
+| FR-19.11 | Quality dashboard tile | CQ coverage % over time; the unanswerable-CQ list; per-use-case status. |
+
+**Design note:** Connects §2a workflow use cases with ontology-requirement-level CQs; drives §6.2 / §6.9 / relational extraction; validates via AQL; gates via Stream 19; scopes §6.17 and §6.18.
 
 ---
 

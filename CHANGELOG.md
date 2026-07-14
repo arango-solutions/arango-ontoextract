@@ -8,6 +8,28 @@ The backend version is the single source of truth in `backend/app/__init__.py`.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-07-13
+
+Documentation / planning release. No functional code change — cut so the PRD and
+implementation plan for the new capability program land on the release remote.
+
+### Documentation
+
+- **PRD §6.17 Multi-Source Ontology Alignment & Merging** (FR-17.1–17.13): discover
+  correspondences across N independently-authored ontologies and merge into a reconciled
+  master — embedding-retrieval + selective-LLM adjudication, minimally-destructive modular
+  incoherence repair, bounded human confirmation, hallucination control. Realizes CDF M3 / RE-2.
+- **PRD §6.18 Assertion-Graph (A-box) Extraction** (FR-18.1–18.12): schema-grounded instance
+  + relation extraction (EDC-style) with canonicalization, span-level provenance, and
+  per-domain routing via the Stream 16 `domain_tag`. Resolves Stream 15 SO.4.
+- **PRD §6.19 Use-Case / Competency-Question-Driven Requirements** (FR-19.1–19.11): specify
+  use cases as competency questions that both scope extraction and validate coverage,
+  uniformly across relational / graph / semi-structured / unstructured sources.
+- **Implementation plan:** Stream 20 upgraded to the SOTA-backed alignment design; new
+  Stream 21 (A-box) and Stream 22 (competency-question requirements).
+- **`docs/research/alignment-abox-cq-sota-2026-07.md`:** the cited deep-research report
+  (2023–2025 SOTA, adversarially verified) behind the three new sections.
+
 ## [1.2.0] - 2026-07-13
 
 Feature release on top of v1.1.0: domain detection & multi-ontology routing and
@@ -232,6 +254,7 @@ belief-revision node behind a feature flag.
 Initial release: end-to-end extraction pipeline, ontology editor, pipeline
 monitor, quality metrics, multi-document support, and the temporal substrate.
 
+[1.2.1]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.2.1
 [1.2.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.2.0
 [1.1.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.1.0
 [1.0.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.0.0
