@@ -8,6 +8,21 @@ The backend version is the single source of truth in `backend/app/__init__.py`.
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-07-14
+
+Documentation / planning release. No functional code change.
+
+### Documentation
+
+- **`docs/IMPLEMENTATION_PLAN_ALIGNMENT_ABOX_CQ.md`:** a PR-sized, sequenced build plan for
+  the new capability program — Stream 20 (alignment), Stream 21 (A-box extraction), Stream 22
+  (competency-question requirements). Shared embedding/vector-search foundation (SF.1/SF.2),
+  per-stream sprints with concrete file targets, dependencies, acceptance criteria mapped to
+  FR IDs, a 4-milestone build order, migrations/flags/test-and-eval strategy, and a risks table.
+- **PRD-sync (2026-07-14):** audited implementation vs PRD; 10 open drift gaps recorded to the
+  shared `drift_alerts` collection (6 MISSING, 4 PARTIAL) — all correspond to planned Streams
+  8/14/15/16/19/20/21/22, no surprises.
+
 ## [1.2.1] - 2026-07-13
 
 Documentation / planning release. No functional code change — cut so the PRD and
@@ -254,6 +269,7 @@ belief-revision node behind a feature flag.
 Initial release: end-to-end extraction pipeline, ontology editor, pipeline
 monitor, quality metrics, multi-document support, and the temporal substrate.
 
+[1.2.2]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.2.2
 [1.2.1]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.2.1
 [1.2.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.2.0
 [1.1.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.1.0
