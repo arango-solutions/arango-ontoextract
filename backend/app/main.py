@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse
 from app import __version__
 from app.api import (
     admin,
+    alignment,
     auth,
     curation,
     documents,
@@ -112,6 +113,7 @@ app.include_router(admin.router)
 app.include_router(ontology.router)
 app.include_router(curation.router)
 app.include_router(er.router)
+app.include_router(alignment.router)
 app.include_router(orgs.router)
 app.include_router(notifications.router)
 app.include_router(metrics.router)

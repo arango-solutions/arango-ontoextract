@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     #: measurably improves matching). Off by default: it adds an LLM call per
     #: entity and the label+description text is sufficient for the initial build.
     ontology_embedding_enrich_definitions: bool = False
+    #: Stream 20 — enable multi-source ontology alignment (PRD §6.17). The
+    #: ``/api/v1/alignment`` routes are opt-in (called explicitly) regardless;
+    #: this flag gates any future pipeline-driven / auto-alignment wiring.
+    alignment_enabled: bool = False
     #: Per-request HTTP timeout for LLM calls, in seconds. Without an
     #: explicit timeout, ``ChatAnthropic`` and ``ChatOpenAI`` inherit
     #: their underlying httpx client default (``None`` = wait forever
