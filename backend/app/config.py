@@ -88,6 +88,12 @@ class Settings(BaseSettings):
     #: ``LLM_EXTRACTION_MODEL`` (e.g. ``gpt-4o`` for the OpenAI path).
     llm_extraction_model: str = "claude-sonnet-4-6"
     embedding_model: str = "text-embedding-3-small"
+    #: SF.1 — when embedding ontology entities for alignment/A-box/CQ vector
+    #: search (``app.services.ontology_embeddings``), also fold an LLM-generated
+    #: natural-language ``definition`` into the embedded text (GenOM-style, which
+    #: measurably improves matching). Off by default: it adds an LLM call per
+    #: entity and the label+description text is sufficient for the initial build.
+    ontology_embedding_enrich_definitions: bool = False
     #: Per-request HTTP timeout for LLM calls, in seconds. Without an
     #: explicit timeout, ``ChatAnthropic`` and ``ChatOpenAI`` inherit
     #: their underlying httpx client default (``None`` = wait forever

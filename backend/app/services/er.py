@@ -20,6 +20,9 @@ from app.db.client import get_db
 from app.db.utils import run_aql
 from app.models.ontology import ExtractedClass
 from app.services.er_topology import compute_topological_similarity
+from app.services.matching import jaro_winkler_sim as _jaro_winkler_sim
+from app.services.matching import score_candidate as _score_candidate
+from app.services.matching import token_overlap as _token_overlap
 from app.services.temporal import NEVER_EXPIRES
 
 log = logging.getLogger(__name__)
@@ -696,11 +699,17 @@ FOR cls IN ontology_classes
     candidates: list[dict[str, Any]] = []
     for local_cls in local_classes:
         for domain_cls in domain_classes:
-            label_sim = _jaro_winkler_sim(local_cls.get("label", ""), domain_cls.get("label", ""))
-            desc_sim = _token_overlap(
-                local_cls.get("description", ""), domain_cls.get("description", "")
+            # SF.2: the historical 0.6*label + 0.4*description blend, now via the
+            # shared matcher. Both signals are always present, so the matcher's
+            # renormalisation leaves the numbers identical to the pre-SF.2 path.
+            scored = _score_candidate(
+                local_cls,
+                domain_cls,
+                weights={"label": 0.6, "description": 0.4},
             )
-            combined = 0.6 * label_sim + 0.4 * desc_sim
+            label_sim = scored["label"]
+            desc_sim = scored["description"]
+            combined = scored["combined"]
             if combined >= min_score:
                 candidates.append(
                     {
@@ -920,74 +929,9 @@ def _get_class_doc(db: StandardDatabase, key: str) -> dict[str, Any] | None:
     return results[0] if results else None
 
 
-def _jaro_winkler_sim(s1: str, s2: str) -> float:
-    """Simplified Jaro-Winkler similarity."""
-    if not s1 or not s2:
-        return 0.0
-    if s1 == s2:
-        return 1.0
-
-    s1_lower, s2_lower = s1.lower(), s2.lower()
-    if s1_lower == s2_lower:
-        return 1.0
-
-    len1, len2 = len(s1_lower), len(s2_lower)
-    match_distance = max(len1, len2) // 2 - 1
-    if match_distance < 0:
-        match_distance = 0
-
-    s1_matches = [False] * len1
-    s2_matches = [False] * len2
-    matches = 0
-    transpositions = 0
-
-    for i in range(len1):
-        start = max(0, i - match_distance)
-        end = min(i + match_distance + 1, len2)
-        for j in range(start, end):
-            if s2_matches[j] or s1_lower[i] != s2_lower[j]:
-                continue
-            s1_matches[i] = True
-            s2_matches[j] = True
-            matches += 1
-            break
-
-    if matches == 0:
-        return 0.0
-
-    k = 0
-    for i in range(len1):
-        if not s1_matches[i]:
-            continue
-        while not s2_matches[k]:
-            k += 1
-        if s1_lower[i] != s2_lower[k]:
-            transpositions += 1
-        k += 1
-
-    jaro = (matches / len1 + matches / len2 + (matches - transpositions / 2) / matches) / 3
-
-    prefix_len = 0
-    for i in range(min(4, min(len1, len2))):
-        if s1_lower[i] == s2_lower[i]:
-            prefix_len += 1
-        else:
-            break
-
-    return jaro + prefix_len * 0.1 * (1 - jaro)
-
-
-def _token_overlap(text1: str, text2: str) -> float:
-    """Token-level overlap similarity (Jaccard on words)."""
-    if not text1 or not text2:
-        return 0.0
-    tokens1 = set(text1.lower().split())
-    tokens2 = set(text2.lower().split())
-    if not tokens1 or not tokens2:
-        return 0.0
-    intersection = tokens1 & tokens2
-    union = tokens1 | tokens2
-    return len(intersection) / len(union)
+# ``_jaro_winkler_sim`` and ``_token_overlap`` moved to ``app.services.matching``
+# (SF.2) and are imported at the top of this module under their historical
+# private names, so every existing caller in this file is unchanged.
 
 
 def _create_golden_record(
