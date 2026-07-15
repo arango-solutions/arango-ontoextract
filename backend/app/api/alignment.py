@@ -52,6 +52,17 @@ async def get_session(session_id: str) -> dict[str, Any]:
     return session
 
 
+@router.post("/sessions/{session_id}/adjudicate")
+async def adjudicate_session(session_id: str) -> dict[str, Any]:
+    """Run selective LLM adjudication over the session's candidates (AL-PR3).
+
+    High-confidence pairs auto-accept; the borderline middle gets an LLM verdict.
+    """
+    if alignment_svc.get_alignment_session(None, session_id) is None:
+        raise HTTPException(status_code=404, detail=f"alignment session '{session_id}' not found")
+    return await alignment_svc.adjudicate_session(session_id=session_id)
+
+
 @router.get("/sessions/{session_id}/candidates")
 async def list_candidates(
     session_id: str,

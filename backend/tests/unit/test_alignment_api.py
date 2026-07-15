@@ -6,7 +6,7 @@ without touching the database (mirrors test_er_api.py).
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -63,6 +63,27 @@ class TestGetSession:
             resp = client.get("/api/v1/alignment/sessions/S1")
         assert resp.status_code == 200
         assert resp.json()["_key"] == "S1"
+
+
+class TestAdjudicateEndpoint:
+    def test_adjudicate_runs(self) -> None:
+        with (
+            patch.object(alignment_svc, "get_alignment_session", return_value={"_key": "S1"}),
+            patch.object(
+                alignment_svc,
+                "adjudicate_session",
+                new=AsyncMock(return_value={"session_id": "S1", "adjudicated": 4, "llm_calls": 2}),
+            ) as mk,
+        ):
+            resp = client.post("/api/v1/alignment/sessions/S1/adjudicate")
+        assert resp.status_code == 200
+        assert resp.json()["llm_calls"] == 2
+        mk.assert_awaited_once()
+
+    def test_adjudicate_404_when_session_missing(self) -> None:
+        with patch.object(alignment_svc, "get_alignment_session", return_value=None):
+            resp = client.post("/api/v1/alignment/sessions/nope/adjudicate")
+        assert resp.status_code == 404
 
 
 class TestListCandidates:

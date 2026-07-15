@@ -98,6 +98,11 @@ class Settings(BaseSettings):
     #: ``/api/v1/alignment`` routes are opt-in (called explicitly) regardless;
     #: this flag gates any future pipeline-driven / auto-alignment wiring.
     alignment_enabled: bool = False
+    #: Stream 20 AL-PR3 — correspondences at/above this confidence auto-accept
+    #: (no LLM); everything between the session ``min_score`` floor and this band
+    #: is "borderline" and gets a selective LLM adjudication (MILA/KROMA pattern —
+    #: reserve LLM calls for the uncertain middle).
+    alignment_auto_accept_band: float = 0.92
     #: Per-request HTTP timeout for LLM calls, in seconds. Without an
     #: explicit timeout, ``ChatAnthropic`` and ``ChatOpenAI`` inherit
     #: their underlying httpx client default (``None`` = wait forever

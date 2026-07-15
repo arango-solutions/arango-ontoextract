@@ -97,6 +97,32 @@ def list_correspondences(
     return list(run_aql(db, query, bind_vars=bind))
 
 
+def set_correspondence_adjudication(
+    db: StandardDatabase,
+    correspondence_key: str,
+    adjudication: dict[str, Any],
+    *,
+    correspondence_type: str | None = None,
+) -> dict[str, Any] | None:
+    """Attach an LLM/score adjudication verdict to a correspondence.
+
+    Records the verdict + recommendation under ``adjudication`` and, when the
+    verdict refined the correspondence type, updates ``type``. Does not change
+    the curation ``status`` — a human still confirms via accept/reject.
+    """
+    if not db.has_collection(CORRESPONDENCES):
+        return None
+    col = db.collection(CORRESPONDENCES)
+    if not isinstance(col.get(correspondence_key), dict):
+        return None
+    patch: dict[str, Any] = {"_key": correspondence_key, "adjudication": adjudication}
+    if correspondence_type is not None:
+        patch["type"] = correspondence_type
+    col.update(patch)
+    updated = col.get(correspondence_key)
+    return updated if isinstance(updated, dict) else None
+
+
 def set_correspondence_status(
     db: StandardDatabase, correspondence_key: str, status: str
 ) -> dict[str, Any] | None:

@@ -18,16 +18,20 @@ cheap heuristic.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
 from typing import Any
 
 from arango.database import StandardDatabase
+from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.config import settings
 from app.db import alignment_repo
 from app.db.client import get_db
 from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import run_aql
+from app.extraction.agents.extractor import _get_llm
 from app.services import matching
 
 log = logging.getLogger(__name__)
@@ -114,6 +118,158 @@ def generate_candidates(
 
     candidates.sort(key=lambda c: c["confidence"], reverse=True)
     return candidates
+
+
+# ---------------------------------------------------------------------------
+# AL-PR3 — selective LLM adjudication of borderline correspondences
+# ---------------------------------------------------------------------------
+
+_ADJUDICATE_SYSTEM_PROMPT = (
+    "You are an ontology-alignment judge. Given two classes from different "
+    "ontologies and their computed similarity signals, decide their relationship. "
+    "Respond ONLY with a JSON object: "
+    '{"verdict": "equivalent"|"subclass"|"superclass"|"related"|"none", '
+    '"confidence": <0.0-1.0>, "rationale": "<one sentence>"}. '
+    '"subclass" means A is a subclass of B; "superclass" means A is a superclass '
+    'of B; "equivalent" means the same concept; "related" means associated but not '
+    'the same or hierarchical; "none" means unrelated.'
+)
+
+_VERDICTS = ("equivalent", "subclass", "superclass", "related", "none")
+_UNCERTAIN = {"verdict": "uncertain", "confidence": 0.0, "rationale": "llm_unavailable"}
+
+
+def _type_from_verdict(verdict: str, fallback: str) -> str:
+    return {
+        "equivalent": "owl:equivalentClass",
+        "subclass": "rdfs:subClassOf",
+        "superclass": "rdfs:subClassOf",
+        "related": "skos:relatedMatch",
+    }.get(verdict, fallback)
+
+
+def _recommendation(verdict: str, confidence: float) -> str:
+    """Map a verdict + confidence to accept / review / reject."""
+    if verdict in ("equivalent", "subclass", "superclass") and confidence >= 0.5:
+        return "accept"
+    if verdict == "none":
+        return "reject"
+    return "review"
+
+
+async def adjudicate_candidate(
+    a_label: str,
+    b_label: str,
+    scores: dict[str, Any],
+    *,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Ask the LLM whether two classes correspond. Never raises.
+
+    Returns ``{verdict, confidence, rationale}``; falls back to an ``uncertain``
+    verdict on any LLM/parse error so a bad call routes the pair to human review
+    rather than dropping it.
+    """
+    try:
+        llm = _get_llm(model or settings.llm_extraction_model)
+        signals = json.dumps({k: v for k, v in scores.items() if k != "combined"})
+        user = (
+            f"Class A: {a_label!r}\nClass B: {b_label!r}\n"
+            f"Similarity signals: {signals}\n"
+            f"Combined score: {scores.get('combined')}"
+        )
+        resp = await llm.ainvoke(
+            [SystemMessage(content=_ADJUDICATE_SYSTEM_PROMPT), HumanMessage(content=user)]
+        )
+        raw = resp.content if isinstance(resp.content, str) else str(resp.content)
+        return _parse_verdict(raw)
+    except Exception:
+        log.warning("alignment adjudication failed; routing to review", exc_info=True)
+        return dict(_UNCERTAIN)
+
+
+def _parse_verdict(raw: str) -> dict[str, Any]:
+    """Parse the LLM JSON verdict, tolerating code fences / surrounding prose."""
+    text = raw.strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        return dict(_UNCERTAIN)
+    try:
+        data = json.loads(text[start : end + 1])
+    except (ValueError, TypeError):
+        return dict(_UNCERTAIN)
+    verdict = str(data.get("verdict") or "").lower()
+    if verdict not in _VERDICTS:
+        return dict(_UNCERTAIN)
+    try:
+        confidence = max(0.0, min(1.0, float(data.get("confidence", 0.0))))
+    except (ValueError, TypeError):
+        confidence = 0.0
+    return {
+        "verdict": verdict,
+        "confidence": confidence,
+        "rationale": str(data.get("rationale") or ""),
+    }
+
+
+async def adjudicate_session(
+    db: StandardDatabase | None = None,
+    *,
+    session_id: str,
+    auto_accept_band: float | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Adjudicate a session's candidate correspondences (AL-PR3).
+
+    Correspondences at/above ``auto_accept_band`` auto-accept (method ``score``,
+    no LLM); the rest get a selective LLM verdict (method ``llm``). Each gets an
+    ``adjudication`` record + a refined type; the curation ``status`` is left for
+    a human. Returns counts.
+    """
+    if db is None:
+        db = get_db()
+    band = auto_accept_band if auto_accept_band is not None else settings.alignment_auto_accept_band
+
+    cands = alignment_repo.list_correspondences(db, session_id, status="candidate", limit=10_000)
+    llm_calls = 0
+    for c in cands:
+        confidence = float(c.get("confidence") or 0.0)
+        if confidence >= band:
+            adj = {
+                "method": "score",
+                "verdict": "equivalent",
+                "confidence": confidence,
+                "recommendation": "accept",
+            }
+            new_type = c.get("type")
+        else:
+            src_a = c.get("source_a") or {}
+            src_b = c.get("source_b") or {}
+            verdict = await adjudicate_candidate(
+                str(src_a.get("label") or ""),
+                str(src_b.get("label") or ""),
+                c.get("scores") or {},
+                model=model,
+            )
+            llm_calls += 1
+            adj = {
+                "method": "llm",
+                **verdict,
+                "recommendation": _recommendation(verdict["verdict"], verdict["confidence"]),
+            }
+            new_type = _type_from_verdict(verdict["verdict"], c.get("type") or "skos:relatedMatch")
+        alignment_repo.set_correspondence_adjudication(
+            db, c["_key"], adj, correspondence_type=new_type
+        )
+
+    log.info(
+        "[alignment] adjudicated session %s: %d candidates, %d LLM calls (band=%.2f)",
+        session_id,
+        len(cands),
+        llm_calls,
+        band,
+    )
+    return {"session_id": session_id, "adjudicated": len(cands), "llm_calls": llm_calls}
 
 
 def create_alignment_session(

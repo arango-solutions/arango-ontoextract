@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -93,3 +93,95 @@ class TestSetCandidateStatus:
         db = MagicMock()
         with pytest.raises(ValueError, match="invalid correspondence status"):
             al.set_candidate_status(db, "c1", "bogus")
+
+
+class TestVerdictHelpers:
+    def test_type_from_verdict(self) -> None:
+        assert al._type_from_verdict("subclass", "x") == "rdfs:subClassOf"
+        assert al._type_from_verdict("superclass", "x") == "rdfs:subClassOf"
+        assert al._type_from_verdict("equivalent", "x") == "owl:equivalentClass"
+        assert al._type_from_verdict("related", "x") == "skos:relatedMatch"
+        assert al._type_from_verdict("none", "fallback") == "fallback"
+
+    def test_recommendation(self) -> None:
+        assert al._recommendation("equivalent", 0.9) == "accept"
+        assert al._recommendation("subclass", 0.5) == "accept"
+        assert al._recommendation("subclass", 0.3) == "review"
+        assert al._recommendation("none", 0.9) == "reject"
+        assert al._recommendation("related", 0.9) == "review"
+
+    def test_parse_verdict_code_fenced_and_clamped(self) -> None:
+        fenced = '```json\n{"verdict":"related","confidence":2,"rationale":"x"}\n```'
+        out = al._parse_verdict(fenced)
+        assert out["verdict"] == "related"
+        assert out["confidence"] == 1.0  # clamped
+
+    def test_parse_verdict_invalid_returns_uncertain(self) -> None:
+        assert al._parse_verdict("no json here")["verdict"] == "uncertain"
+        assert al._parse_verdict('{"verdict":"bogus","confidence":0.5}')["verdict"] == "uncertain"
+
+
+class TestAdjudicateCandidate:
+    async def test_parses_llm_verdict(self) -> None:
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(
+            return_value=MagicMock(
+                content='{"verdict":"equivalent","confidence":0.9,"rationale":"same concept"}'
+            )
+        )
+        with patch.object(al, "_get_llm", return_value=llm):
+            out = await al.adjudicate_candidate("Account", "Compte", {"combined": 0.7})
+        assert out["verdict"] == "equivalent"
+        assert out["confidence"] == 0.9
+
+    async def test_fallback_to_uncertain_on_llm_error(self) -> None:
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch.object(al, "_get_llm", return_value=llm):
+            out = await al.adjudicate_candidate("A", "B", {})
+        assert out["verdict"] == "uncertain"
+        assert out["confidence"] == 0.0
+
+
+class TestAdjudicateSession:
+    async def test_auto_accepts_high_and_llm_only_for_borderline(self) -> None:
+        db = MagicMock()
+        cands = [
+            {
+                "_key": "c1",
+                "confidence": 0.95,
+                "type": "owl:equivalentClass",
+                "source_a": {"label": "Account"},
+                "source_b": {"label": "Account"},
+                "scores": {"combined": 0.95},
+            },
+            {
+                "_key": "c2",
+                "confidence": 0.6,
+                "type": "skos:relatedMatch",
+                "source_a": {"label": "Client"},
+                "source_b": {"label": "Customer"},
+                "scores": {"combined": 0.6},
+            },
+        ]
+        with (
+            patch.object(al.alignment_repo, "list_correspondences", return_value=cands),
+            patch.object(
+                al,
+                "adjudicate_candidate",
+                new=AsyncMock(
+                    return_value={"verdict": "subclass", "confidence": 0.8, "rationale": "r"}
+                ),
+            ) as adj,
+            patch.object(al.alignment_repo, "set_correspondence_adjudication") as setadj,
+        ):
+            out = await al.adjudicate_session(db, session_id="S1", auto_accept_band=0.92)
+
+        assert out == {"session_id": "S1", "adjudicated": 2, "llm_calls": 1}
+        adj.assert_awaited_once()  # only the borderline c2 hit the LLM
+        # c1 auto-accepted via score; c2 llm-adjudicated to rdfs:subClassOf
+        by_key = {call.args[1]: call for call in setadj.call_args_list}
+        assert by_key["c1"].args[2]["method"] == "score"
+        assert by_key["c1"].args[2]["recommendation"] == "accept"
+        assert by_key["c2"].args[2]["method"] == "llm"
+        assert by_key["c2"].kwargs["correspondence_type"] == "rdfs:subClassOf"
