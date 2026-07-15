@@ -86,6 +86,34 @@ class TestAdjudicateEndpoint:
         assert resp.status_code == 404
 
 
+class TestMaterializeEndpoint:
+    def test_materialize(self) -> None:
+        with patch.object(
+            alignment_svc,
+            "materialize_master",
+            return_value={
+                "session_id": "S1",
+                "master_id": "M1",
+                "class_count": 2,
+                "equivalence_edges": 5,
+                "cluster_count": 2,
+            },
+        ) as mk:
+            resp = client.post("/api/v1/alignment/sessions/S1/materialize", json={"name": "Master"})
+        assert resp.status_code == 200
+        assert resp.json()["master_id"] == "M1"
+        assert mk.call_args.kwargs["name"] == "Master"
+
+    def test_materialize_404_when_session_missing(self) -> None:
+        with patch.object(
+            alignment_svc,
+            "materialize_master",
+            side_effect=ValueError("alignment session 'nope' not found"),
+        ):
+            resp = client.post("/api/v1/alignment/sessions/nope/materialize", json={})
+        assert resp.status_code == 404
+
+
 class TestListCandidates:
     def test_lists_with_filters(self) -> None:
         with patch.object(

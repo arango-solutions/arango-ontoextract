@@ -143,6 +143,88 @@ class TestAdjudicateCandidate:
         assert out["confidence"] == 0.0
 
 
+class TestUnionFindAndSlug:
+    def test_union_find_transitive_grouping(self) -> None:
+        uf = al._UnionFind()
+        uf.union(1, 2)
+        uf.union(2, 3)
+        uf.union(4, 5)
+        groups = sorted(sorted(g) for g in uf.groups())
+        assert groups == [[1, 2, 3], [4, 5]]
+
+    def test_slug(self) -> None:
+        assert al._slug("Bank Account!") == "bank-account"
+        assert al._slug("") == "concept"
+
+
+class TestMaterializeMaster:
+    def test_missing_session_raises(self) -> None:
+        db = MagicMock()
+        with (
+            patch.object(al.alignment_repo, "get_session", return_value=None),
+            pytest.raises(ValueError, match="not found"),
+        ):
+            al.materialize_master(db, session_id="nope")
+
+    def test_transitive_clusters_become_one_master_class_each(self) -> None:
+        db = MagicMock()
+        session = {"_key": "S1", "source_ontology_ids": ["oa", "ob", "oc"]}
+        accepted = [
+            {
+                "source_a": {"ontology_id": "oa", "entity_key": "A", "label": "Account"},
+                "source_b": {"ontology_id": "ob", "entity_key": "B", "label": "Acct"},
+            },
+            {  # transitively merges A-B-C into one cluster
+                "source_a": {"ontology_id": "ob", "entity_key": "B", "label": "Acct"},
+                "source_b": {"ontology_id": "oc", "entity_key": "C", "label": "Account"},
+            },
+            {  # independent 2-member cluster
+                "source_a": {"ontology_id": "oa", "entity_key": "X", "label": "Loan"},
+                "source_b": {"ontology_id": "ob", "entity_key": "Y", "label": "Loan"},
+            },
+        ]
+        with (
+            patch.object(al.alignment_repo, "get_session", return_value=session),
+            patch.object(al.alignment_repo, "list_correspondences", return_value=accepted),
+            patch.object(
+                al.registry_repo, "create_registry_entry", return_value={"_key": "M1"}
+            ) as mk_reg,
+            patch.object(
+                al.ontology_repo,
+                "create_class",
+                return_value={"_id": "ontology_classes/mc", "_key": "mc"},
+            ) as mk_cls,
+            patch.object(al.ontology_repo, "create_edge") as mk_edge,
+            patch.object(al.alignment_repo, "set_session_master") as mk_master,
+        ):
+            out = al.materialize_master(db, session_id="S1", name="Master")
+
+        assert out["master_id"] == "M1"
+        assert out["class_count"] == 2  # one 3-member cluster + one 2-member cluster
+        assert out["equivalence_edges"] == 5  # 3 + 2 members
+        mk_reg.assert_called_once()
+        assert mk_cls.call_count == 2
+        assert mk_edge.call_count == 5
+        mk_master.assert_called_once_with(db, "S1", "M1")
+        # every master class carries provenance + source ontology ids
+        for call in mk_cls.call_args_list:
+            data = call.kwargs["data"]
+            assert data["provenance"] and data["source_ontology_ids"]
+
+    def test_no_accepted_yields_empty_master(self) -> None:
+        db = MagicMock()
+        with (
+            patch.object(al.alignment_repo, "get_session", return_value={"_key": "S1"}),
+            patch.object(al.alignment_repo, "list_correspondences", return_value=[]),
+            patch.object(al.registry_repo, "create_registry_entry", return_value={"_key": "M1"}),
+            patch.object(al.ontology_repo, "create_class") as mk_cls,
+            patch.object(al.alignment_repo, "set_session_master"),
+        ):
+            out = al.materialize_master(db, session_id="S1")
+        assert out["class_count"] == 0
+        mk_cls.assert_not_called()
+
+
 class TestAdjudicateSession:
     async def test_auto_accepts_high_and_llm_only_for_borderline(self) -> None:
         db = MagicMock()

@@ -31,6 +31,10 @@ class CorrespondenceStatusRequest(BaseModel):
     status: str = Field(..., pattern="^(candidate|accepted|rejected)$")
 
 
+class MaterializeRequest(BaseModel):
+    name: str | None = None
+
+
 @router.post("/sessions")
 async def create_session(body: CreateSessionRequest) -> dict[str, Any]:
     """Create a session, generate candidate correspondences, and persist them."""
@@ -61,6 +65,15 @@ async def adjudicate_session(session_id: str) -> dict[str, Any]:
     if alignment_svc.get_alignment_session(None, session_id) is None:
         raise HTTPException(status_code=404, detail=f"alignment session '{session_id}' not found")
     return await alignment_svc.adjudicate_session(session_id=session_id)
+
+
+@router.post("/sessions/{session_id}/materialize")
+async def materialize_master(session_id: str, body: MaterializeRequest) -> dict[str, Any]:
+    """Materialize a reconciled master ontology from the session's accepted pairs."""
+    try:
+        return alignment_svc.materialize_master(session_id=session_id, name=body.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/sessions/{session_id}/candidates")

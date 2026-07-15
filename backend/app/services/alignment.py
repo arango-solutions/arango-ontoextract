@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import defaultdict
 from typing import Any
 
@@ -27,7 +28,7 @@ from arango.database import StandardDatabase
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.config import settings
-from app.db import alignment_repo
+from app.db import alignment_repo, ontology_repo, registry_repo
 from app.db.client import get_db
 from app.db.temporal_constants import NEVER_EXPIRES
 from app.db.utils import run_aql
@@ -344,3 +345,141 @@ def set_candidate_status(
     if status not in ("candidate", "accepted", "rejected"):
         raise ValueError(f"invalid correspondence status: {status}")
     return alignment_repo.set_correspondence_status(db, correspondence_key, status)
+
+
+# ---------------------------------------------------------------------------
+# AL-PR4 — master materialization + provenance
+# ---------------------------------------------------------------------------
+
+_SLUG_STRIP = re.compile(r"[^a-z0-9]+")
+
+
+def _slug(text: str) -> str:
+    return _SLUG_STRIP.sub("-", (text or "concept").lower()).strip("-") or "concept"
+
+
+class _UnionFind:
+    """Minimal union-find over hashable nodes for transitive merge grouping."""
+
+    def __init__(self) -> None:
+        self._parent: dict[Any, Any] = {}
+
+    def find(self, x: Any) -> Any:
+        self._parent.setdefault(x, x)
+        root = x
+        while self._parent[root] != root:
+            root = self._parent[root]
+        # path compression
+        while self._parent[x] != root:
+            self._parent[x], x = root, self._parent[x]
+        return root
+
+    def union(self, a: Any, b: Any) -> None:
+        self._parent[self.find(a)] = self.find(b)
+
+    def groups(self) -> list[list[Any]]:
+        out: dict[Any, list[Any]] = defaultdict(list)
+        for node in self._parent:
+            out[self.find(node)].append(node)
+        return list(out.values())
+
+
+def materialize_master(
+    db: StandardDatabase | None = None,
+    *,
+    session_id: str,
+    name: str | None = None,
+    created_by: str = "alignment",
+) -> dict[str, Any]:
+    """Materialize a reconciled master ontology from a session's ACCEPTED pairs.
+
+    Transitively clusters accepted correspondences (A≡B, B≡C -> one cluster),
+    creates one master class per cluster with ``source_ontology_ids`` +
+    ``provenance``, links each member source class via an ``owl:equivalentClass``
+    edge, and records the master id on the session. Unmatched source classes are
+    NOT auto-carried in P1 (CDF M3 accepts a small, hand-completed master);
+    carrying the union over is a documented P2 follow-up.
+    """
+    if db is None:
+        db = get_db()
+    session = alignment_repo.get_session(db, session_id)
+    if session is None:
+        raise ValueError(f"alignment session '{session_id}' not found")
+
+    accepted = alignment_repo.list_correspondences(db, session_id, status="accepted", limit=100_000)
+
+    uf = _UnionFind()
+    node_info: dict[tuple[str, str], dict[str, Any]] = {}
+    for c in accepted:
+        a, b = c.get("source_a") or {}, c.get("source_b") or {}
+        na = (str(a.get("ontology_id")), str(a.get("entity_key")))
+        nb = (str(b.get("ontology_id")), str(b.get("entity_key")))
+        node_info[na] = a
+        node_info[nb] = b
+        uf.union(na, nb)
+
+    n_sources = len(session.get("source_ontology_ids") or [])
+    master_name = name or f"Aligned master ({n_sources} sources)"
+    master = registry_repo.create_registry_entry(
+        {
+            "name": master_name,
+            "tier": "master",
+            "description": f"Reconciled master from alignment session {session_id}",
+            "alignment_session_id": session_id,
+        },
+        db=db,
+    )
+    master_oid = str(master["_key"])
+
+    class_count = 0
+    edge_count = 0
+    for cluster in uf.groups():
+        members = [node_info[n] for n in cluster]
+        label = str(members[0].get("label") or "concept")
+        oids = sorted({str(m.get("ontology_id")) for m in members})
+        provenance = [
+            {"ontology_id": str(m.get("ontology_id")), "entity_key": str(m.get("entity_key"))}
+            for m in members
+        ]
+        master_class = ontology_repo.create_class(
+            db,
+            ontology_id=master_oid,
+            data={
+                "label": label,
+                "uri": f"urn:aoe:master:{master_oid}:{_slug(label)}",
+                "source_ontology_ids": oids,
+                "provenance": provenance,
+                "status": "approved",
+            },
+            created_by=created_by,
+        )
+        class_count += 1
+        for m in members:
+            ontology_repo.create_edge(
+                db,
+                edge_collection="equivalent_class",
+                from_id=str(master_class["_id"]),
+                to_id=f"ontology_classes/{m.get('entity_key')}",
+                data={
+                    "ontology_id": master_oid,
+                    "source": "alignment",
+                    "alignment_session_id": session_id,
+                },
+            )
+            edge_count += 1
+
+    alignment_repo.set_session_master(db, session_id, master_oid)
+    log.info(
+        "[alignment] materialized master %s from session %s: %d classes, %d equivalence edges",
+        master_oid,
+        session_id,
+        class_count,
+        edge_count,
+    )
+    return {
+        "session_id": session_id,
+        "master_id": master_oid,
+        "class_count": class_count,
+        "equivalence_edges": edge_count,
+        "cluster_count": class_count,
+    }

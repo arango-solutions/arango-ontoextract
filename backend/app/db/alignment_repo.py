@@ -68,6 +68,20 @@ def save_correspondences(
     return len(docs)
 
 
+def set_session_master(
+    db: StandardDatabase, session_id: str, master_id: str
+) -> dict[str, Any] | None:
+    """Mark a session materialised, recording the target master ontology id."""
+    if not db.has_collection(SESSIONS):
+        return None
+    col = db.collection(SESSIONS)
+    if not isinstance(col.get(session_id), dict):
+        return None
+    col.update({"_key": session_id, "target_master_id": master_id, "status": "materialized"})
+    updated = col.get(session_id)
+    return updated if isinstance(updated, dict) else None
+
+
 def list_correspondences(
     db: StandardDatabase,
     session_id: str,
