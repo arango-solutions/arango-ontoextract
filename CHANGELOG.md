@@ -8,6 +8,40 @@ The backend version is the single source of truth in `backend/app/__init__.py`.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-15
+
+First increment of the multi-source ontology alignment program (PRD §6.17 /
+Stream 20 P1), plus its shared foundation. All new behavior is flag-gated and
+opt-in (the `/api/v1/alignment` routes are called explicitly); nothing changes
+for existing extraction/curation flows.
+
+### Added
+
+- **Alignment foundation (M0 / SF.1 + SF.2):** a reusable N-source candidate
+  matcher (`app/services/matching.py` — Jaro-Winkler + token-overlap + embedding
+  cosine + optional structural signal, renormalising over available signals; ER's
+  cross-tier scorer refactored onto it with byte-identical results) and ontology
+  entity embeddings + vector search (`app/services/ontology_embeddings.py` —
+  embed classes/properties, runtime FAISS-IVF index, `APPROX_NEAR_COSINE`
+  search; migration 027 placeholder).
+- **Multi-source ontology alignment (Stream 20 P1, `app/services/alignment.py`
+  + `app/api/alignment.py`):** the embedding-retrieval-then-selective-LLM SOTA
+  pattern, end-to-end and demoable —
+  - **AL-PR1/2** session lifecycle + embedding-aware candidate generation
+    (score every cross-source class pair via the shared matcher, filter by
+    `min_score`, provisional type by score band); migration 028
+    (`alignment_sessions` + `correspondences`).
+  - **AL-PR3** selective LLM adjudication: auto-accept high-confidence pairs,
+    reserve the LLM for the borderline middle (MILA/KROMA pattern), graceful
+    "uncertain → human review" fallback.
+  - **AL-PR4** master materialization: union-find-cluster the accepted
+    correspondences into one reconciled master ontology with `owl:equivalentClass`
+    edges + `source_ontology_id[]` provenance.
+  - API: `POST /alignment/sessions`, `GET /{id}`, `POST /{id}/adjudicate`,
+    `GET /{id}/candidates`, `POST /candidates/{key}/{accept|reject}`,
+    `POST /{id}/materialize`. Flags: `alignment_enabled`,
+    `alignment_auto_accept_band`, `ontology_embedding_enrich_definitions`.
+
 ## [1.2.2] - 2026-07-14
 
 Documentation / planning release. No functional code change.
@@ -269,6 +303,7 @@ belief-revision node behind a feature flag.
 Initial release: end-to-end extraction pipeline, ontology editor, pipeline
 monitor, quality metrics, multi-document support, and the temporal substrate.
 
+[1.3.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.3.0
 [1.2.2]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.2.2
 [1.2.1]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.2.1
 [1.2.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.2.0
