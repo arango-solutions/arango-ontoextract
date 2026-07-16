@@ -22,6 +22,7 @@ from app.api.ontology import (
     imports_io,
     library,
     mutations,
+    requirements,
     schema_relational,
     schema_temporal,
 )
@@ -39,6 +40,7 @@ router.include_router(imports_io.router)
 router.include_router(imports.router)
 router.include_router(schema_relational.router)
 router.include_router(schema_temporal.router)
+router.include_router(requirements.router)
 
 # Re-export handlers / module-level state that callers (mainly tests) still
 # import from the package root, mapped to their new sub-modules.
