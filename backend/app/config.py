@@ -103,6 +103,9 @@ class Settings(BaseSettings):
     #: is "borderline" and gets a selective LLM adjudication (MILA/KROMA pattern —
     #: reserve LLM calls for the uncertain middle).
     alignment_auto_accept_band: float = 0.92
+    #: Stream 21 — enable assertion-graph (A-box) extraction (PRD §6.18). Gates
+    #: any pipeline-driven A-box run; the service is also invocable explicitly.
+    extract_abox: bool = False
     #: Per-request HTTP timeout for LLM calls, in seconds. Without an
     #: explicit timeout, ``ChatAnthropic`` and ``ChatOpenAI`` inherit
     #: their underlying httpx client default (``None`` = wait forever
