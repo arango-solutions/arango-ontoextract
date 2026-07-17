@@ -103,6 +103,16 @@ export function buildOntologyContextMenu(
       onClick: () => actions.fetchOntologyQualityReport(data),
     },
     {
+      // Stream 22: author competency questions + run coverage (overlay §9).
+      label: "Requirements & Coverage…",
+      icon: "✅",
+      onClick: () => {
+        if (!ontKey) return;
+        const n = String(data.name ?? data.label ?? ontKey).trim();
+        actions.setRequirementsOverlay({ key: ontKey, name: n || ontKey });
+      },
+    },
+    {
       label: "View Feedback Learning",
       icon: "📊",
       onClick: () => {

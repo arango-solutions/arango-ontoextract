@@ -102,6 +102,14 @@ export type AlignmentReviewArg = {
   name: string;
 } | null;
 
+/** Argument shape for ``setRequirementsOverlay`` (``null`` closes the overlay).
+ *  Drives the Stream 22 ``RequirementsOverlay``: author competency questions +
+ *  run coverage for the named ontology. Overlay-not-route (rule 9). */
+export type RequirementsOverlayArg = {
+  key: string;
+  name: string;
+} | null;
+
 /** Argument shape for ``setOntologyDelete`` (``null`` closes the dialog).
  *  Drives the H.4 ``OntologyDeleteDialog``: fetches a deletion-impact
  *  preview before allowing the typed-name confirmation. */
@@ -254,6 +262,7 @@ export interface WorkspaceContextMenuActions {
    *  overlay. Same overlay-not-route rule. */
   setMergeCandidates: (arg: MergeCandidatesArg) => void;
   setAlignmentReview: (arg: AlignmentReviewArg) => void;
+  setRequirementsOverlay: (arg: RequirementsOverlayArg) => void;
   exportOntology: (ontologyKey: string, format: "turtle" | "jsonld" | "csv") => void;
 
   // ── Imports (Stream 1 H.16) ───────────────────────────────────────────
