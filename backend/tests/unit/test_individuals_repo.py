@@ -54,6 +54,23 @@ class TestAddAssertion:
         assert kwargs["data"]["provenance"] == [{"doc_id": "d1"}]
 
 
+class TestListWithTypes:
+    def test_missing_collection_is_empty(self) -> None:
+        db = MagicMock()
+        db.has_collection.return_value = False
+        assert repo.list_individuals_with_types(db, "ont1") == []
+
+    def test_returns_rows_and_threads_pagination(self) -> None:
+        db = MagicMock()
+        db.has_collection.return_value = True
+        rows = [{"_key": "i1", "label": "Acme", "type_label": "Organization", "type_key": "Org"}]
+        with patch.object(repo, "run_aql", return_value=iter(rows)) as raq:
+            out = repo.list_individuals_with_types(db, "ont1", limit=25, offset=5)
+        assert out == rows
+        assert raq.call_args.kwargs["bind_vars"]["count"] == 25
+        assert raq.call_args.kwargs["bind_vars"]["offset"] == 5
+
+
 class TestQueries:
     def test_get_individual_returns_first_or_none(self) -> None:
         db = MagicMock()

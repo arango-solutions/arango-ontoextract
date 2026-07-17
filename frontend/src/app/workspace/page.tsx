@@ -20,6 +20,7 @@ import RevisionsInboxOverlay from "@/components/workspace/RevisionsInboxOverlay"
 import MergeCandidatesOverlay from "@/components/workspace/MergeCandidatesOverlay";
 import AlignmentReviewOverlay from "@/components/workspace/AlignmentReviewOverlay";
 import RequirementsOverlay from "@/components/workspace/RequirementsOverlay";
+import IndividualsOverlay from "@/components/workspace/IndividualsOverlay";
 import FeedbackLearningOverlay from "@/components/workspace/FeedbackLearningOverlay";
 import CanvasLensLegend from "@/components/workspace/CanvasLensLegend";
 import ToastHost from "@/components/workspace/ToastHost";
@@ -222,6 +223,12 @@ function WorkspacePageInner() {
   // Stream 22 CQ-PR2/6: competency-question authoring + coverage overlay.
   // Opened from the ontology context menu's "Requirements & Coverage…" action.
   const [requirementsOverlay, setRequirementsOverlay] = useState<{
+    key: string;
+    name: string;
+  } | null>(null);
+  // Stream 21 AB-PR6: A-box instance lens. Opened from the ontology context
+  // menu's "View Instances (A-box)…" action.
+  const [individualsOverlay, setIndividualsOverlay] = useState<{
     key: string;
     name: string;
   } | null>(null);
@@ -1238,6 +1245,7 @@ function WorkspacePageInner() {
     setMergeCandidates,
     setAlignmentReview,
     setRequirementsOverlay,
+    setIndividualsOverlay,
     exportOntology,
     removeImportEdge,
     retryRun,
@@ -1726,6 +1734,14 @@ function WorkspacePageInner() {
           ontologyId={requirementsOverlay.key}
           ontologyName={requirementsOverlay.name}
           onClose={() => setRequirementsOverlay(null)}
+        />
+      )}
+
+      {individualsOverlay && (
+        <IndividualsOverlay
+          ontologyId={individualsOverlay.key}
+          ontologyName={individualsOverlay.name}
+          onClose={() => setIndividualsOverlay(null)}
         />
       )}
 

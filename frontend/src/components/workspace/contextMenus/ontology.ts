@@ -113,6 +113,16 @@ export function buildOntologyContextMenu(
       },
     },
     {
+      // Stream 21: A-box instance lens (overlay §9).
+      label: "View Instances (A-box)…",
+      icon: "📎",
+      onClick: () => {
+        if (!ontKey) return;
+        const n = String(data.name ?? data.label ?? ontKey).trim();
+        actions.setIndividualsOverlay({ key: ontKey, name: n || ontKey });
+      },
+    },
+    {
       label: "View Feedback Learning",
       icon: "📊",
       onClick: () => {

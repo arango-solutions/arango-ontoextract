@@ -95,6 +95,55 @@ def add_assertion(
     )
 
 
+def list_individuals_with_types(
+    db: StandardDatabase | None,
+    ontology_id: str,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """List live individuals for an ontology, each with its rdf:type class.
+
+    Resolves the ``rdf_type`` edge to the T-box class in one AQL pass so the
+    instance-lens UI (AB-PR6) can show ``label`` + type + provenance without a
+    per-row follow-up. Returns ``[]`` if the A-box collection is absent.
+    """
+    if db is None:
+        db = get_db()
+    if not db.has_collection(INDIVIDUALS):
+        return []
+    return list(
+        run_aql(
+            db,
+            f"""
+            FOR i IN {INDIVIDUALS}
+              FILTER i.ontology_id == @oid AND i.expired == @never
+              LET t = FIRST(
+                FOR e IN {RDF_TYPE}
+                  FILTER e._from == i._id AND e.expired == @never
+                  FOR c IN ontology_classes FILTER c._id == e._to
+                    LIMIT 1 RETURN {{key: c._key, label: c.label}}
+              )
+              SORT i.label ASC
+              LIMIT @offset, @count
+              RETURN {{
+                _key: i._key,
+                label: i.label,
+                provenance: i.provenance,
+                type_key: t.key,
+                type_label: t.label
+              }}
+            """,
+            bind_vars={
+                "oid": ontology_id,
+                "never": NEVER_EXPIRES,
+                "offset": offset,
+                "count": limit,
+            },
+        )
+    )
+
+
 def get_individual(db: StandardDatabase | None, key: str) -> dict[str, Any] | None:
     if db is None:
         db = get_db()

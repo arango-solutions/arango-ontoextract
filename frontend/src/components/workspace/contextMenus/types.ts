@@ -110,6 +110,14 @@ export type RequirementsOverlayArg = {
   name: string;
 } | null;
 
+/** Argument shape for ``setIndividualsOverlay`` (``null`` closes the overlay).
+ *  Drives the Stream 21 ``IndividualsOverlay``: the A-box instance lens listing
+ *  the named individuals of the ontology. Overlay-not-route (rule 9). */
+export type IndividualsOverlayArg = {
+  key: string;
+  name: string;
+} | null;
+
 /** Argument shape for ``setOntologyDelete`` (``null`` closes the dialog).
  *  Drives the H.4 ``OntologyDeleteDialog``: fetches a deletion-impact
  *  preview before allowing the typed-name confirmation. */
@@ -263,6 +271,7 @@ export interface WorkspaceContextMenuActions {
   setMergeCandidates: (arg: MergeCandidatesArg) => void;
   setAlignmentReview: (arg: AlignmentReviewArg) => void;
   setRequirementsOverlay: (arg: RequirementsOverlayArg) => void;
+  setIndividualsOverlay: (arg: IndividualsOverlayArg) => void;
   exportOntology: (ontologyKey: string, format: "turtle" | "jsonld" | "csv") => void;
 
   // ── Imports (Stream 1 H.16) ───────────────────────────────────────────

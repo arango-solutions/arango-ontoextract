@@ -42,6 +42,7 @@ function makeActions(
     setMergeCandidates: jest.fn(),
     setAlignmentReview: jest.fn(),
     setRequirementsOverlay: jest.fn(),
+    setIndividualsOverlay: jest.fn(),
     setOntologyDelete: jest.fn(),
     exportOntology: jest.fn(),
     removeImportEdge: jest.fn(),
