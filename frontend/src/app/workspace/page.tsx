@@ -18,6 +18,7 @@ import OntologyDeleteDialog from "@/components/workspace/OntologyDeleteDialog";
 import ManageImportsOverlay from "@/components/workspace/ManageImportsOverlay";
 import RevisionsInboxOverlay from "@/components/workspace/RevisionsInboxOverlay";
 import MergeCandidatesOverlay from "@/components/workspace/MergeCandidatesOverlay";
+import AlignmentReviewOverlay from "@/components/workspace/AlignmentReviewOverlay";
 import FeedbackLearningOverlay from "@/components/workspace/FeedbackLearningOverlay";
 import CanvasLensLegend from "@/components/workspace/CanvasLensLegend";
 import ToastHost from "@/components/workspace/ToastHost";
@@ -207,6 +208,13 @@ function WorkspacePageInner() {
   // accept/reject. Same per-ontology gating as ``revisionsInbox`` --
   // ER has nothing to run on without an open ontology.
   const [mergeCandidates, setMergeCandidates] = useState<{
+    key: string;
+    name: string;
+  } | null>(null);
+  // Stream 20 AL-PR5: multi-source alignment review overlay. Opened from the
+  // canvas context menu's "Align Ontologies…" action; aligns the open ontology
+  // with other library ontologies into a reconciled master.
+  const [alignmentReview, setAlignmentReview] = useState<{
     key: string;
     name: string;
   } | null>(null);
@@ -1221,6 +1229,7 @@ function WorkspacePageInner() {
     setEdgeRepair,
     setRevisionsInbox,
     setMergeCandidates,
+    setAlignmentReview,
     exportOntology,
     removeImportEdge,
     retryRun,
@@ -1686,6 +1695,19 @@ function WorkspacePageInner() {
             // canvas itself is unchanged -- but refreshing is cheap and
             // keeps the behaviour symmetric with the revisions inbox.
             refreshGraph();
+            setExplorerLibraryNonce((n) => n + 1);
+          }}
+        />
+      )}
+
+      {alignmentReview && (
+        <AlignmentReviewOverlay
+          ontologyId={alignmentReview.key}
+          ontologyName={alignmentReview.name}
+          onClose={() => setAlignmentReview(null)}
+          onChanged={() => {
+            // Materializing a master creates a new registry ontology; refresh
+            // the asset explorer so it appears without a manual reload.
             setExplorerLibraryNonce((n) => n + 1);
           }}
         />

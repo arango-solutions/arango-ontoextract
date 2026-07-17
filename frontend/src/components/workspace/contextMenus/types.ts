@@ -93,6 +93,15 @@ export type MergeCandidatesArg = {
   name: string;
 } | null;
 
+/** Argument shape for ``setAlignmentReview`` (``null`` closes the overlay).
+ *  Drives the Stream 20 ``AlignmentReviewOverlay``: align the open ontology
+ *  with other library ontologies into a reconciled master. Overlay-not-route
+ *  (``ui-architecture.mdc`` rule 9). */
+export type AlignmentReviewArg = {
+  key: string;
+  name: string;
+} | null;
+
 /** Argument shape for ``setOntologyDelete`` (``null`` closes the dialog).
  *  Drives the H.4 ``OntologyDeleteDialog``: fetches a deletion-impact
  *  preview before allowing the typed-name confirmation. */
@@ -244,6 +253,7 @@ export interface WorkspaceContextMenuActions {
    *  reject each duplicate candidate pair. ``null`` closes the
    *  overlay. Same overlay-not-route rule. */
   setMergeCandidates: (arg: MergeCandidatesArg) => void;
+  setAlignmentReview: (arg: AlignmentReviewArg) => void;
   exportOntology: (ontologyKey: string, format: "turtle" | "jsonld" | "csv") => void;
 
   // ── Imports (Stream 1 H.16) ───────────────────────────────────────────

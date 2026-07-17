@@ -38,6 +38,7 @@ function makeActions(): WorkspaceContextMenuActions {
     setEdgeRepair: jest.fn(),
     setRevisionsInbox: jest.fn(),
     setMergeCandidates: jest.fn(),
+    setAlignmentReview: jest.fn(),
     setOntologyDelete: jest.fn(),
     exportOntology: jest.fn(),
     removeImportEdge: jest.fn(),

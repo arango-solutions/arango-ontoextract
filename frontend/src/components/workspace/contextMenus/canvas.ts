@@ -169,6 +169,17 @@ export function buildCanvasContextMenu(
         actions.setMergeCandidates({ key: ontKey, name: ontKey });
       },
     });
+    // Stream 20 AL-PR5: align the open ontology with other library ontologies
+    // into a reconciled master (overlay-not-route, §9; per-ontology gated).
+    items.push({
+      label: "Align Ontologies…",
+      icon: "🔗",
+      onClick: () => {
+        const ontKey = actions.selectedOntologyId;
+        if (!ontKey) return;
+        actions.setAlignmentReview({ key: ontKey, name: ontKey });
+      },
+    });
     items.push({
       label: "Compare Schema Evolution…",
       icon: "📊",
