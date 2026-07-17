@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.api.ontology import _shared
 from app.db import requirements_repo
+from app.services import cq_coverage
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -63,6 +64,15 @@ async def put_requirements(ontology_id: str, body: RequirementsSpec) -> dict[str
     """Create or replace the requirements spec for an ontology."""
     _require_ontology(ontology_id)
     return requirements_repo.upsert_requirements(_shared.get_db(), ontology_id, body.model_dump())
+
+
+@router.post("/{ontology_id}/coverage")
+async def run_coverage(ontology_id: str) -> dict[str, Any]:
+    """Evaluate the ontology's competency questions and return a coverage report."""
+    try:
+        return cq_coverage.run_coverage(_shared.get_db(), ontology_id=ontology_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.delete("/{ontology_id}/requirements")

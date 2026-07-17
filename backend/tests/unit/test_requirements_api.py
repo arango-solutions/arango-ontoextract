@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from app.api.ontology import _shared
 from app.db import requirements_repo
 from app.main import app
+from app.services import cq_coverage
 
 client = TestClient(app)
 
@@ -97,4 +98,27 @@ class TestGetDeleteRequirements:
             patch.object(requirements_repo, "delete_requirements", return_value=False),
         ):
             resp = client.delete("/api/v1/ontology/o1/requirements")
+        assert resp.status_code == 404
+
+
+class TestCoverageEndpoint:
+    def test_coverage_returns_report(self) -> None:
+        report = {"ontology_id": "o1", "total": 3, "answerable": 2, "coverage_pct": 66.7}
+        with (
+            patch.object(_shared, "get_db", return_value=MagicMock()),
+            patch.object(cq_coverage, "run_coverage", return_value=report) as mk,
+        ):
+            resp = client.post("/api/v1/ontology/o1/coverage")
+        assert resp.status_code == 200
+        assert resp.json()["coverage_pct"] == 66.7
+        assert mk.call_args.kwargs["ontology_id"] == "o1"
+
+    def test_coverage_404_when_no_spec(self) -> None:
+        with (
+            patch.object(_shared, "get_db", return_value=MagicMock()),
+            patch.object(
+                cq_coverage, "run_coverage", side_effect=ValueError("no requirements spec")
+            ),
+        ):
+            resp = client.post("/api/v1/ontology/o1/coverage")
         assert resp.status_code == 404
