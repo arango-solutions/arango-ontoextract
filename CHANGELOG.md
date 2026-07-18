@@ -8,6 +8,39 @@ The backend version is the single source of truth in `backend/app/__init__.py`.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-17
+
+Adds two more of the capability-program tracks — assertion-graph (A-box)
+extraction and use-case / competency-question requirements — plus a workspace UI
+for all three (alignment, A-box, competency questions). All flag-gated / opt-in;
+existing extraction & curation flows are unchanged.
+
+### Added
+
+- **Assertion-graph (A-box) extraction (Stream 21, PRD §6.18):**
+  - Data model: `ontology_individuals` + `rdf_type` + `individual_assertion`
+    (temporal), with `individuals_repo` (migration 029).
+  - Schema-grounded extraction service (`abox_extraction.py`, EDC pattern): a
+    schema retriever fetches the relevant T-box slice (SF.1 vector search, with a
+    full-class-list fallback); the LLM extracts individuals + assertions grounded
+    in that slice; results are canonicalized by (class, label) across chunks and
+    materialized with span provenance. `schema_guided` mode drops ungrounded
+    individuals (hallucination control). Flag `extract_abox`.
+  - **Instance lens** (`IndividualsOverlay`) + read API
+    (`GET /ontology/{id}/individuals` with rdf:type join, `GET /individuals/{key}`).
+- **Use-case / competency-question requirements (Stream 22, PRD §6.19):**
+  - ORSD-style requirements spec per ontology (`requirements_repo`, migration 030)
+    with GET/PUT/DELETE `/ontology/{id}/requirements`.
+  - **Coverage validation** (`cq_coverage.py`): runs each CQ's query
+    (read-only-guarded) and reports answerable / unanswerable / unformalized /
+    error + coverage % + per-use-case breakdown + gaps
+    (`POST /ontology/{id}/coverage`).
+  - **Authoring + coverage UI** (`RequirementsOverlay`): edit use cases + CQs,
+    save, run coverage.
+- **Alignment review UI (Stream 20, AL-PR5):** `AlignmentReviewOverlay` — pick
+  source ontologies → run → selective LLM adjudication → accept/reject → materialize
+  a reconciled master, all on the workspace canvas.
+
 ## [1.3.0] - 2026-07-15
 
 First increment of the multi-source ontology alignment program (PRD §6.17 /
@@ -303,6 +336,7 @@ belief-revision node behind a feature flag.
 Initial release: end-to-end extraction pipeline, ontology editor, pipeline
 monitor, quality metrics, multi-document support, and the temporal substrate.
 
+[1.4.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.4.0
 [1.3.0]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.3.0
 [1.2.2]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.2.2
 [1.2.1]: https://github.com/ArthurKeen/arango-ontoextract/releases/tag/v1.2.1
