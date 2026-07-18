@@ -37,7 +37,9 @@ from app.api.ontology import router as ontology_router
 # it. Pinned so an accidental drop/duplication during a future refactor fails
 # loudly.
 ONTOLOGY_PREFIX = "/api/v1/ontology"
-EXPECTED_ROUTE_COUNT = 61
+# 61 + 4 requirements/coverage (Stream 22 CQ-PR1/4/5) + 2 individuals
+# (Stream 21 AB-PR6) = 67.
+EXPECTED_ROUTE_COUNT = 67
 
 
 def _ontology_openapi_paths() -> dict[str, list[str]]:

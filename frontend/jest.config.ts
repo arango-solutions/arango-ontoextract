@@ -13,6 +13,10 @@ const config: Config = {
     "<rootDir>/node_modules/",
     "<rootDir>/.next/",
     "<rootDir>/e2e/",
+    // The dark-factory PRD drift queue mirrors changed files as empty
+    // timestamped markers (e.g. `.prd-drift-queue/<ts>_Foo.test.tsx`); jest
+    // would otherwise match those `*.test.*` names as empty (failing) suites.
+    "<rootDir>/.prd-drift-queue/",
   ],
   coverageDirectory: "coverage",
   coverageProvider: "v8",
