@@ -31,6 +31,10 @@ existing extraction & curation flows are unchanged.
 - **Use-case / competency-question requirements (Stream 22, PRD §6.19):**
   - ORSD-style requirements spec per ontology (`requirements_repo`, migration 030)
     with GET/PUT/DELETE `/ontology/{id}/requirements`.
+  - **LLM-assisted CQ→AQL formalization** (`cq_formalize.py`): generates a
+    read-only AQL query (rejecting write queries) for each competency question,
+    grounded in the ontology's classes, stored on the CQ for human review
+    (`POST /ontology/{id}/requirements/formalize`).
   - **Coverage validation** (`cq_coverage.py`): runs each CQ's query
     (read-only-guarded) and reports answerable / unanswerable / unformalized /
     error + coverage % + per-use-case breakdown + gaps

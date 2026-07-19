@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.api.ontology import _shared
 from app.db import requirements_repo
-from app.services import cq_coverage
+from app.services import cq_coverage, cq_formalize
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -64,6 +64,17 @@ async def put_requirements(ontology_id: str, body: RequirementsSpec) -> dict[str
     """Create or replace the requirements spec for an ontology."""
     _require_ontology(ontology_id)
     return requirements_repo.upsert_requirements(_shared.get_db(), ontology_id, body.model_dump())
+
+
+@router.post("/{ontology_id}/requirements/formalize")
+async def formalize_requirements(ontology_id: str, overwrite: bool = False) -> dict[str, Any]:
+    """LLM-generate a read-only AQL query for each competency question (CQ-PR3)."""
+    try:
+        return await cq_formalize.formalize_spec(
+            _shared.get_db(), ontology_id=ontology_id, overwrite=overwrite
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/{ontology_id}/coverage")

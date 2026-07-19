@@ -6,14 +6,14 @@ exercised without a database (mirrors the other ontology sub-router tests).
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 from app.api.ontology import _shared
 from app.db import requirements_repo
 from app.main import app
-from app.services import cq_coverage
+from app.services import cq_coverage, cq_formalize
 
 client = TestClient(app)
 
@@ -98,6 +98,34 @@ class TestGetDeleteRequirements:
             patch.object(requirements_repo, "delete_requirements", return_value=False),
         ):
             resp = client.delete("/api/v1/ontology/o1/requirements")
+        assert resp.status_code == 404
+
+
+class TestFormalizeEndpoint:
+    def test_formalize_runs(self) -> None:
+        with (
+            patch.object(_shared, "get_db", return_value=MagicMock()),
+            patch.object(
+                cq_formalize,
+                "formalize_spec",
+                new=AsyncMock(return_value={"ontology_id": "o1", "formalized": 2, "total": 3}),
+            ) as mk,
+        ):
+            resp = client.post("/api/v1/ontology/o1/requirements/formalize")
+        assert resp.status_code == 200
+        assert resp.json()["formalized"] == 2
+        mk.assert_awaited_once()
+
+    def test_formalize_404_when_no_spec(self) -> None:
+        with (
+            patch.object(_shared, "get_db", return_value=MagicMock()),
+            patch.object(
+                cq_formalize,
+                "formalize_spec",
+                new=AsyncMock(side_effect=ValueError("no requirements spec")),
+            ),
+        ):
+            resp = client.post("/api/v1/ontology/o1/requirements/formalize")
         assert resp.status_code == 404
 
 
