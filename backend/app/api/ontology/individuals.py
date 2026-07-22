@@ -13,8 +13,21 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.api.ontology import _shared
 from app.db import individuals_repo
+from app.services import abox_canonicalize
 
 router = APIRouter()
+
+
+@router.post("/{ontology_id}/individuals/canonicalize")
+async def canonicalize_individuals(
+    ontology_id: str,
+    min_score: float = Query(0.85, ge=0.0, le=1.0),
+    auto_merge: bool = Query(False),
+) -> dict[str, Any]:
+    """Detect (and optionally auto-merge) duplicate individuals (AB-PR3)."""
+    return abox_canonicalize.canonicalize_ontology(
+        _shared.get_db(), ontology_id=ontology_id, min_score=min_score, auto_merge=auto_merge
+    )
 
 
 @router.get("/{ontology_id}/individuals")

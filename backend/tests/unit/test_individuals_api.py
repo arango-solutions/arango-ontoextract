@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.api.ontology import _shared
 from app.db import individuals_repo
 from app.main import app
+from app.services import abox_canonicalize
 
 client = TestClient(app)
 
@@ -30,6 +31,22 @@ class TestListIndividuals:
         assert body["data"][0]["type_label"] == "Organization"
         assert mk.call_args.kwargs["limit"] == 50
         assert mk.call_args.kwargs["offset"] == 10
+
+
+class TestCanonicalize:
+    def test_canonicalize_threads_params(self) -> None:
+        report = {"ontology_id": "o1", "candidates": [{"keep_key": "a"}], "merged": 0}
+        with (
+            patch.object(_shared, "get_db", return_value=MagicMock()),
+            patch.object(abox_canonicalize, "canonicalize_ontology", return_value=report) as mk,
+        ):
+            resp = client.post(
+                "/api/v1/ontology/o1/individuals/canonicalize?min_score=0.9&auto_merge=true"
+            )
+        assert resp.status_code == 200
+        assert resp.json()["merged"] == 0
+        assert mk.call_args.kwargs["min_score"] == 0.9
+        assert mk.call_args.kwargs["auto_merge"] is True
 
 
 class TestGetIndividual:
