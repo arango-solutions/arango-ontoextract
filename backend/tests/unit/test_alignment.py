@@ -211,6 +211,54 @@ class TestMaterializeMaster:
             data = call.kwargs["data"]
             assert data["provenance"] and data["source_ontology_ids"]
 
+    def test_repair_drops_incoherent_correspondence_before_clustering(self) -> None:
+        # oa.X and oa.Z are disjoint; both accepted-aligned to ob.Y. Repair must
+        # drop the low-confidence edge (oa.Z≡ob.Y) so the master stays coherent.
+        db = MagicMock()
+        session = {"_key": "S1", "source_ontology_ids": ["oa", "ob"]}
+        accepted = [
+            {
+                "_key": "c1",
+                "source_a": {"ontology_id": "oa", "entity_key": "X", "label": "Cat"},
+                "source_b": {"ontology_id": "ob", "entity_key": "Y", "label": "Cat"},
+                "confidence": 0.9,
+            },
+            {
+                "_key": "c2",
+                "source_a": {"ontology_id": "oa", "entity_key": "Z", "label": "Dog"},
+                "source_b": {"ontology_id": "ob", "entity_key": "Y", "label": "Cat"},
+                "confidence": 0.5,
+            },
+        ]
+        with (
+            patch.object(al.alignment_repo, "get_session", return_value=session),
+            patch.object(al.alignment_repo, "list_correspondences", return_value=accepted),
+            patch(
+                "app.services.alignment_repair.build_disjoint_pairs",
+                return_value={frozenset({("oa", "X"), ("oa", "Z")})},
+            ),
+            patch.object(
+                al.registry_repo, "create_registry_entry", return_value={"_key": "M1"}
+            ) as mk_reg,
+            patch.object(
+                al.ontology_repo,
+                "create_class",
+                return_value={"_id": "ontology_classes/mc", "_key": "mc"},
+            ) as mk_cls,
+            patch.object(al.ontology_repo, "create_edge"),
+            patch.object(al.alignment_repo, "set_session_master"),
+        ):
+            out = al.materialize_master(db, session_id="S1")
+
+        # c2 removed -> only the X≡Y cluster remains (2 members); Z drops out.
+        assert out["class_count"] == 1
+        assert out["repair"]["removed"] == 1
+        assert out["repair"]["removals"][0]["correspondence_key"] == "c2"
+        assert mk_cls.call_count == 1
+        # durable audit persisted on the master registry entry
+        reg_entry = mk_reg.call_args.args[0]
+        assert len(reg_entry["repair_removals"]) == 1
+
     def test_no_accepted_yields_empty_master(self) -> None:
         db = MagicMock()
         with (

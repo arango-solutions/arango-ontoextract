@@ -269,11 +269,23 @@ lose the "CQs scope everything" benefit until S22 lands, so prefer the parallel 
   **Tests:** end-to-end P1 (seed 2 ontologies → candidates → confirm → master).
 
 ### Sprint 20B — P2 (repair + ensemble + hallucination)
-**AL-PR7 · Incoherence detection + minimally-destructive modular repair**
-- **Files:** extend `services/ontology_rule_engine.py` with AML core-fragment extraction +
-  repair that prefers removing low-confidence correspondences; report every removal.
-- **Deps:** AL-PR4. **Acceptance (FR-17.5):** master is coherent; removals reported, never
-  silent. **Tests:** planted incoherence repaired minimally.
+**AL-PR7 · Incoherence detection + minimally-destructive modular repair** — DONE
+- **Files:** `services/alignment_repair.py` — `build_disjoint_pairs` (collects source
+  `disjoint_with` axioms), `repair_correspondences` (union-find clusters → find a disjoint
+  pair sharing a cluster → BFS the connecting correspondence path → drop the single
+  lowest-confidence edge, ties by key → re-cluster and iterate until coherent), and
+  `check_alignment_coherence` (dry-run report). Chose a dedicated module over
+  `ontology_rule_engine` since repair operates on *correspondences* (an alignment concern),
+  reusing the rule engine's disjointness model. Wired into `alignment.materialize_master`
+  (flag `alignment_repair_enabled`, default on): repair runs BEFORE clustering, the master
+  registry entry carries a durable `repair_removals` audit, and the result includes
+  `repair: {removed, removals}`.
+- **Deps:** AL-PR4. **Acceptance (FR-17.5):** the materialized master never merges a
+  declared-disjoint pair into one equivalence class; every removal is reported (result +
+  master provenance + log), never silent. **Tests:** planted incoherence repaired minimally
+  (lowest-confidence edge only), multi-conflict iteration, tie-break, coherent-no-op,
+  disjoint-pair query, and the materialize integration (drops the incoherent edge, persists
+  the audit). ✅
 
 **AL-PR8 · Classical-anchor ensemble + hallucination control**
 - **Files:** optional LogMap/AML signal adapter (`services/matching.py` ensemble hook);

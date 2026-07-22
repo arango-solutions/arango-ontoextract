@@ -408,6 +408,19 @@ def materialize_master(
 
     accepted = alignment_repo.list_correspondences(db, session_id, status="accepted", limit=100_000)
 
+    # AL-PR7 — minimally-destructive coherence repair BEFORE clustering, so the
+    # master never merges a declared-disjoint pair into one equivalence class.
+    # A no-op when no disjointness is declared (the common case).
+    repair_removals: list[dict[str, Any]] = []
+    source_oids = session.get("source_ontology_ids") or []
+    if settings.alignment_repair_enabled:
+        from app.services import alignment_repair
+
+        disjoint_pairs = alignment_repair.build_disjoint_pairs(db, source_oids)
+        accepted, repair_removals = alignment_repair.repair_correspondences(
+            accepted, disjoint_pairs
+        )
+
     uf = _UnionFind()
     node_info: dict[tuple[str, str], dict[str, Any]] = {}
     for c in accepted:
@@ -418,7 +431,7 @@ def materialize_master(
         node_info[nb] = b
         uf.union(na, nb)
 
-    n_sources = len(session.get("source_ontology_ids") or [])
+    n_sources = len(source_oids)
     master_name = name or f"Aligned master ({n_sources} sources)"
     master = registry_repo.create_registry_entry(
         {
@@ -426,6 +439,9 @@ def materialize_master(
             "tier": "master",
             "description": f"Reconciled master from alignment session {session_id}",
             "alignment_session_id": session_id,
+            # AL-PR7: durable audit of correspondences dropped to keep the master
+            # coherent (report every removal, never silent).
+            "repair_removals": repair_removals,
         },
         db=db,
     )
@@ -470,11 +486,13 @@ def materialize_master(
 
     alignment_repo.set_session_master(db, session_id, master_oid)
     log.info(
-        "[alignment] materialized master %s from session %s: %d classes, %d equivalence edges",
+        "[alignment] materialized master %s from session %s: %d classes, %d equivalence "
+        "edges, %d correspondences removed for coherence",
         master_oid,
         session_id,
         class_count,
         edge_count,
+        len(repair_removals),
     )
     return {
         "session_id": session_id,
@@ -482,4 +500,5 @@ def materialize_master(
         "class_count": class_count,
         "equivalence_edges": edge_count,
         "cluster_count": class_count,
+        "repair": {"removed": len(repair_removals), "removals": repair_removals},
     }

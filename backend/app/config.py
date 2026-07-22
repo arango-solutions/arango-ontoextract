@@ -103,6 +103,10 @@ class Settings(BaseSettings):
     #: is "borderline" and gets a selective LLM adjudication (MILA/KROMA pattern —
     #: reserve LLM calls for the uncertain middle).
     alignment_auto_accept_band: float = 0.92
+    #: Stream 20 AL-PR7 — before materializing a master, run minimally-destructive
+    #: modular repair so the reconciled master is coherent (no disjoint pair merged
+    #: into one equivalence class). Removals are always reported (PRD §6.17 FR-17.5).
+    alignment_repair_enabled: bool = True
     #: Stream 21 — enable assertion-graph (A-box) extraction (PRD §6.18). Gates
     #: any pipeline-driven A-box run; the service is also invocable explicitly.
     extract_abox: bool = False
