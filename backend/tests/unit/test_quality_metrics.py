@@ -777,3 +777,39 @@ class TestStructuralIntegrity:
         assert result["structural_integrity"] is None
         assert result["island_count"] == 0
         assert result["island_classes"] == []
+
+
+class TestComputeAboxMetrics:
+    """AB-PR6: A-box grounding-rate metrics."""
+
+    def test_counts_and_grounding_rates(self):
+        from app.services.quality_metrics import compute_abox_metrics
+
+        db = _mock_db(
+            {
+                0: [  # individuals
+                    {"grounded": True, "typed": True},
+                    {"grounded": False, "typed": True},
+                    {"grounded": True, "typed": False},
+                ],
+                1: [{"grounded": True}, {"grounded": False}],  # assertions
+            }
+        )
+        m = compute_abox_metrics(db, "o1")
+        assert m["total_individuals"] == 3
+        assert m["grounded_individuals"] == 2
+        assert m["typed_individuals"] == 2
+        assert m["individual_grounding_rate"] == round(2 / 3, 4)
+        assert m["typed_rate"] == round(2 / 3, 4)
+        assert m["total_assertions"] == 2
+        assert m["grounded_assertions"] == 1
+        assert m["assertion_grounding_rate"] == 0.5
+
+    def test_empty_when_no_individuals_collection(self):
+        from app.services.quality_metrics import compute_abox_metrics
+
+        db = _mock_db_selective(set())  # no collections exist
+        m = compute_abox_metrics(db, "o1")
+        assert m["total_individuals"] == 0
+        assert m["individual_grounding_rate"] is None
+        assert m["typed_rate"] is None

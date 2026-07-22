@@ -13,9 +13,15 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.api.ontology import _shared
 from app.db import individuals_repo
-from app.services import abox_canonicalize, abox_validation
+from app.services import abox_canonicalize, abox_validation, quality_metrics
 
 router = APIRouter()
+
+
+@router.get("/{ontology_id}/individuals/metrics")
+async def individuals_metrics(ontology_id: str) -> dict[str, Any]:
+    """A-box quality metrics: counts + grounding/typed rates (AB-PR6)."""
+    return quality_metrics.compute_abox_metrics(_shared.get_db(), ontology_id)
 
 
 @router.post("/{ontology_id}/individuals/canonicalize")

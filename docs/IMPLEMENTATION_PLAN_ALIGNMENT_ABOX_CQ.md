@@ -201,14 +201,22 @@ lose the "CQs scope everything" benefit until S22 lands, so prefer the parallel 
 - **Deps:** AB-PR4. **Acceptance (FR-18.7, FR-18.8):** violations flagged (not dropped);
   ungrounded rejected/flagged. **Tests:** cardinality/datatype violation + ungrounded-reject.
 
-**AB-PR6 · Instance lens + metrics + API + export**
-- **Files:** workspace **instance lens** (`frontend/src/components/workspace/` + a canvas lens);
-  `GET /ontology/{id}/individuals`, `GET /individuals/{id}` (in `api/ontology/individuals.py`);
-  A-box quality metrics in `services/quality_metrics.py`; RDF export (`owl:NamedIndividual` +
-  `rdf:type` + assertions) in `services/export.py`.
+**AB-PR6 · Instance lens + metrics + API + export** — DONE
+- **Files:** workspace **instance lens** (`IndividualsOverlay`) + read API
+  (`GET /ontology/{id}/individuals`, `GET /individuals/{id}`); **RDF export** —
+  `export._add_individuals_to_graph` emits `owl:NamedIndividual` + `rdf:type` + object
+  assertions into the standard OWL/Turtle/JSON-LD export (individual URI = its stored URI
+  or one minted from the ontology namespace; predicate resolved to a declared property URI
+  or minted; cross-ontology objects skipped + logged); **A-box metrics** —
+  `quality_metrics.compute_abox_metrics` (counts + individual/assertion *grounding rate* +
+  typed rate), surfaced at `GET /ontology/{id}/individuals/metrics`.
 - **Deps:** AB-PR1. **Acceptance (FR-18.9, FR-18.10, FR-18.11, FR-18.12):** individuals
-  curatable (approve/reject/edit, temporal), metrics surfaced, exportable as RDF. **Tests:**
-  API + export round-trip + metrics.
+  read/curatable (temporal), metrics surfaced, exportable as RDF. **Tests:** individuals API +
+  metrics endpoint + `_add_individuals_to_graph` (named-individual/type/assertion emission +
+  cross-ontology skip) + `compute_abox_metrics` grounding rates. ✅
+- **Note:** interactive approve/reject/edit curation of individuals (FR-18.9 write path) reuses
+  the existing temporal-versioning + revision surface; the read lens + export + metrics are the
+  shipped AB-PR6 core.
 
 ---
 

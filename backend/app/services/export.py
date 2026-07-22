@@ -23,6 +23,7 @@ import csv
 import io
 import json
 import logging
+import re
 from typing import Any, cast
 
 from rdflib import OWL, RDF, RDFS, XSD, BNode, Graph, Literal, Namespace, URIRef
@@ -62,10 +63,13 @@ _XSD_MAP: dict[str, URIRef] = {
 }
 
 
-def _build_rdf_graph(ontology_id: str) -> Graph:
+def _build_rdf_graph(ontology_id: str, *, include_individuals: bool = True) -> Graph:
     """Build an rdflib Graph from current DB state for the given ontology.
 
     Only exports entities whose ``expired == NEVER_EXPIRES`` (temporal-aware).
+    When ``include_individuals`` (default), the A-box is emitted too:
+    ``owl:NamedIndividual`` declarations with their ``rdf:type`` class and object
+    assertions (AB-PR6). Ontologies with no A-box add zero triples.
     """
     db = get_db()
 
@@ -149,6 +153,22 @@ def _build_rdf_graph(ontology_id: str) -> Graph:
         property_id_to_uri=property_id_to_uri,
     )
 
+    individuals_emitted = 0
+    if include_individuals:
+        prop_label_to_uri = {
+            str(p["label"]).lower(): URIRef(p["uri"])
+            for p in properties
+            if p.get("uri") and p.get("label")
+        }
+        individuals_emitted = _add_individuals_to_graph(
+            db,
+            g,
+            ontology_id=ontology_id,
+            ns=ont_ns,
+            class_id_to_uri=class_id_to_uri,
+            prop_label_to_uri=prop_label_to_uri,
+        )
+
     log.info(
         "built RDF graph for export",
         extra={
@@ -156,10 +176,92 @@ def _build_rdf_graph(ontology_id: str) -> Graph:
             "classes": len(classes),
             "properties": len(properties),
             "restrictions_emitted": restrictions_emitted,
+            "individuals_emitted": individuals_emitted,
             "triples": len(g),
         },
     )
     return g
+
+
+def _slug(text: str) -> str:
+    """Namespace-safe local name for a minted individual/predicate IRI."""
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", (text or "").strip()).strip("_")
+    return cleaned or "x"
+
+
+def _add_individuals_to_graph(
+    db: Any,
+    g: Graph,
+    *,
+    ontology_id: str,
+    ns: Namespace,
+    class_id_to_uri: dict[str, URIRef],
+    prop_label_to_uri: dict[str, URIRef],
+) -> int:
+    """Emit the A-box: ``owl:NamedIndividual`` + ``rdf:type`` + object assertions.
+
+    Returns the count of individuals emitted. Assertions are emitted only when
+    both endpoints are individuals of this ontology; a cross-ontology (AB-PR4
+    ``cross_domain``) object lives in another file and is skipped here (logged),
+    since a single-ontology document should not declare foreign individuals.
+    """
+    if not db.has_collection("ontology_individuals"):
+        return 0
+
+    rows = list(
+        db.aql.execute(
+            """\
+FOR i IN ontology_individuals
+  FILTER i.ontology_id == @oid AND i.expired == @never
+  LET type_id = FIRST(
+    FOR e IN rdf_type
+      FILTER e._from == i._id AND e.expired == @never
+      RETURN e._to
+  )
+  RETURN { id: i._id, key: i._key, label: i.label, uri: i.uri, type_id: type_id }""",
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        )
+    )
+
+    id_to_uri: dict[str, URIRef] = {}
+    for r in rows:
+        ind_uri = URIRef(r["uri"]) if r.get("uri") else ns[f"individual_{_slug(str(r['key']))}"]
+        id_to_uri[str(r["id"])] = ind_uri
+        g.add((ind_uri, RDF.type, OWL.NamedIndividual))
+        if r.get("label"):
+            g.add((ind_uri, RDFS.label, Literal(r["label"])))
+        cls_uri = class_id_to_uri.get(str(r.get("type_id")))
+        if cls_uri is not None:
+            g.add((ind_uri, RDF.type, cls_uri))
+
+    if not db.has_collection("individual_assertion"):
+        return len(id_to_uri)
+
+    skipped_cross = 0
+    for a in db.aql.execute(
+        """\
+FOR e IN individual_assertion
+  FILTER e.ontology_id == @oid AND e.expired == @never
+  RETURN { from: e._from, to: e._to, predicate: e.predicate }""",
+        bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+    ):
+        subj = id_to_uri.get(str(a.get("from")))
+        obj = id_to_uri.get(str(a.get("to")))
+        predicate = str(a.get("predicate") or "").strip()
+        if subj is None or not predicate:
+            continue
+        if obj is None:
+            skipped_cross += 1  # cross-ontology object, declared in another file
+            continue
+        pred_uri = prop_label_to_uri.get(predicate.lower()) or ns[_slug(predicate)]
+        g.add((subj, pred_uri, obj))
+
+    if skipped_cross:
+        log.info(
+            "A-box export skipped cross-ontology assertions",
+            extra={"ontology_id": ontology_id, "skipped": skipped_cross},
+        )
+    return len(id_to_uri)
 
 
 def _add_imports_to_graph(

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from app.api.ontology import _shared
 from app.db import individuals_repo
 from app.main import app
-from app.services import abox_canonicalize, abox_validation
+from app.services import abox_canonicalize, abox_validation, quality_metrics
 
 client = TestClient(app)
 
@@ -47,6 +47,24 @@ class TestCanonicalize:
         assert resp.json()["merged"] == 0
         assert mk.call_args.kwargs["min_score"] == 0.9
         assert mk.call_args.kwargs["auto_merge"] is True
+
+
+class TestMetrics:
+    def test_metrics_returns_grounding_rates(self) -> None:
+        metrics = {
+            "total_individuals": 3,
+            "grounded_individuals": 2,
+            "individual_grounding_rate": 0.6667,
+            "typed_rate": 0.6667,
+        }
+        with (
+            patch.object(_shared, "get_db", return_value=MagicMock()),
+            patch.object(quality_metrics, "compute_abox_metrics", return_value=metrics) as mk,
+        ):
+            resp = client.get("/api/v1/ontology/o1/individuals/metrics")
+        assert resp.status_code == 200
+        assert resp.json()["individual_grounding_rate"] == 0.6667
+        assert mk.call_args.args[1] == "o1"
 
 
 class TestValidate:

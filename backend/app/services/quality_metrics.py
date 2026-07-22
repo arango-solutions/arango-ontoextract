@@ -344,6 +344,91 @@ def compute_ontology_quality(
     }
 
 
+def compute_abox_metrics(
+    db: StandardDatabase,
+    ontology_id: str,
+    *,
+    existing: set[str] | None = None,
+) -> dict[str, Any]:
+    """A-box (instance) quality metrics for an ontology (Stream 21 / AB-PR6).
+
+    Reports individual/assertion counts and the *grounding rate* — the share of
+    individuals and assertions carrying at least one span-grounded provenance
+    entry (``char_span`` set by AB-PR4). Ungrounded facts are hallucination
+    candidates (AB-PR5), so the grounding rate is the headline A-box trust metric.
+    ``typed_rate`` is the share of individuals with a live ``rdf:type`` edge.
+    """
+    empty = {
+        "total_individuals": 0,
+        "total_assertions": 0,
+        "typed_individuals": 0,
+        "grounded_individuals": 0,
+        "grounded_assertions": 0,
+        "individual_grounding_rate": None,
+        "assertion_grounding_rate": None,
+        "typed_rate": None,
+    }
+    if not _has(db, "ontology_individuals", existing):
+        return empty
+
+    ind_rows = list(
+        run_aql(
+            db,
+            """
+            FOR i IN ontology_individuals
+              FILTER i.ontology_id == @oid AND i.expired == @never
+              LET grounded = LENGTH(
+                FOR p IN (i.provenance == null ? [] : i.provenance)
+                  FILTER p.char_span != null RETURN 1
+              ) > 0
+              LET typed = LENGTH(
+                FOR e IN rdf_type
+                  FILTER e._from == i._id AND e.expired == @never RETURN 1
+              ) > 0
+              RETURN {grounded: grounded, typed: typed}
+            """,
+            bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+        )
+    )
+    total_ind = len(ind_rows)
+    grounded_ind = sum(1 for r in ind_rows if r.get("grounded"))
+    typed_ind = sum(1 for r in ind_rows if r.get("typed"))
+
+    total_assert = 0
+    grounded_assert = 0
+    if _has(db, "individual_assertion", existing):
+        a_rows = list(
+            run_aql(
+                db,
+                """
+                FOR e IN individual_assertion
+                  FILTER e.ontology_id == @oid AND e.expired == @never
+                  LET grounded = LENGTH(
+                    FOR p IN (e.provenance == null ? [] : e.provenance)
+                      FILTER p.char_span != null RETURN 1
+                  ) > 0
+                  RETURN {grounded: grounded}
+                """,
+                bind_vars={"oid": ontology_id, "never": NEVER_EXPIRES},
+            )
+        )
+        total_assert = len(a_rows)
+        grounded_assert = sum(1 for r in a_rows if r.get("grounded"))
+
+    return {
+        "total_individuals": total_ind,
+        "total_assertions": total_assert,
+        "typed_individuals": typed_ind,
+        "grounded_individuals": grounded_ind,
+        "grounded_assertions": grounded_assert,
+        "individual_grounding_rate": round(grounded_ind / total_ind, 4) if total_ind else None,
+        "assertion_grounding_rate": (
+            round(grounded_assert / total_assert, 4) if total_assert else None
+        ),
+        "typed_rate": round(typed_ind / total_ind, 4) if total_ind else None,
+    }
+
+
 def compute_assertion_evidence_metrics(
     db: StandardDatabase,
     ontology_id: str,

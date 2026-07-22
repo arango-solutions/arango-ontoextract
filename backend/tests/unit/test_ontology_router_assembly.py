@@ -41,8 +41,9 @@ ONTOLOGY_PREFIX = "/api/v1/ontology"
 # (Stream 21 AB-PR6) + 1 requirements/formalize (Stream 22 CQ-PR3)
 # + 1 individuals/canonicalize (Stream 21 AB-PR3)
 # + 1 individuals/validate (Stream 21 AB-PR5)
-# + 1 coverage/gaps (Stream 22 CQ-PR6) = 71.
-EXPECTED_ROUTE_COUNT = 71
+# + 1 coverage/gaps (Stream 22 CQ-PR6)
+# + 1 individuals/metrics (Stream 21 AB-PR6) = 72.
+EXPECTED_ROUTE_COUNT = 72
 
 
 def _ontology_openapi_paths() -> dict[str, list[str]]:

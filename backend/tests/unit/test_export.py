@@ -960,3 +960,102 @@ class TestExportShacl:
         g = Graph()
         g.parse(data=ttl, format="turtle")
         assert (None, None, SH.NodeShape) not in g
+
+
+class TestAboxExport:
+    """AB-PR6: A-box individuals + assertions emitted into the RDF graph."""
+
+    def _abox_db(self):
+        db = MagicMock()
+        db.has_collection.return_value = True
+        individuals = [
+            {
+                "id": "ontology_individuals/i1",
+                "key": "i1",
+                "label": "Acme",
+                "uri": None,  # unmapped -> minted from ns + key
+                "type_id": "ontology_classes/Org",
+            },
+            {
+                "id": "ontology_individuals/i2",
+                "key": "i2",
+                "label": "Bob",
+                "uri": "http://example.org/test#bob",  # explicit uri preserved
+                "type_id": "ontology_classes/Per",
+            },
+        ]
+        assertions = [
+            # i1 --employs--> i2  (both local -> emitted)
+            {
+                "from": "ontology_individuals/i1",
+                "to": "ontology_individuals/i2",
+                "predicate": "employs",
+            },
+            # i1 --refersTo--> foreign  (object not local -> skipped)
+            {
+                "from": "ontology_individuals/i1",
+                "to": "ontology_individuals/x9",
+                "predicate": "refersTo",
+            },
+        ]
+
+        def execute(query, bind_vars=None):
+            if "ontology_individuals" in query and "rdf_type" in query:
+                return iter(individuals)
+            if "individual_assertion" in query:
+                return iter(assertions)
+            return iter([])
+
+        db.aql.execute.side_effect = execute
+        return db
+
+    def test_emits_named_individuals_types_and_assertions(self):
+        from app.services.export import _add_individuals_to_graph
+
+        ns = Namespace("http://example.org/test#")
+        g = Graph()
+        class_id_to_uri = {
+            "ontology_classes/Org": URIRef("http://example.org/test#Organization"),
+            "ontology_classes/Per": URIRef("http://example.org/test#Person"),
+        }
+        prop_label_to_uri = {"employs": URIRef("http://example.org/test#employs")}
+
+        n = _add_individuals_to_graph(
+            self._abox_db(),
+            g,
+            ontology_id="test_ont",
+            ns=ns,
+            class_id_to_uri=class_id_to_uri,
+            prop_label_to_uri=prop_label_to_uri,
+        )
+        assert n == 2
+
+        acme = ns["individual_i1"]  # minted (no uri)
+        bob = URIRef("http://example.org/test#bob")  # explicit uri
+        # NamedIndividual declarations
+        assert (acme, RDF.type, OWL.NamedIndividual) in g
+        assert (bob, RDF.type, OWL.NamedIndividual) in g
+        # rdf:type to the resolved class
+        assert (acme, RDF.type, URIRef("http://example.org/test#Organization")) in g
+        assert (bob, RDF.type, URIRef("http://example.org/test#Person")) in g
+        # object assertion using the resolved property uri
+        assert (acme, URIRef("http://example.org/test#employs"), bob) in g
+        # cross-ontology assertion (object not local) is NOT emitted
+        assert not any(p == URIRef("http://example.org/test#refersTo") for _, p, _ in g)
+
+    def test_no_collection_is_noop(self):
+        from app.services.export import _add_individuals_to_graph
+
+        db = MagicMock()
+        db.has_collection.return_value = False
+        g = Graph()
+        n = _add_individuals_to_graph(
+            db,
+            g,
+            ontology_id="o1",
+            ns=Namespace("http://x#"),
+            class_id_to_uri={},
+            prop_label_to_uri={},
+        )
+        assert n == 0
+        assert len(g) == 0
