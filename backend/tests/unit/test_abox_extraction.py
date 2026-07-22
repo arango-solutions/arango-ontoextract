@@ -144,3 +144,126 @@ class TestExtractAndMaterialize:
             )
         assert out["individuals"] == 1
         assert mk_ind.call_args.kwargs["class_key"] == ""  # ungrounded, no T-box class
+
+
+class TestLocateSpan:
+    def test_locates_case_insensitive(self) -> None:
+        assert ab._locate_span("Acme employs Bob.", "acme") == [0, 4]
+        assert ab._locate_span("Acme employs Bob.", "Bob") == [13, 16]
+
+    def test_missing_label_is_none(self) -> None:
+        assert ab._locate_span("Acme employs Bob.", "Ghost") is None
+        assert ab._locate_span("", "x") is None
+
+    def test_span_union(self) -> None:
+        assert ab._span_union([0, 4], [13, 16]) == [0, 16]
+        assert ab._span_union(None, [13, 16]) == [13, 16]
+        assert ab._span_union(None, None) is None
+
+
+class TestSpanProvenance:
+    async def test_char_span_stamped_on_individual_and_assertion(self) -> None:
+        db = MagicMock()
+        chunks = [{"text": "Acme employs Bob.", "document_id": "d1", "_key": "ch1"}]
+        slice_ = [{"key": "Org", "label": "Organization"}, {"key": "Per", "label": "Person"}]
+        extract = {
+            "individuals": [
+                {"label": "Acme", "class": "Organization"},
+                {"label": "Bob", "class": "Person"},
+            ],
+            "assertions": [{"subject": "Acme", "predicate": "employs", "object": "Bob"}],
+        }
+        created: dict[str, dict] = {}
+
+        def _create_individual(_db, **kwargs):
+            created[kwargs["label"]] = kwargs
+            return {"_id": f"ontology_individuals/{kwargs['label']}", "_key": kwargs["label"]}
+
+        with (
+            patch.object(ab, "retrieve_schema_slice", new=AsyncMock(return_value=slice_)),
+            patch.object(ab, "extract_abox_from_text", new=AsyncMock(return_value=extract)),
+            patch.object(ab.individuals_repo, "create_individual", side_effect=_create_individual),
+            patch.object(ab.individuals_repo, "add_assertion") as mk_assert,
+        ):
+            await ab.extract_and_materialize_abox(db, ontology_id="ont1", chunks=chunks)
+
+        assert created["Acme"]["provenance"][0]["char_span"] == [0, 4]
+        assert created["Bob"]["provenance"][0]["char_span"] == [13, 16]
+        # assertion span covers subject..object
+        assert mk_assert.call_args.kwargs["provenance"][0]["char_span"] == [0, 16]
+
+
+class TestMultiDomain:
+    async def test_routes_individuals_by_class_owner_and_bridges_domains(self) -> None:
+        db = MagicMock()
+        chunks = [{"text": "Acme ships Widget.", "document_id": "d1", "_key": "ch1"}]
+
+        # ontA owns Organization; ontB owns Product. A single chunk mentions both.
+        async def _slice(_db, oid, _text, **_kw):
+            if oid == "ontA":
+                return [{"key": "Org", "label": "Organization"}]
+            return [{"key": "Prod", "label": "Product"}]
+
+        extract = {
+            "individuals": [
+                {"label": "Acme", "class": "Organization"},
+                {"label": "Widget", "class": "Product"},
+            ],
+            "assertions": [{"subject": "Acme", "predicate": "ships", "object": "Widget"}],
+        }
+
+        def _create_individual(_db, **kwargs):
+            return {"_id": f"ontology_individuals/{kwargs['label']}", "_key": kwargs["label"]}
+
+        with (
+            patch.object(ab, "retrieve_schema_slice", new=AsyncMock(side_effect=_slice)),
+            patch.object(ab, "extract_abox_from_text", new=AsyncMock(return_value=extract)),
+            patch.object(
+                ab.individuals_repo, "create_individual", side_effect=_create_individual
+            ) as mk_ind,
+            patch.object(ab.individuals_repo, "add_assertion") as mk_assert,
+        ):
+            out = await ab.extract_and_materialize_multi_domain(
+                db, ontology_ids=["ontA", "ontB"], chunks=chunks
+            )
+
+        # each individual routed to the ontology owning its class
+        owners = {c.kwargs["label"]: c.kwargs["ontology_id"] for c in mk_ind.call_args_list}
+        assert owners == {"Acme": "ontA", "Widget": "ontB"}
+        assert out["domains"]["ontA"]["individuals"] == 1
+        assert out["domains"]["ontB"]["individuals"] == 1
+        # the Acme->Widget relationship bridges ontA and ontB -> cross-ontology edge
+        akw = mk_assert.call_args.kwargs
+        assert akw["ontology_id"] == "ontA"
+        assert akw["data"]["cross_domain"] is True
+        assert akw["data"]["to_ontology_id"] == "ontB"
+        assert out["cross_domain_assertions"] == 1
+        assert out["total_individuals"] == 2
+
+    async def test_ambiguous_label_resolves_to_first_ontology(self) -> None:
+        db = MagicMock()
+        chunks = [{"text": "A Report was filed.", "document_id": "d1", "_key": "ch1"}]
+
+        async def _slice(_db, _oid, _text, **_kw):
+            return [{"key": "Rep", "label": "Report"}]  # both ontologies define "Report"
+
+        extract = {
+            "individuals": [{"label": "Report", "class": "Report"}],
+            "assertions": [],
+        }
+        with (
+            patch.object(ab, "retrieve_schema_slice", new=AsyncMock(side_effect=_slice)),
+            patch.object(ab, "extract_abox_from_text", new=AsyncMock(return_value=extract)),
+            patch.object(
+                ab.individuals_repo,
+                "create_individual",
+                return_value={"_id": "ontology_individuals/Report", "_key": "Report"},
+            ) as mk_ind,
+            patch.object(ab.individuals_repo, "add_assertion"),
+        ):
+            out = await ab.extract_and_materialize_multi_domain(
+                db, ontology_ids=["ontA", "ontB"], chunks=chunks
+            )
+        assert mk_ind.call_args.kwargs["ontology_id"] == "ontA"  # first wins
+        assert out["domains"]["ontA"]["individuals"] == 1
+        assert out["domains"]["ontB"]["individuals"] == 0

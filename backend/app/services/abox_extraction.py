@@ -11,9 +11,19 @@ Grounding controls hallucination (FR-18.8): in ``schema_guided`` mode (default)
 an individual whose class is not in the retrieved slice is dropped, and only
 subject/object pairs that resolved to materialized individuals become assertions.
 
-Multi-domain routing (FR-18.6) is the caller's boundary: pass the *domain*
-``ontology_id`` and that domain's chunks. When a document set spans domains, the
-caller (per the Stream 16 ``domain_tag``) invokes this once per domain ontology.
+Span provenance (FR-18.5): every individual and assertion carries a
+``char_span`` — the ``[start, end]`` offset of the mention inside its chunk,
+located deterministically (the LLM is never trusted for offsets). A fact whose
+label cannot be located verbatim gets ``char_span: None``, which AB-PR5 treats as
+not-span-grounded.
+
+Multi-domain routing (FR-18.6): ``extract_and_materialize_multi_domain`` handles a
+document set that spans domains. Each T-box class belongs to exactly one domain
+ontology, so an individual is routed to the ontology that owns its class — the
+ground truth behind the Stream 16 ``domain_tag``. A relationship whose subject and
+object land in different domain ontologies is preserved as a cross-ontology edge
+(``data.cross_domain``) rather than dropped. The single-domain
+``extract_and_materialize_abox`` remains for the one-ontology case.
 """
 
 from __future__ import annotations
@@ -90,6 +100,28 @@ async def retrieve_schema_slice(
     return list(rows)
 
 
+def _locate_span(text: str, label: str) -> list[int] | None:
+    """Return ``[start, end]`` of ``label``'s first case-insensitive occurrence.
+
+    Deterministic span grounding — we never ask the LLM for offsets. Returns
+    ``None`` when the label does not appear verbatim (e.g. the LLM normalized it).
+    """
+    if not text or not label:
+        return None
+    idx = text.lower().find(label.lower())
+    if idx < 0:
+        return None
+    return [idx, idx + len(label)]
+
+
+def _span_union(a: list[int] | None, b: list[int] | None) -> list[int] | None:
+    """Smallest span covering both ``a`` and ``b`` (either may be ``None``)."""
+    spans = [s for s in (a, b) if s]
+    if not spans:
+        return None
+    return [min(s[0] for s in spans), max(s[1] for s in spans)]
+
+
 def _parse_abox(raw: str) -> dict[str, list[dict[str, Any]]]:
     text = raw.strip()
     start, end = text.find("{"), text.rfind("}")
@@ -153,17 +185,16 @@ async def extract_and_materialize_abox(
         text = str(chunk.get("text") or chunk.get("content") or "")
         if not text.strip():
             continue
-        prov = [
-            {
-                "doc_id": chunk.get("document_id") or chunk.get("doc_id"),
-                "chunk_id": chunk.get("_key") or chunk.get("chunk_id"),
-            }
-        ]
+        base = {
+            "doc_id": chunk.get("document_id") or chunk.get("doc_id"),
+            "chunk_id": chunk.get("_key") or chunk.get("chunk_id"),
+        }
         schema_slice = await retrieve_schema_slice(db, ontology_id, text)
         label_to_key = {str(s["label"]).lower(): s["key"] for s in schema_slice if s.get("label")}
         result = await extract_abox_from_text(text, schema_slice, model=model)
 
-        local: dict[str, str] = {}  # individual label (lower) -> _id, for assertion resolution
+        # individual label (lower) -> (_id, char_span) for assertion resolution
+        local: dict[str, tuple[str, list[int] | None]] = {}
         for ind in result["individuals"]:
             label = str(ind.get("label") or "").strip()
             cls = str(ind.get("class") or "").strip().lower()
@@ -172,6 +203,7 @@ async def extract_and_materialize_abox(
             class_key = label_to_key.get(cls)
             if mode == "schema_guided" and class_key is None:
                 continue  # grounded-only: skip ungrounded individuals
+            span = _locate_span(text, label)
             canon = (class_key or "", label.lower())
             iid = canon_to_id.get(canon)
             if iid is None:
@@ -180,26 +212,28 @@ async def extract_and_materialize_abox(
                     ontology_id=ontology_id,
                     class_key=class_key or "",
                     label=label,
-                    provenance=prov,
+                    provenance=[{**base, "char_span": span}],
                 )
                 iid = str(individual["_id"])
                 canon_to_id[canon] = iid
                 ind_count += 1
-            local[label.lower()] = iid
+            local[label.lower()] = (iid, span)
 
         for a in result["assertions"]:
             subj = str(a.get("subject") or "").strip().lower()
             obj = str(a.get("object") or "").strip().lower()
             predicate = str(a.get("predicate") or "").strip()
-            sid, oid_ = local.get(subj), local.get(obj)
-            if sid and oid_ and predicate:
+            subj_res, obj_res = local.get(subj), local.get(obj)
+            if subj_res and obj_res and predicate:
+                sid, s_span = subj_res
+                oid_, o_span = obj_res
                 individuals_repo.add_assertion(
                     db,
                     ontology_id=ontology_id,
                     from_individual_id=sid,
                     to_id=oid_,
                     predicate=predicate,
-                    provenance=prov,
+                    provenance=[{**base, "char_span": _span_union(s_span, o_span)}],
                 )
                 assert_count += 1
 
@@ -214,5 +248,134 @@ async def extract_and_materialize_abox(
         "ontology_id": ontology_id,
         "individuals": ind_count,
         "assertions": assert_count,
+        "chunks": len(chunks),
+    }
+
+
+async def extract_and_materialize_multi_domain(
+    db: StandardDatabase | None = None,
+    *,
+    ontology_ids: list[str],
+    chunks: list[dict[str, Any]],
+    mode: str = "schema_guided",
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Extract an A-box that spans several domain ontologies (FR-18.6).
+
+    For each chunk the schema slices of *all* candidate ontologies are retrieved
+    and unioned; the LLM extracts once against the combined class vocabulary; then
+    each individual is routed to the ontology that owns its class (each T-box class
+    belongs to exactly one ontology — the ground truth behind ``domain_tag``). A
+    class label defined in more than one ontology resolves to the first in
+    ``ontology_ids`` order (deterministic).
+
+    A relationship whose subject and object resolve to different domain ontologies
+    is written as a cross-ontology edge (``data.cross_domain=True``,
+    ``data.to_ontology_id``) rather than dropped, so facts that bridge domains
+    survive. Returns per-domain counts plus the cross-domain assertion count.
+    """
+    if db is None:
+        db = get_db()
+
+    per_domain: dict[str, dict[str, int]] = {
+        oid: {"individuals": 0, "assertions": 0} for oid in ontology_ids
+    }
+    cross_domain = 0
+    # (owner_oid, class_key, label_lower) -> individual _id, canonical across chunks
+    canon_to_id: dict[tuple[str, str, str], str] = {}
+
+    for chunk in chunks:
+        text = str(chunk.get("text") or chunk.get("content") or "")
+        if not text.strip():
+            continue
+        base = {
+            "doc_id": chunk.get("document_id") or chunk.get("doc_id"),
+            "chunk_id": chunk.get("_key") or chunk.get("chunk_id"),
+        }
+
+        # Union the candidate ontologies' slices; first ontology to claim a class
+        # label owns it (deterministic on ambiguity).
+        label_to_owner: dict[str, tuple[str, str]] = {}
+        combined_slice: list[dict[str, Any]] = []
+        for oid in ontology_ids:
+            for s in await retrieve_schema_slice(db, oid, text):
+                lbl = str(s.get("label") or "")
+                if not lbl:
+                    continue
+                combined_slice.append(s)
+                label_to_owner.setdefault(lbl.lower(), (oid, str(s["key"])))
+
+        result = await extract_abox_from_text(text, combined_slice, model=model)
+
+        # individual label (lower) -> (_id, owner_oid, char_span)
+        local: dict[str, tuple[str, str, list[int] | None]] = {}
+        for ind in result["individuals"]:
+            label = str(ind.get("label") or "").strip()
+            cls = str(ind.get("class") or "").strip().lower()
+            if not label:
+                continue
+            owner = label_to_owner.get(cls)
+            if mode == "schema_guided" and owner is None:
+                continue
+            owner_oid, class_key = owner if owner else (ontology_ids[0], "")
+            span = _locate_span(text, label)
+            canon = (owner_oid, class_key, label.lower())
+            iid = canon_to_id.get(canon)
+            if iid is None:
+                individual = individuals_repo.create_individual(
+                    db,
+                    ontology_id=owner_oid,
+                    class_key=class_key,
+                    label=label,
+                    provenance=[{**base, "char_span": span}],
+                )
+                iid = str(individual["_id"])
+                canon_to_id[canon] = iid
+                per_domain.setdefault(owner_oid, {"individuals": 0, "assertions": 0})
+                per_domain[owner_oid]["individuals"] += 1
+            local[label.lower()] = (iid, owner_oid, span)
+
+        for a in result["assertions"]:
+            subj = str(a.get("subject") or "").strip().lower()
+            obj = str(a.get("object") or "").strip().lower()
+            predicate = str(a.get("predicate") or "").strip()
+            subj_res, obj_res = local.get(subj), local.get(obj)
+            if not (subj_res and obj_res and predicate):
+                continue
+            sid, s_oid, s_span = subj_res
+            oid_, o_oid, o_span = obj_res
+            is_cross = s_oid != o_oid
+            data = {"cross_domain": True, "to_ontology_id": o_oid} if is_cross else None
+            individuals_repo.add_assertion(
+                db,
+                ontology_id=s_oid,
+                from_individual_id=sid,
+                to_id=oid_,
+                predicate=predicate,
+                provenance=[{**base, "char_span": _span_union(s_span, o_span)}],
+                data=data,
+            )
+            per_domain.setdefault(s_oid, {"individuals": 0, "assertions": 0})
+            per_domain[s_oid]["assertions"] += 1
+            if is_cross:
+                cross_domain += 1
+
+    total_ind = sum(d["individuals"] for d in per_domain.values())
+    total_assert = sum(d["assertions"] for d in per_domain.values())
+    log.info(
+        "[abox] multi-domain over %d ontologies: %d individuals, %d assertions "
+        "(%d cross-domain) from %d chunks",
+        len(ontology_ids),
+        total_ind,
+        total_assert,
+        cross_domain,
+        len(chunks),
+    )
+    return {
+        "ontology_ids": ontology_ids,
+        "domains": per_domain,
+        "cross_domain_assertions": cross_domain,
+        "total_individuals": total_ind,
+        "total_assertions": total_assert,
         "chunks": len(chunks),
     }
