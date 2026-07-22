@@ -119,3 +119,91 @@ class TestRunCoverage:
             report = cov.run_coverage(db, ontology_id="o1")
         assert report["total"] == 0
         assert report["coverage_pct"] == 0.0
+
+
+class TestByPriority:
+    def test_run_coverage_breaks_down_by_priority(self) -> None:
+        db = MagicMock()
+        spec = {
+            "use_cases": [
+                {
+                    "name": "UC",
+                    "competency_questions": [
+                        {"text": "a", "priority": "high", "query": "FOR x IN c RETURN x /*A*/"},
+                        {"text": "b", "priority": "high", "query": "FOR x IN c RETURN x /*E*/"},
+                        {"text": "c", "priority": "low", "query": "FOR x IN c RETURN x /*A*/"},
+                    ],
+                }
+            ]
+        }
+
+        def fake_run_aql(_db, query, bind_vars=None):
+            return iter([{"x": 1}]) if "/*A*/" in query else iter([])
+
+        with (
+            patch.object(cov.requirements_repo, "get_requirements", return_value=spec),
+            patch.object(cov, "run_aql", side_effect=fake_run_aql),
+        ):
+            report = cov.run_coverage(db, ontology_id="o1")
+
+        assert report["by_priority"]["high"] == {"total": 2, "answerable": 1}
+        assert report["by_priority"]["low"] == {"total": 1, "answerable": 1}
+        # gaps carry priority now
+        assert any(g["priority"] == "high" for g in report["gaps"])
+
+
+class TestRouteGapsToBacklog:
+    def test_opens_active_and_resolves_stale(self) -> None:
+        db = MagicMock()
+        report = {
+            "gaps": [
+                {"text": "a", "use_case": "UC", "priority": "high", "status": "unanswerable"},
+                {"text": "", "use_case": "UC", "priority": "low", "status": "unanswerable"},  # skip
+            ]
+        }
+        with (
+            patch.object(cov.cq_gap_repo, "upsert_gap", return_value=True) as mk_up,
+            patch.object(cov.cq_gap_repo, "resolve_gaps_not_in", return_value=2) as mk_res,
+            patch.object(cov.cq_gap_repo, "list_gaps", return_value=[{"_key": "k"}]),
+        ):
+            out = cov.route_gaps_to_backlog(db, ontology_id="o1", report=report)
+
+        assert out == {"opened": 1, "resolved": 2, "open_total": 1}
+        mk_up.assert_called_once()  # empty-text gap skipped
+        # active key set passed to resolver contains exactly the one real gap
+        active = mk_res.call_args.args[2]
+        assert len(active) == 1
+
+
+class TestEvaluateReleaseGate:
+    def _report(self, high_total, high_ans):
+        return {
+            "by_priority": {
+                "high": {"total": high_total, "answerable": high_ans},
+                "low": {"total": 5, "answerable": 0},
+            },
+            "gaps": [
+                {"text": "x", "priority": "high", "status": "unanswerable"},
+                {"text": "y", "priority": "low", "status": "unanswerable"},
+            ],
+        }
+
+    def test_passes_when_priority_coverage_meets_threshold(self) -> None:
+        gate = cov.evaluate_release_gate(self._report(4, 4), min_priority_pct=80.0)
+        assert gate["passed"] is True
+        assert gate["actual_pct"] == 100.0
+        # only the high-priority gap blocks (low ignored)
+        assert [g["priority"] for g in gate["blocking_gaps"]] == ["high"]
+
+    def test_fails_below_threshold(self) -> None:
+        gate = cov.evaluate_release_gate(self._report(4, 2), min_priority_pct=80.0)
+        assert gate["passed"] is False
+        assert gate["actual_pct"] == 50.0
+        assert gate["considered"] == 4
+
+    def test_vacuous_pass_when_no_priority_cqs(self) -> None:
+        report = {"by_priority": {"low": {"total": 3, "answerable": 0}}, "gaps": []}
+        gate = cov.evaluate_release_gate(report, min_priority_pct=90.0)
+        assert gate["passed"] is True
+        assert gate["considered"] == 0
+        assert gate["actual_pct"] == 100.0

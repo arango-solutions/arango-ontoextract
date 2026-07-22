@@ -150,3 +150,59 @@ class TestCoverageEndpoint:
         ):
             resp = client.post("/api/v1/ontology/o1/coverage")
         assert resp.status_code == 404
+
+    def test_coverage_persist_gaps_and_gate(self) -> None:
+        report = {"ontology_id": "o1", "total": 2, "answerable": 1, "gaps": []}
+        with (
+            patch.object(_shared, "get_db", return_value=MagicMock()),
+            patch.object(cq_coverage, "run_coverage", return_value=dict(report)),
+            patch.object(
+                cq_coverage, "route_gaps_to_backlog", return_value={"opened": 1, "resolved": 0}
+            ) as mk_route,
+            patch.object(
+                cq_coverage, "evaluate_release_gate", return_value={"passed": False}
+            ) as mk_gate,
+        ):
+            resp = client.post("/api/v1/ontology/o1/coverage?persist_gaps=true&gate=true")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["backlog"] == {"opened": 1, "resolved": 0}
+        assert body["release_gate"] == {"passed": False}
+        mk_route.assert_called_once()
+        mk_gate.assert_called_once()
+
+    def test_coverage_no_gate_or_persist_by_default(self) -> None:
+        report = {"ontology_id": "o1", "total": 0, "gaps": []}
+        with (
+            patch.object(_shared, "get_db", return_value=MagicMock()),
+            patch.object(cq_coverage, "run_coverage", return_value=dict(report)),
+            patch.object(cq_coverage, "route_gaps_to_backlog") as mk_route,
+            patch.object(cq_coverage, "evaluate_release_gate") as mk_gate,
+        ):
+            resp = client.post("/api/v1/ontology/o1/coverage")
+        assert resp.status_code == 200
+        assert "backlog" not in resp.json()
+        assert "release_gate" not in resp.json()
+        mk_route.assert_not_called()
+        mk_gate.assert_not_called()
+
+
+class TestCoverageGapsEndpoint:
+    def test_lists_open_gaps(self) -> None:
+        from app.db import cq_gap_repo
+
+        gaps = [{"_key": "k1", "cq_text": "q", "status": "open"}]
+        with (
+            patch.object(_shared, "get_db", return_value=MagicMock()),
+            patch.object(cq_gap_repo, "list_gaps", return_value=gaps) as mk,
+        ):
+            resp = client.get("/api/v1/ontology/o1/coverage/gaps")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 1
+        assert body["status"] == "open"
+        assert mk.call_args.kwargs["status"] == "open"
+
+    def test_rejects_bad_status(self) -> None:
+        resp = client.get("/api/v1/ontology/o1/coverage/gaps?status=bogus")
+        assert resp.status_code == 422

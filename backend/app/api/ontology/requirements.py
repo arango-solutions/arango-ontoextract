@@ -10,11 +10,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.api.ontology import _shared
-from app.db import requirements_repo
+from app.config import settings
+from app.db import cq_gap_repo, requirements_repo
 from app.services import cq_coverage, cq_formalize
 
 log = logging.getLogger(__name__)
@@ -78,12 +79,40 @@ async def formalize_requirements(ontology_id: str, overwrite: bool = False) -> d
 
 
 @router.post("/{ontology_id}/coverage")
-async def run_coverage(ontology_id: str) -> dict[str, Any]:
-    """Evaluate the ontology's competency questions and return a coverage report."""
+async def run_coverage(
+    ontology_id: str,
+    persist_gaps: bool = Query(False),
+    gate: bool = Query(False),
+) -> dict[str, Any]:
+    """Evaluate the ontology's competency questions and return a coverage report.
+
+    ``persist_gaps`` routes unanswerable CQs to the gap backlog (FR-19.6);
+    ``gate`` adds the CQ release-readiness signal (FR-19.8).
+    """
+    db = _shared.get_db()
     try:
-        return cq_coverage.run_coverage(_shared.get_db(), ontology_id=ontology_id)
+        report = cq_coverage.run_coverage(db, ontology_id=ontology_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if persist_gaps:
+        report["backlog"] = cq_coverage.route_gaps_to_backlog(
+            db, ontology_id=ontology_id, report=report
+        )
+    if gate:
+        report["release_gate"] = cq_coverage.evaluate_release_gate(
+            report, min_priority_pct=settings.cq_release_gate_min_pct
+        )
+    return report
+
+
+@router.get("/{ontology_id}/coverage/gaps")
+async def list_coverage_gaps(
+    ontology_id: str,
+    status: str | None = Query("open", pattern="^(open|resolved)$"),
+) -> dict[str, Any]:
+    """List the ontology's coverage-gap backlog items (default: open only)."""
+    gaps = cq_gap_repo.list_gaps(_shared.get_db(), ontology_id, status=status)
+    return {"ontology_id": ontology_id, "status": status, "gaps": gaps, "count": len(gaps)}
 
 
 @router.delete("/{ontology_id}/requirements")

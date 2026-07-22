@@ -14,6 +14,7 @@ import AlertsFlags from "@/components/dashboard/AlertsFlags";
 import StrengthsWeaknesses from "@/components/dashboard/StrengthsWeaknesses";
 import SchemaMetricsPanel from "@/components/dashboard/SchemaMetricsPanel";
 import PerOntologyQualityReport from "@/components/dashboard/PerOntologyQualityReport";
+import CQCoverageTile from "@/components/dashboard/CQCoverageTile";
 
 /** Dashboard aggregates every ontology with many AQL queries each; short client timeouts were aborting healthy backends. */
 const DASHBOARD_FETCH_TIMEOUT_MS = 120_000;
@@ -291,7 +292,13 @@ function DashboardPageInner() {
                             />
                             <ClassScoreDistribution ontologyId={selectedOntology.ontology_id} />
                           </div>
-                          <StrengthsWeaknesses ontologyId={selectedOntology.ontology_id} />
+                          <div className="space-y-6">
+                            <StrengthsWeaknesses ontologyId={selectedOntology.ontology_id} />
+                            <CQCoverageTile
+                              ontologyId={selectedOntology.ontology_id}
+                              ontologyName={selectedOntology.name}
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>

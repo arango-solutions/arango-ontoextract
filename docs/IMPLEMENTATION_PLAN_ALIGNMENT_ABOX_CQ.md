@@ -139,13 +139,21 @@ lose the "CQs scope everything" benefit until S22 lands, so prefer the parallel 
   unit (empty/no-CQ/priority-order/answer-shape) + extraction wiring (flag on prepends,
   flag off never calls). ✅
 
-**CQ-PR6 · Gap feedback + dashboard tile + release gate**
-- **Files:** route unanswerable-CQ gaps to belief revision / backlog (`services/revision_agent.py`
-  or a new backlog collection); `frontend/src/components/dashboard/CQCoverageTile.tsx`; expose
-  coverage as a Release Readiness signal (consumed by Stream 19 when built).
-- **Deps:** CQ-PR4. **Acceptance (FR-19.6, FR-19.8, FR-19.11):** gaps become actionable items;
-  tile shows coverage over time; a release can require ≥N% priority CQs answerable. **Tests:**
-  gap routing + tile render + gate threshold.
+**CQ-PR6 · Gap feedback + dashboard tile + release gate** — DONE
+- **Files:** `migrations/031_cq_gap_backlog.py` + `app/db/cq_gap_repo.py` (idempotent
+  `cq_gap_backlog` collection keyed by hash(ontology_id, cq_text)); `cq_coverage.py`
+  (`route_gaps_to_backlog`, `evaluate_release_gate`, per-priority breakdown); coverage API
+  gains `persist_gaps` + `gate` params and a `GET /coverage/gaps` route;
+  `frontend/src/components/dashboard/CQCoverageTile.tsx` (mounted on the dashboard for the
+  selected ontology). Config `cq_release_gate_min_pct`.
+- **Deps:** CQ-PR4. **Acceptance (FR-19.6, FR-19.8, FR-19.11):** unanswerable CQs become
+  trackable backlog items (open→resolved as coverage closes them); a release can require
+  ≥N% of *priority* CQs answerable (advisory Release-Readiness signal for Stream 19); the
+  tile shows coverage %, per-use-case status, and the open-gap list. **Tests:** gap-repo
+  upsert/resolve/list, gap routing + gate threshold (pass/fail/vacuous), coverage API
+  persist+gate, `GET /coverage/gaps`, and the tile (mount GET + run POST + gate badge). ✅
+- **Note:** "coverage over time" (a stored coverage-% trend) reuses the quality-history
+  mechanism and is a small follow-up; the tile currently renders the live snapshot.
 
 ---
 

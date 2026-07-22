@@ -110,6 +110,10 @@ class Settings(BaseSettings):
     #: (LLM-driven) extraction prompt so extraction is use-case-driven (PRD §6.19,
     #: FR-19.4/19.7). Off by default; when off the prompt is byte-identical.
     cq_scope_injection_enabled: bool = False
+    #: Stream 22 — minimum % of *priority* competency questions that must be
+    #: answerable for the CQ release gate to pass (PRD §6.19 / FR-19.8). Advisory
+    #: signal for the Release Readiness Review (Stream 19).
+    cq_release_gate_min_pct: float = 80.0
     #: Per-request HTTP timeout for LLM calls, in seconds. Without an
     #: explicit timeout, ``ChatAnthropic`` and ``ChatOpenAI`` inherit
     #: their underlying httpx client default (``None`` = wait forever
