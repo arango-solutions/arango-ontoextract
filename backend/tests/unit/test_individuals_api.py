@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from app.api.ontology import _shared
 from app.db import individuals_repo
 from app.main import app
-from app.services import abox_canonicalize
+from app.services import abox_canonicalize, abox_validation
 
 client = TestClient(app)
 
@@ -47,6 +47,20 @@ class TestCanonicalize:
         assert resp.json()["merged"] == 0
         assert mk.call_args.kwargs["min_score"] == 0.9
         assert mk.call_args.kwargs["auto_merge"] is True
+
+
+class TestValidate:
+    def test_validate_returns_report(self) -> None:
+        report = MagicMock()
+        report.to_dict.return_value = {"ontology_id": "o1", "violation_count": 2, "violations": []}
+        with (
+            patch.object(_shared, "get_db", return_value=MagicMock()),
+            patch.object(abox_validation, "validate_abox", return_value=report) as mk,
+        ):
+            resp = client.post("/api/v1/ontology/o1/individuals/validate")
+        assert resp.status_code == 200
+        assert resp.json()["violation_count"] == 2
+        assert mk.call_args.args[1] == "o1"
 
 
 class TestGetIndividual:

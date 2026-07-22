@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.api.ontology import _shared
 from app.db import individuals_repo
-from app.services import abox_canonicalize
+from app.services import abox_canonicalize, abox_validation
 
 router = APIRouter()
 
@@ -28,6 +28,13 @@ async def canonicalize_individuals(
     return abox_canonicalize.canonicalize_ontology(
         _shared.get_db(), ontology_id=ontology_id, min_score=min_score, auto_merge=auto_merge
     )
+
+
+@router.post("/{ontology_id}/individuals/validate")
+async def validate_individuals(ontology_id: str) -> dict[str, Any]:
+    """Validate the A-box: flag ungrounded / dangling-type / cardinality violations (AB-PR5)."""
+    report = abox_validation.validate_abox(_shared.get_db(), ontology_id)
+    return report.to_dict()
 
 
 @router.get("/{ontology_id}/individuals")
