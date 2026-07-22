@@ -267,6 +267,34 @@ async def execute_run(
                 },
             )
 
+        # Stream 22: prepend the target ontology's competency-question scope so
+        # extraction is use-case-driven (FR-19.4 / FR-19.7). Flag-gated; when
+        # off, the CQ block is never built and the prompt is byte-identical.
+        # Failures are non-fatal (log + continue), consistent with the effective
+        # context above.
+        if settings.cq_scope_injection_enabled:
+            try:
+                from app.services.ontology_context import serialize_cq_scope_context
+
+                cq_scope = serialize_cq_scope_context(db, ontology_id=target_ontology_id)
+            except Exception:
+                log.warning(
+                    "failed to serialize CQ scope context",
+                    exc_info=True,
+                    extra={"run_id": run_id, "target_ontology_id": target_ontology_id},
+                )
+                cq_scope = ""
+            if cq_scope:
+                domain_context = cq_scope + "\n" + domain_context if domain_context else cq_scope
+                log.info(
+                    "prepended CQ scope context",
+                    extra={
+                        "run_id": run_id,
+                        "target_ontology_id": target_ontology_id,
+                        "cq_scope_length": len(cq_scope),
+                    },
+                )
+
     chunks: list[dict[str, Any]] = []
     for did in doc_ids:
         chunks.extend(_load_document_chunks(db, did))

@@ -215,6 +215,111 @@ def serialize_multi_domain_context(
 
 
 # ---------------------------------------------------------------------------
+# Stream 22: use-case / competency-question scope injection (FR-19.4, FR-19.7)
+# ---------------------------------------------------------------------------
+
+# Marker substring the extractor / tests / ops grep for to confirm the CQ-scope
+# block was injected. Changing it is a semver-style break (prompt-leak audits).
+CQ_SCOPE_CONTEXT_HEADER = (
+    "Use-case scope (prioritize concepts and relationships needed to answer "
+    "these competency questions):"
+)
+
+# Priority tokens -> sort rank (lower sorts first). Unknown priorities sort last
+# but keep their spec order (stable sort).
+_PRIORITY_RANK = {
+    "p1": 0,
+    "high": 0,
+    "must": 0,
+    "p2": 1,
+    "medium": 1,
+    "should": 1,
+    "p3": 2,
+    "low": 2,
+    "could": 2,
+}
+
+
+def _cq_priority_rank(cq: dict[str, Any]) -> int:
+    raw = cq.get("priority")
+    if isinstance(raw, int):
+        return raw
+    return _PRIORITY_RANK.get(str(raw or "").strip().lower(), 99)
+
+
+def serialize_cq_scope_context(
+    db: StandardDatabase | None = None,
+    *,
+    ontology_id: str,
+) -> str:
+    """Serialize an ontology's competency-question scope as extraction context.
+
+    CQ scope injection (Stream 22, FR-19.4 / FR-19.7): reads the ORSD-style
+    requirements spec attached to ``ontology_id`` and renders its use cases +
+    competency questions (priority-ordered) as a prompt block that tells the
+    extractor which concepts and relationships to prioritize so the resulting
+    ontology can actually answer the questions the user cares about.
+
+    Returns ``""`` when there is no spec or no competency questions, so an
+    extraction with no requirements is byte-identical to before.
+    """
+    if db is None:
+        db = get_db()
+
+    # Local import to avoid a module-load cycle (requirements_repo -> db utils).
+    from app.db import requirements_repo
+
+    spec = requirements_repo.get_requirements(db, ontology_id)
+    if not spec:
+        return ""
+    cqs = requirements_repo.iter_competency_questions(spec)
+    if not cqs:
+        return ""
+
+    lines: list[str] = [CQ_SCOPE_CONTEXT_HEADER, ""]
+    purpose = str(spec.get("purpose") or "").strip()
+    if purpose:
+        lines.append(f"Purpose: {purpose}")
+    scope = str(spec.get("scope") or "").strip()
+    if scope:
+        lines.append(f"Scope: {scope}")
+    if purpose or scope:
+        lines.append("")
+
+    # Group by use case, preserving spec order; CQs within a group sort by
+    # priority. ``dict`` preserves insertion order so the first-seen use case
+    # renders first.
+    by_uc: dict[str, list[dict[str, Any]]] = {}
+    for cq in cqs:
+        by_uc.setdefault(str(cq.get("use_case") or "General"), []).append(cq)
+
+    for uc_name, group in by_uc.items():
+        lines.append(f"Use case: {uc_name}")
+        for cq in sorted(group, key=_cq_priority_rank):
+            text = str(cq.get("text") or "").strip()
+            if not text:
+                continue
+            prio = str(cq.get("priority") or "").strip()
+            prefix = f"[{prio}] " if prio else ""
+            lines.append(f"  - {prefix}{text}")
+            shape = str(cq.get("expected_answer_shape") or "").strip()
+            if shape:
+                lines.append(f"      expected answer: {shape}")
+        lines.append("")
+
+    lines.extend(
+        [
+            "Guidelines:",
+            "- Prioritize extracting the classes, properties, and relationships "
+            "required to answer the questions above.",
+            "- Do NOT omit other salient concepts in the text; this is a priority "
+            "signal, not an exclusive whitelist.",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+# ---------------------------------------------------------------------------
 # H.17: import-aware extraction context
 # ---------------------------------------------------------------------------
 

@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     #: Stream 21 — enable assertion-graph (A-box) extraction (PRD §6.18). Gates
     #: any pipeline-driven A-box run; the service is also invocable explicitly.
     extract_abox: bool = False
+    #: Stream 22 — inject the target ontology's competency-question scope into the
+    #: (LLM-driven) extraction prompt so extraction is use-case-driven (PRD §6.19,
+    #: FR-19.4/19.7). Off by default; when off the prompt is byte-identical.
+    cq_scope_injection_enabled: bool = False
     #: Per-request HTTP timeout for LLM calls, in seconds. Without an
     #: explicit timeout, ``ChatAnthropic`` and ``ChatOpenAI`` inherit
     #: their underlying httpx client default (``None`` = wait forever

@@ -3404,3 +3404,119 @@ class TestAutoInstallVisualizerAssets:
         )
 
         _stub_install_visualizer.assert_called_once()
+
+
+class TestCqScopeInjection:
+    """Stream 22: CQ scope is prepended to domain_context only when the flag is on."""
+
+    def _run_record(self):
+        return {
+            "_key": "run_cq",
+            "doc_id": "doc_1",
+            "doc_ids": ["doc_1"],
+            "target_ontology_id": "onto_target",
+            "status": "running",
+            "stats": {
+                "passes": 1,
+                "consistency_threshold": 0.7,
+                "token_usage": {},
+                "errors": [],
+                "step_logs": [],
+            },
+        }
+
+    def _pipeline_state(self):
+        return {
+            "consistency_result": _make_result(classes=[]),
+            "errors": [],
+            "step_logs": [],
+            "token_usage": {},
+            "extraction_passes": [],
+        }
+
+    @patch("app.services.ontology_context.serialize_cq_scope_context")
+    @patch("app.services.ontology_context.serialize_effective_ontology_context", return_value="")
+    @patch("app.db.quality_history_repo.record_event_snapshot")
+    @patch("app.services.extraction._create_produced_by_edge")
+    @patch("app.services.extraction._auto_register_ontology", return_value="onto_target")
+    @patch("app.services.extraction._materialize_to_graph")
+    @patch("app.services.extraction._store_results")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "hello"}])
+    @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
+    @patch("app.services.extraction.doc_get")
+    @patch("app.services.extraction._get_collection")
+    @patch("app.services.extraction.get_db")
+    @pytest.mark.asyncio
+    async def test_flag_on_prepends_cq_scope(
+        self,
+        mock_get_db,
+        mock_get_col,
+        mock_doc_get,
+        mock_run_pipeline,
+        mock_load_chunks,
+        mock_store,
+        mock_materialize,
+        mock_auto_reg,
+        mock_produced_by,
+        mock_snapshot,
+        mock_eff,
+        mock_cq,
+    ):
+        from app.services import extraction
+        from app.services.extraction import execute_run
+
+        mock_get_db.return_value = MagicMock()
+        mock_get_col.return_value = MagicMock()
+        mock_doc_get.side_effect = [self._run_record(), {"_key": "run_cq", "status": "completed"}]
+        mock_run_pipeline.return_value = self._pipeline_state()
+        mock_cq.return_value = "CQ_SCOPE_MARKER_BLOCK"
+
+        with patch.object(extraction.settings, "cq_scope_injection_enabled", True):
+            await execute_run(run_id="run_cq", document_ids=["doc_1"], event_callback=MagicMock())
+
+        mock_cq.assert_called_once()
+        assert mock_cq.call_args.kwargs["ontology_id"] == "onto_target"
+        assert "CQ_SCOPE_MARKER_BLOCK" in mock_run_pipeline.call_args.kwargs["domain_context"]
+
+    @patch("app.services.ontology_context.serialize_cq_scope_context")
+    @patch("app.services.ontology_context.serialize_effective_ontology_context", return_value="")
+    @patch("app.db.quality_history_repo.record_event_snapshot")
+    @patch("app.services.extraction._create_produced_by_edge")
+    @patch("app.services.extraction._auto_register_ontology", return_value="onto_target")
+    @patch("app.services.extraction._materialize_to_graph")
+    @patch("app.services.extraction._store_results")
+    @patch("app.services.extraction._load_document_chunks", return_value=[{"text": "hello"}])
+    @patch("app.services.extraction.run_pipeline", new_callable=AsyncMock)
+    @patch("app.services.extraction.doc_get")
+    @patch("app.services.extraction._get_collection")
+    @patch("app.services.extraction.get_db")
+    @pytest.mark.asyncio
+    async def test_flag_off_never_calls_cq_scope(
+        self,
+        mock_get_db,
+        mock_get_col,
+        mock_doc_get,
+        mock_run_pipeline,
+        mock_load_chunks,
+        mock_store,
+        mock_materialize,
+        mock_auto_reg,
+        mock_produced_by,
+        mock_snapshot,
+        mock_eff,
+        mock_cq,
+    ):
+        from app.services import extraction
+        from app.services.extraction import execute_run
+
+        mock_get_db.return_value = MagicMock()
+        mock_get_col.return_value = MagicMock()
+        mock_doc_get.side_effect = [self._run_record(), {"_key": "run_cq", "status": "completed"}]
+        mock_run_pipeline.return_value = self._pipeline_state()
+
+        with patch.object(extraction.settings, "cq_scope_injection_enabled", False):
+            await execute_run(run_id="run_cq", document_ids=["doc_1"], event_callback=MagicMock())
+
+        mock_cq.assert_not_called()
+        # off-flag: no CQ marker leaks into the prompt context
+        assert "CQ_SCOPE" not in mock_run_pipeline.call_args.kwargs["domain_context"]

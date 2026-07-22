@@ -121,14 +121,23 @@ lose the "CQs scope everything" benefit until S22 lands, so prefer the parallel 
   **Tests:** coverage classification on a seeded ontology (answerable + gap cases).
 
 ### Sprint 22C — Drive + gate (interlock)
-**CQ-PR5 · Scope injection into extraction (all adapters)**
-- **Files:** extend `backend/app/services/ontology_context.py` (emit a CQ term set as
-  *required/priority concepts*, mirroring the H.17 effective-context prepend); wire into
-  `services/extraction.py`, the relational adapter (`relational_schema_extraction.py`), and the
-  ArangoDB schema adapter (`schema_extraction.py`). Flag `cq_scope_injection_enabled`.
-- **Deps:** CQ-PR1. **Acceptance (FR-19.4, FR-19.7):** CQ terms appear in extraction prompts
-  across unstructured / relational / graph adapters. **Tests:** each adapter sees CQ terms;
-  off-flag = byte-identical prompt.
+**CQ-PR5 · Scope injection into extraction** — DONE (unstructured path)
+- **Files:** `backend/app/services/ontology_context.py::serialize_cq_scope_context`
+  (renders the ORSD spec's use cases + priority-ordered CQs as a prompt block, marker
+  `CQ_SCOPE_CONTEXT_HEADER`, mirroring the H.17 effective-context prepend); wired into
+  `services/extraction.py` (prepended to `domain_context`). Flag `cq_scope_injection_enabled`.
+- **Scope reality:** CQ scope injection applies to the **LLM-driven unstructured** pipeline,
+  which is the only adapter with a prompt we control. The **relational** adapter
+  (`relational_schema_extraction.py`) is a *deterministic* schema→OWL generator (no LLM
+  prompt), and the **ArangoDB schema** adapter (`schema_extraction.py`) delegates LLM
+  inference to the external `schema_analyzer` library, which exposes no context parameter.
+  For those two, use-case *prioritization* is a post-extraction concern handled via the
+  coverage-gap backlog (CQ-PR6), not prompt injection — a documented follow-up if the
+  external adapters ever expose a context hook.
+- **Deps:** CQ-PR1. **Acceptance (FR-19.4, FR-19.7):** CQ terms appear in the unstructured
+  extraction prompt; off-flag = byte-identical prompt. **Tests:** `serialize_cq_scope_context`
+  unit (empty/no-CQ/priority-order/answer-shape) + extraction wiring (flag on prepends,
+  flag off never calls). ✅
 
 **CQ-PR6 · Gap feedback + dashboard tile + release gate**
 - **Files:** route unanswerable-CQ gaps to belief revision / backlog (`services/revision_agent.py`

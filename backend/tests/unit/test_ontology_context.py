@@ -7,8 +7,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.ontology_context import (
+    CQ_SCOPE_CONTEXT_HEADER,
     EFFECTIVE_CONTEXT_HEADER,
     get_domain_ontology_for_org,
+    serialize_cq_scope_context,
     serialize_domain_context,
     serialize_effective_ontology_context,
     serialize_multi_domain_context,
@@ -483,3 +485,53 @@ class TestSerializeEffectiveOntologyContext:
             db = _mock_effective_db()
             result = serialize_effective_ontology_context(db, ontology_id="ghost")
         assert result == ""
+
+
+_CQ_SPEC = {
+    "purpose": "Answer supply-chain questions",
+    "scope": "Automotive parts",
+    "use_cases": [
+        {
+            "name": "Sourcing",
+            "competency_questions": [
+                {"id": "q2", "text": "Which parts are low priority?", "priority": "P3"},
+                {
+                    "id": "q1",
+                    "text": "Who supplies part X?",
+                    "priority": "P1",
+                    "expected_answer_shape": "list of Supplier",
+                },
+            ],
+        }
+    ],
+}
+
+
+class TestSerializeCqScopeContext:
+    def test_returns_empty_when_no_spec(self):
+        db = MagicMock()
+        with patch("app.db.requirements_repo.get_requirements", return_value=None):
+            assert serialize_cq_scope_context(db, ontology_id="o1") == ""
+
+    def test_returns_empty_when_no_cqs(self):
+        db = MagicMock()
+        with patch(
+            "app.db.requirements_repo.get_requirements",
+            return_value={"purpose": "x", "use_cases": []},
+        ):
+            assert serialize_cq_scope_context(db, ontology_id="o1") == ""
+
+    def test_renders_header_purpose_and_priority_ordered_cqs(self):
+        db = MagicMock()
+        with patch("app.db.requirements_repo.get_requirements", return_value=_CQ_SPEC):
+            out = serialize_cq_scope_context(db, ontology_id="o1")
+        assert CQ_SCOPE_CONTEXT_HEADER in out
+        assert "Purpose: Answer supply-chain questions" in out
+        assert "Scope: Automotive parts" in out
+        assert "Use case: Sourcing" in out
+        # P1 CQ must render before the P3 CQ (priority ordering)
+        assert out.index("Who supplies part X?") < out.index("Which parts are low priority?")
+        # expected-answer hint surfaced
+        assert "expected answer: list of Supplier" in out
+        # priority label shown
+        assert "[P1]" in out and "[P3]" in out
