@@ -8,6 +8,35 @@ The backend version is the single source of truth in `backend/app/__init__.py`.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-22
+
+Closes the use-case-driven requirements loop (Stream 22) and completes the
+assertion-graph (A-box) stream (Stream 21). All additive and flag-gated / opt-in;
+existing flows are unchanged.
+
+### Added
+
+- **CQ scope injection into extraction (Stream 22, CQ-PR5, FR-19.4/19.7):**
+  `ontology_context.serialize_cq_scope_context` renders the target ontology's
+  ORSD spec (use cases + priority-ordered competency questions) as a prompt block
+  prepended to the extraction context, so extraction is use-case-driven. Flag
+  `cq_scope_injection_enabled` (off = byte-identical prompt). Applies to the
+  LLM-driven unstructured pipeline; the deterministic relational adapter and the
+  external-lib ArangoDB adapter close their loop via the coverage-gap backlog.
+- **CQ coverage-gap backlog + release gate + dashboard tile (Stream 22, CQ-PR6,
+  FR-19.6/19.8/19.11):** unanswerable CQs become trackable `cq_gap_backlog` items
+  (idempotent, auto `open`→`resolved` as coverage closes them); `evaluate_release_gate`
+  scores ≥N% of *priority* CQs answerable as an advisory Release-Readiness signal
+  (`cq_release_gate_min_pct`); `POST /coverage` gains `persist_gaps` + `gate` params
+  and a new `GET /coverage/gaps`; `CQCoverageTile` dashboard card shows coverage %,
+  the PASS/FAIL gate badge, per-use-case status, and the open-gap list.
+- **A-box RDF export + grounding metrics (Stream 21, AB-PR6, FR-18.11/18.12):** the
+  OWL/Turtle/JSON-LD export now emits `owl:NamedIndividual` + `rdf:type` + object
+  assertions for the A-box (cross-ontology objects skipped); `compute_abox_metrics`
+  reports individual/assertion counts, typed rate, and the headline **grounding
+  rate** (facts carrying span provenance), surfaced at
+  `GET /ontology/{id}/individuals/metrics`.
+
 ## [1.5.0] - 2026-07-22
 
 Deepens the three capability tracks with post-v1.4.0 backend work — A-box
