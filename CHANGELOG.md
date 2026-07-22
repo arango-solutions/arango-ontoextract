@@ -8,6 +8,36 @@ The backend version is the single source of truth in `backend/app/__init__.py`.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-22
+
+Deepens the three capability tracks with post-v1.4.0 backend work — A-box
+entity-linking, span provenance, multi-domain routing, instance validation, and
+the alignment MCP surface. All additive and flag-gated / opt-in; existing
+extraction, curation, and alignment flows are unchanged.
+
+### Added
+
+- **A-box entity-linking canonicalization (Stream 21, AB-PR3, §6.18 FR-18.4):**
+  `abox_canonicalize.py` dedupes same-type near-duplicate individuals
+  (Jaro-Winkler) across the persisted A-box — golden-record merge reassigns
+  assertion edges (add-new + expire-old; self-loops dropped), unions provenance,
+  and temporally expires the duplicate. `POST /ontology/{id}/individuals/canonicalize`
+  (detect or `auto_merge`, chain-safe).
+- **A-box span provenance + multi-domain routing (Stream 21, AB-PR4, FR-18.5/18.6):**
+  every individual and assertion carries a deterministic `char_span`;
+  `extract_and_materialize_multi_domain` routes each individual to the ontology
+  that owns its class and preserves cross-domain relationships as cross-ontology
+  edges (`data.cross_domain`).
+- **A-box constraint validation + hallucination control (Stream 21, AB-PR5,
+  FR-18.7/18.8):** `abox_validation.py` flags (never drops) ungrounded individuals
+  (no `char_span`), dangling `rdf_type` references to non-existent T-box terms, and
+  per-individual cardinality breaches of §6.14 restrictions.
+  `POST /ontology/{id}/individuals/validate`.
+- **Alignment MCP tools (Stream 20, AL-PR6, FR-17.12/17.13):** `align_ontologies`,
+  `adjudicate_alignment` (async), `list_correspondences`,
+  `accept`/`reject_correspondence`, `materialize_master` — the full P1 alignment
+  loop exposed to agents alongside the REST API.
+
 ## [1.4.0] - 2026-07-17
 
 Adds two more of the capability-program tracks — assertion-graph (A-box)
