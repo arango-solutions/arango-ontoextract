@@ -319,9 +319,21 @@ lose the "CQs scope everything" benefit until S22 lands, so prefer the parallel 
   empty), curve (baseline + rising + reject + precision cap + priority-key ordering),
   interactions-to-target, and a deterministic bench-fixture pin. ✅
 
-**AL-PR10 · Iterative refinement (RE-3)**
-- **Files:** re-align on source change; dependency-directed cascade (overlaps belief-management
-  RE-4). **Deps:** AL-PR4. **Acceptance:** a source edit re-triggers a scoped re-alignment.
+**AL-PR10 · Iterative refinement (RE-3)** — DONE
+- **Files:** `generate_candidates(scope=...)` restricts generation to pairs touching a changed
+  class; `alignment.refresh_alignment` removes correspondences touching a changed class
+  (reporting invalidated accepted/rejected decisions), regenerates scoped candidates, dedups
+  against surviving pairs, and appends — preserving untouched correspondences + their curation;
+  `alignment.refresh_sessions_for_ontology` is the dependency-directed cascade over every
+  session using the edited source. Repo helpers `find_sessions_for_ontology` +
+  `delete_correspondences`. API: `POST /alignment/sessions/{id}/refresh`.
+- **Deps:** AL-PR4. **Acceptance:** a source edit re-triggers a **scoped** re-alignment (only
+  the affected subset, not the full NxM); a removed class drops its stale correspondences; a
+  materialized session is flagged `master_stale` for re-materialization. **Tests:** scope
+  filter, refresh (stale removal + scoped add + dedup + preserve + skip + missing-session),
+  cascade, repo helpers, and the API endpoint. ✅
+
+**Stream 20 is now fully built out (AL-PR1–10).**
 
 ---
 

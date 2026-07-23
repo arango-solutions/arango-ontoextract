@@ -35,6 +35,13 @@ class MaterializeRequest(BaseModel):
     name: str | None = None
 
 
+class RefreshRequest(BaseModel):
+    """Re-align the subset affected by a source-ontology change (AL-PR10)."""
+
+    changed_ontology_id: str = Field(..., min_length=1)
+    changed_keys: list[str] = Field(..., min_length=1)
+
+
 @router.post("/sessions")
 async def create_session(body: CreateSessionRequest) -> dict[str, Any]:
     """Create a session, generate candidate correspondences, and persist them."""
@@ -72,6 +79,19 @@ async def materialize_master(session_id: str, body: MaterializeRequest) -> dict[
     """Materialize a reconciled master ontology from the session's accepted pairs."""
     try:
         return alignment_svc.materialize_master(session_id=session_id, name=body.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/sessions/{session_id}/refresh")
+async def refresh_session(session_id: str, body: RefreshRequest) -> dict[str, Any]:
+    """Scoped re-alignment after a source-ontology change (AL-PR10, RE-3)."""
+    try:
+        return alignment_svc.refresh_alignment(
+            session_id=session_id,
+            changed_ontology_id=body.changed_ontology_id,
+            changed_keys=body.changed_keys,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

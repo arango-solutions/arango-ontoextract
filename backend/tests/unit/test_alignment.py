@@ -368,3 +368,123 @@ class TestEnsembleAdjudicate:
         assert out["disagreement"] is False
         assert out["hallucination"] is False
         assert out["recommendation"] == "reject"
+
+
+class TestGenerateCandidatesScope:
+    def test_scope_restricts_to_pairs_touching_changed_class(self) -> None:
+        db = MagicMock()
+        db.has_collection.return_value = True
+        rows = [
+            _class("A1", "ontA", "Account", "bank account"),
+            _class("A2", "ontA", "Widget", "a gadget"),
+            _class("B1", "ontB", "Account", "bank account"),  # matches A1 and A2? only A1
+            _class("B2", "ontB", "Accounts", "bank accounts"),  # matches A1
+        ]
+        with patch.object(al, "run_aql", return_value=iter(rows)):
+            cands = al.generate_candidates(
+                db,
+                source_ontology_ids=["ontA", "ontB"],
+                min_score=0.5,
+                scope={"ontA": {"A1"}},  # only A1 changed
+            )
+        # every emitted pair must involve A1 (the only in-scope node)
+        assert cands
+        for c in cands:
+            keys = {c["source_a"]["entity_key"], c["source_b"]["entity_key"]}
+            assert "A1" in keys
+
+
+class TestRefreshAlignment:
+    def _session(self):
+        return {
+            "_key": "S1",
+            "source_ontology_ids": ["oa", "ob"],
+            "params": {"min_score": 0.5},
+            "target_master_id": "M1",  # already materialized
+        }
+
+    def test_removes_touched_adds_scoped_preserves_rest(self) -> None:
+        db = MagicMock()
+        existing = [
+            {  # touches changed key X -> stale (was accepted -> invalidated)
+                "_key": "c1",
+                "status": "accepted",
+                "source_a": {"ontology_id": "oa", "entity_key": "X"},
+                "source_b": {"ontology_id": "ob", "entity_key": "Y"},
+            },
+            {  # untouched -> preserved
+                "_key": "c2",
+                "status": "candidate",
+                "source_a": {"ontology_id": "oa", "entity_key": "Z"},
+                "source_b": {"ontology_id": "ob", "entity_key": "W"},
+            },
+        ]
+        fresh = [
+            {  # new scoped candidate touching X
+                "source_a": {"ontology_id": "oa", "entity_key": "X"},
+                "source_b": {"ontology_id": "ob", "entity_key": "Y2"},
+                "confidence": 0.7,
+            },
+            {  # duplicate of the surviving pair -> must be deduped out
+                "source_a": {"ontology_id": "oa", "entity_key": "Z"},
+                "source_b": {"ontology_id": "ob", "entity_key": "W"},
+                "confidence": 0.9,
+            },
+        ]
+        with (
+            patch.object(al.alignment_repo, "get_session", return_value=self._session()),
+            patch.object(al.alignment_repo, "list_correspondences", return_value=existing),
+            patch.object(al.alignment_repo, "delete_correspondences", return_value=1) as mk_del,
+            patch.object(al, "generate_candidates", return_value=fresh) as mk_gen,
+            patch.object(al.alignment_repo, "save_correspondences", return_value=1) as mk_save,
+        ):
+            out = al.refresh_alignment(
+                db, session_id="S1", changed_ontology_id="oa", changed_keys=["X"]
+            )
+
+        assert out["removed_stale"] == 1
+        assert out["removed_accepted"] == 1
+        assert out["added"] == 1  # only the non-duplicate fresh candidate
+        assert out["preserved"] == 1
+        assert out["master_stale"] is True
+        # scoped generation received the changed key
+        assert mk_gen.call_args.kwargs["scope"] == {"oa": {"X"}}
+        # only the stale correspondence key was deleted
+        assert mk_del.call_args.args[1] == ["c1"]
+        # the deduped candidate (Z-W) is not saved
+        saved = mk_save.call_args.args[2]
+        assert len(saved) == 1
+        assert saved[0]["source_b"]["entity_key"] == "Y2"
+
+    def test_ontology_not_in_session_is_skipped(self) -> None:
+        db = MagicMock()
+        with patch.object(al.alignment_repo, "get_session", return_value=self._session()):
+            out = al.refresh_alignment(
+                db, session_id="S1", changed_ontology_id="other", changed_keys=["X"]
+            )
+        assert out["added"] == 0 and out["removed_stale"] == 0
+        assert "skipped" in out
+
+    def test_missing_session_raises(self) -> None:
+        db = MagicMock()
+        with (
+            patch.object(al.alignment_repo, "get_session", return_value=None),
+            pytest.raises(ValueError, match="not found"),
+        ):
+            al.refresh_alignment(
+                db, session_id="nope", changed_ontology_id="oa", changed_keys=["X"]
+            )
+
+
+class TestRefreshSessionsForOntology:
+    def test_cascades_to_all_sessions(self) -> None:
+        db = MagicMock()
+        sessions = [{"_key": "S1"}, {"_key": "S2"}]
+        with (
+            patch.object(al.alignment_repo, "find_sessions_for_ontology", return_value=sessions),
+            patch.object(al, "refresh_alignment", return_value={"added": 1}) as mk_ref,
+        ):
+            out = al.refresh_sessions_for_ontology(db, ontology_id="oa", changed_keys=["X"])
+        assert out["sessions_refreshed"] == 2
+        assert mk_ref.call_count == 2
+        assert {c.kwargs["session_id"] for c in mk_ref.call_args_list} == {"S1", "S2"}

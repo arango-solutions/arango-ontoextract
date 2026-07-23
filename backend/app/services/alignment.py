@@ -55,12 +55,18 @@ def generate_candidates(
     source_ontology_ids: list[str],
     min_score: float = 0.5,
     weights: dict[str, float] | None = None,
+    scope: dict[str, set[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Score cross-source class pairs and return candidate correspondences.
 
     Returns a list of correspondence dicts (without persistence fields), sorted
     by confidence descending. Same-source pairs are never emitted. Requires ≥2
     distinct source ontologies.
+
+    ``scope`` (AL-PR10) restricts generation to pairs touching a changed entity:
+    ``{ontology_id: {entity_key, ...}}``. When set, a pair is emitted only if at
+    least one of its two nodes is in scope, so a source edit re-aligns just the
+    affected subset instead of the full NxM product.
     """
     oids = list(dict.fromkeys(source_ontology_ids))  # dedup, preserve order
     if len(oids) < 2 or not db.has_collection("ontology_classes"):
@@ -89,11 +95,18 @@ def generate_candidates(
     for row in rows:
         by_oid[str(row.get("ontology_id") or "")].append(row)
 
+    def _in_scope(oid: str, key: str) -> bool:
+        return scope is not None and key in scope.get(oid, set())
+
     candidates: list[dict[str, Any]] = []
     for i in range(len(oids)):
         for j in range(i + 1, len(oids)):
             for a in by_oid.get(oids[i], []):
                 for b in by_oid.get(oids[j], []):
+                    if scope is not None and not (
+                        _in_scope(oids[i], a["_key"]) or _in_scope(oids[j], b["_key"])
+                    ):
+                        continue  # scoped refresh: only pairs touching a changed class
                     scored = matching.score_candidate(a, b, weights=weights)
                     combined = scored["combined"]
                     if combined < min_score:
@@ -572,4 +585,145 @@ def materialize_master(
         "equivalence_edges": edge_count,
         "cluster_count": class_count,
         "repair": {"removed": len(repair_removals), "removals": repair_removals},
+    }
+
+
+# ---------------------------------------------------------------------------
+# AL-PR10 — iterative refinement (re-align on source change, scoped)
+# ---------------------------------------------------------------------------
+
+
+def _correspondence_nodes(c: dict[str, Any]) -> list[tuple[str, str]]:
+    a = c.get("source_a") or {}
+    b = c.get("source_b") or {}
+    return [
+        (str(a.get("ontology_id")), str(a.get("entity_key"))),
+        (str(b.get("ontology_id")), str(b.get("entity_key"))),
+    ]
+
+
+def _touches(c: dict[str, Any], ontology_id: str, keys: set[str]) -> bool:
+    return any(oid == ontology_id and key in keys for oid, key in _correspondence_nodes(c))
+
+
+def refresh_alignment(
+    db: StandardDatabase | None = None,
+    *,
+    session_id: str,
+    changed_ontology_id: str,
+    changed_keys: list[str],
+) -> dict[str, Any]:
+    """Re-align just the correspondences affected by a source change (RE-3).
+
+    Scoped, dependency-directed: correspondences touching a changed class are
+    removed (their prior human decisions are invalidated by the edit and reported
+    in the summary), then fresh candidates are generated **only** for pairs that
+    involve a changed class (via ``generate_candidates(scope=...)``) and appended.
+    Correspondences on untouched pairs — and their curation decisions — are
+    preserved. A removed/expired class simply produces no new candidates, so its
+    stale correspondences are dropped. Returns a summary of the delta.
+
+    Does not re-materialize: if the session already produced a master, the summary
+    flags ``master_stale`` so a caller can re-run ``materialize_master``.
+    """
+    if db is None:
+        db = get_db()
+    session = alignment_repo.get_session(db, session_id)
+    if session is None:
+        raise ValueError(f"alignment session '{session_id}' not found")
+
+    oids = list(session.get("source_ontology_ids") or [])
+    changed = set(changed_keys)
+    if changed_ontology_id not in oids or not changed:
+        return {
+            "session_id": session_id,
+            "changed_ontology_id": changed_ontology_id,
+            "removed_stale": 0,
+            "removed_accepted": 0,
+            "added": 0,
+            "preserved": 0,
+            "skipped": "ontology not in session or no changed keys",
+        }
+
+    params = session.get("params") or {}
+    min_score = float(params.get("min_score", 0.5))
+    weights = params.get("weights")
+
+    existing = alignment_repo.list_correspondences(db, session_id, limit=1_000_000)
+    stale = [c for c in existing if _touches(c, changed_ontology_id, changed)]
+    stale_keys = [str(c["_key"]) for c in stale]
+    removed_accepted = sum(1 for c in stale if c.get("status") == "accepted")
+    removed_rejected = sum(1 for c in stale if c.get("status") == "rejected")
+    surviving_pairs = {
+        frozenset(_correspondence_nodes(c))
+        for c in existing
+        if str(c["_key"]) not in set(stale_keys)
+    }
+
+    alignment_repo.delete_correspondences(db, stale_keys)
+
+    scoped = generate_candidates(
+        db,
+        source_ontology_ids=oids,
+        min_score=min_score,
+        weights=weights,
+        scope={changed_ontology_id: changed},
+    )
+    fresh = [c for c in scoped if frozenset(_correspondence_nodes(c)) not in surviving_pairs]
+    added = alignment_repo.save_correspondences(db, session_id, fresh)
+
+    log.info(
+        "[alignment] refreshed session %s for %d changed %s classes: -%d stale (+%d "
+        "accepted/%d rejected invalidated), +%d candidates, %d preserved",
+        session_id,
+        len(changed),
+        changed_ontology_id,
+        len(stale_keys),
+        removed_accepted,
+        removed_rejected,
+        added,
+        len(surviving_pairs),
+    )
+    return {
+        "session_id": session_id,
+        "changed_ontology_id": changed_ontology_id,
+        "changed_keys": sorted(changed),
+        "removed_stale": len(stale_keys),
+        "removed_accepted": removed_accepted,
+        "removed_rejected": removed_rejected,
+        "added": added,
+        "preserved": len(surviving_pairs),
+        "master_stale": session.get("target_master_id") is not None,
+    }
+
+
+def refresh_sessions_for_ontology(
+    db: StandardDatabase | None = None,
+    *,
+    ontology_id: str,
+    changed_keys: list[str],
+) -> dict[str, Any]:
+    """Cascade a source change to every alignment session that uses it (RE-3).
+
+    Finds all sessions whose sources include ``ontology_id`` and scoped-refreshes
+    each. Returns the per-session summaries so a caller/UI can surface which
+    masters went stale.
+    """
+    if db is None:
+        db = get_db()
+    sessions = alignment_repo.find_sessions_for_ontology(db, ontology_id)
+    results = [
+        refresh_alignment(
+            db,
+            session_id=str(s["_key"]),
+            changed_ontology_id=ontology_id,
+            changed_keys=changed_keys,
+        )
+        for s in sessions
+    ]
+    return {
+        "ontology_id": ontology_id,
+        "changed_keys": sorted(set(changed_keys)),
+        "sessions_refreshed": len(results),
+        "results": results,
     }

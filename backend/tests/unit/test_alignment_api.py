@@ -166,3 +166,36 @@ class TestDecideCandidate:
         with patch.object(alignment_svc, "set_candidate_status", return_value=None):
             resp = client.post("/api/v1/alignment/candidates/nope/accept")
         assert resp.status_code == 404
+
+
+class TestRefreshSession:
+    def test_refresh_threads_params(self) -> None:
+        summary = {"session_id": "S1", "removed_stale": 2, "added": 3, "master_stale": True}
+        with patch.object(alignment_svc, "refresh_alignment", return_value=summary) as mk:
+            resp = client.post(
+                "/api/v1/alignment/sessions/S1/refresh",
+                json={"changed_ontology_id": "oa", "changed_keys": ["X", "Y"]},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["added"] == 3
+        assert mk.call_args.kwargs["changed_ontology_id"] == "oa"
+        assert mk.call_args.kwargs["changed_keys"] == ["X", "Y"]
+
+    def test_refresh_404_when_session_missing(self) -> None:
+        with patch.object(
+            alignment_svc,
+            "refresh_alignment",
+            side_effect=ValueError("alignment session 'x' not found"),
+        ):
+            resp = client.post(
+                "/api/v1/alignment/sessions/x/refresh",
+                json={"changed_ontology_id": "oa", "changed_keys": ["X"]},
+            )
+        assert resp.status_code == 404
+
+    def test_refresh_422_on_empty_changed_keys(self) -> None:
+        resp = client.post(
+            "/api/v1/alignment/sessions/S1/refresh",
+            json={"changed_ontology_id": "oa", "changed_keys": []},
+        )
+        assert resp.status_code == 422

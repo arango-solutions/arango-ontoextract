@@ -150,3 +150,28 @@ def set_correspondence_status(
     col.update({"_key": correspondence_key, "status": status, "decided_at": time.time()})
     updated = col.get(correspondence_key)
     return updated if isinstance(updated, dict) else None
+
+
+def find_sessions_for_ontology(db: StandardDatabase, ontology_id: str) -> list[dict[str, Any]]:
+    """Return alignment sessions whose sources include ``ontology_id`` (AL-PR10)."""
+    if not db.has_collection(SESSIONS):
+        return []
+    return list(
+        run_aql(
+            db,
+            f"FOR s IN {SESSIONS} FILTER @oid IN s.source_ontology_ids RETURN s",
+            bind_vars={"oid": ontology_id},
+        )
+    )
+
+
+def delete_correspondences(db: StandardDatabase, keys: list[str]) -> int:
+    """Remove correspondences by ``_key``; returns the number removed (AL-PR10)."""
+    if not keys or not db.has_collection(CORRESPONDENCES):
+        return 0
+    removed = run_aql(
+        db,
+        f"FOR c IN {CORRESPONDENCES} FILTER c._key IN @keys REMOVE c IN {CORRESPONDENCES} RETURN 1",
+        bind_vars={"keys": keys},
+    )
+    return sum(1 for _ in removed)
