@@ -158,6 +158,60 @@ def _recommendation(verdict: str, confidence: float) -> str:
     return "review"
 
 
+_ACCEPT_VERDICTS = frozenset({"equivalent", "subclass", "superclass"})
+
+
+def _llm_proposes_match(verdict: dict[str, Any]) -> bool:
+    return (
+        str(verdict.get("verdict")) in _ACCEPT_VERDICTS
+        and float(verdict.get("confidence") or 0.0) >= 0.5
+    )
+
+
+def ensemble_adjudicate(
+    verdict: dict[str, Any],
+    scores: dict[str, Any],
+    *,
+    anchor_threshold: float | None = None,
+) -> dict[str, Any]:
+    """Cross-check an LLM verdict against the classical anchor (AL-PR8).
+
+    Returns the ensemble decision fields to merge into the adjudication record:
+    ``classical`` (the anchor), ``grounded``, ``disagreement``, ``hallucination``
+    and a ``recommendation`` / ``review_priority`` that enforce FR-17.9 / FR-17.10:
+
+    * **Hallucination control (FR-17.10):** an LLM match with no grounded source
+      anchor is never recommended for acceptance — routed to ``review``.
+    * **Disagreement prioritization (FR-17.9):** when the LLM and the classical
+      anchor disagree, route to ``review`` and rank it ahead of agreements.
+    """
+    threshold = (
+        anchor_threshold
+        if anchor_threshold is not None
+        else settings.alignment_classical_anchor_threshold
+    )
+    anchor = matching.get_classical_anchor(scores, threshold=threshold)
+    grounded = bool(anchor["anchored"])
+    llm_match = _llm_proposes_match(verdict)
+    disagreement = llm_match != grounded
+    hallucination = llm_match and not grounded
+
+    base = _recommendation(
+        str(verdict.get("verdict") or ""), float(verdict.get("confidence") or 0.0)
+    )
+    recommendation = "review" if (hallucination or disagreement) else base
+    review_priority = 2 if hallucination else (1 if disagreement else 0)
+
+    return {
+        "classical": anchor,
+        "grounded": grounded,
+        "disagreement": disagreement,
+        "hallucination": hallucination,
+        "recommendation": recommendation,
+        "review_priority": review_priority,
+    }
+
+
 async def adjudicate_candidate(
     a_label: str,
     b_label: str,
@@ -233,14 +287,23 @@ async def adjudicate_session(
 
     cands = alignment_repo.list_correspondences(db, session_id, status="candidate", limit=10_000)
     llm_calls = 0
+    hallucinations = 0
+    disagreements = 0
     for c in cands:
         confidence = float(c.get("confidence") or 0.0)
+        scores = c.get("scores") or {}
         if confidence >= band:
+            # Classical/high-score auto-accept: attach the anchor for transparency
+            # but leave the recommendation (this is not an LLM correspondence, so
+            # FR-17.10's LLM-grounding gate does not apply).
             adj = {
                 "method": "score",
                 "verdict": "equivalent",
                 "confidence": confidence,
                 "recommendation": "accept",
+                "classical": matching.get_classical_anchor(
+                    scores, threshold=settings.alignment_classical_anchor_threshold
+                ),
             }
             new_type = c.get("type")
         else:
@@ -249,28 +312,36 @@ async def adjudicate_session(
             verdict = await adjudicate_candidate(
                 str(src_a.get("label") or ""),
                 str(src_b.get("label") or ""),
-                c.get("scores") or {},
+                scores,
                 model=model,
             )
             llm_calls += 1
-            adj = {
-                "method": "llm",
-                **verdict,
-                "recommendation": _recommendation(verdict["verdict"], verdict["confidence"]),
-            }
+            ensemble = ensemble_adjudicate(verdict, scores)
+            adj = {"method": "llm", **verdict, **ensemble}
+            hallucinations += int(ensemble["hallucination"])
+            disagreements += int(ensemble["disagreement"])
             new_type = _type_from_verdict(verdict["verdict"], c.get("type") or "skos:relatedMatch")
         alignment_repo.set_correspondence_adjudication(
             db, c["_key"], adj, correspondence_type=new_type
         )
 
     log.info(
-        "[alignment] adjudicated session %s: %d candidates, %d LLM calls (band=%.2f)",
+        "[alignment] adjudicated session %s: %d candidates, %d LLM calls (band=%.2f), "
+        "%d hallucination-flagged, %d disagreements",
         session_id,
         len(cands),
         llm_calls,
         band,
+        hallucinations,
+        disagreements,
     )
-    return {"session_id": session_id, "adjudicated": len(cands), "llm_calls": llm_calls}
+    return {
+        "session_id": session_id,
+        "adjudicated": len(cands),
+        "llm_calls": llm_calls,
+        "hallucination_flagged": hallucinations,
+        "disagreements": disagreements,
+    }
 
 
 def create_alignment_session(

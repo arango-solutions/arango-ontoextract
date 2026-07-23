@@ -287,12 +287,21 @@ lose the "CQs scope everything" benefit until S22 lands, so prefer the parallel 
   disjoint-pair query, and the materialize integration (drops the incoherent edge, persists
   the audit). ✅
 
-**AL-PR8 · Classical-anchor ensemble + hallucination control**
-- **Files:** optional LogMap/AML signal adapter (`services/matching.py` ensemble hook);
-  OAEI-LLM-style validation that every LLM correspondence has a grounded source anchor;
-  disagreements flagged for humans.
-- **Deps:** AL-PR3. **Acceptance (FR-17.9, FR-17.10):** disagreements prioritized; ungrounded
-  never auto-accepted. **Tests:** disagreement prioritization + ungrounded flag.
+**AL-PR8 · Classical-anchor ensemble + hallucination control** — DONE
+- **Files:** `matching.classical_anchor` (non-LLM, non-embedding lexical/structural anchor —
+  the "source labels/axioms" grounding OAEI-LLM checks against) + a pluggable
+  `set_classical_matcher`/`get_classical_anchor` hook so a LogMap/AML adapter can be
+  installed; `alignment.ensemble_adjudicate` cross-checks each LLM verdict against the anchor
+  and is wired into `adjudicate_session`. Flag `alignment_classical_anchor_threshold`.
+- **Deps:** AL-PR3. **Acceptance (FR-17.9, FR-17.10):** an LLM match lacking a grounded
+  source anchor is flagged `hallucination` and **never recommended for acceptance** (routed
+  to `review`, `review_priority=2`); LLM-vs-classical disagreements are flagged and
+  prioritized (`review`, `review_priority=1`); `adjudicate_session` returns
+  `hallucination_flagged` + `disagreements` counts. The classical/high-score auto-accept path
+  carries the anchor for transparency but keeps its recommendation (not an LLM correspondence).
+  **Tests:** `classical_anchor` (embedding excluded, structural counts, hook override),
+  `ensemble_adjudicate` (grounded-accept / ungrounded-hallucination / disagreement /
+  both-negative-reject), and the `adjudicate_session` integration. ✅
 
 ### Sprint 20C — P3 (eval + scale)
 **AL-PR9 · Evaluation harness**

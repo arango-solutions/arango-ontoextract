@@ -107,6 +107,11 @@ class Settings(BaseSettings):
     #: modular repair so the reconciled master is coherent (no disjoint pair merged
     #: into one equivalence class). Removals are always reported (PRD §6.17 FR-17.5).
     alignment_repair_enabled: bool = True
+    #: Stream 20 AL-PR8 — lexical/structural anchor threshold for the classical
+    #: ensemble. An LLM correspondence below it lacks a grounded source anchor and
+    #: is never auto-accepted (routed to review); LLM-vs-classical disagreements are
+    #: prioritized (PRD §6.17 FR-17.9 / FR-17.10).
+    alignment_classical_anchor_threshold: float = 0.6
     #: Stream 21 — enable assertion-graph (A-box) extraction (PRD §6.18). Gates
     #: any pipeline-driven A-box run; the service is also invocable explicitly.
     extract_abox: bool = False

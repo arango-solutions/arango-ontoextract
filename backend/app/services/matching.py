@@ -26,12 +26,15 @@ denominator is 1.0).
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 # Default weights for ontology alignment (Stream 20). Callers such as ER pass
 # their own weights to preserve their historical blend.
 DEFAULT_WEIGHTS: dict[str, float] = {"label": 0.4, "description": 0.2, "embedding": 0.4}
+
+# Default lexical/structural threshold for a *classical* anchor (Stream 20 AL-PR8).
+CLASSICAL_ANCHOR_THRESHOLD: float = 0.6
 
 
 def jaro_winkler_sim(s1: str, s2: str) -> float:
@@ -188,3 +191,63 @@ def score_candidate(
     out = {k: round(v, 4) for k, v in scores.items()}
     out["combined"] = round(combined, 4)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Classical-anchor ensemble (Stream 20 / AL-PR8, PRD §6.17 FR-17.9 / FR-17.10)
+# ---------------------------------------------------------------------------
+#
+# Classical matchers (LogMap/AML) have plateaued on OAEI, so AOE retains them as
+# *anchors*, not the primary engine (PRD §6.17). The built-in anchor uses the
+# non-LLM, non-embedding lexical/structural signals — the "source labels/axioms"
+# grounding OAEI-LLM hallucination control checks an LLM correspondence against.
+# ``embedding`` is deliberately excluded: it is the semantic retrieval signal, not
+# a source-label anchor. An external LogMap/AML adapter can be plugged in via
+# ``set_classical_matcher`` (it receives the per-signal scores and returns the same
+# anchor dict).
+
+
+def classical_anchor(
+    scores: Mapping[str, Any],
+    *,
+    threshold: float = CLASSICAL_ANCHOR_THRESHOLD,
+) -> dict[str, Any]:
+    """Return the classical lexical/structural anchor for a candidate's scores.
+
+    ``{anchored, anchor_score, threshold}`` — ``anchored`` iff the strongest of the
+    label / description / structural signals meets ``threshold``. Embedding is
+    excluded on purpose (see module note).
+    """
+    lexical = max(
+        float(scores.get("label") or 0.0),
+        float(scores.get("description") or 0.0),
+        float(scores.get("structural") or 0.0),
+    )
+    return {
+        "anchored": lexical >= threshold,
+        "anchor_score": round(lexical, 4),
+        "threshold": threshold,
+    }
+
+
+# Pluggable classical-matcher hook. Defaults to the built-in lexical anchor; an
+# integrator can install a LogMap/AML-backed signal with ``set_classical_matcher``.
+ClassicalMatcher = Callable[[Mapping[str, Any]], dict[str, Any]]
+_CLASSICAL_MATCHER: ClassicalMatcher | None = None
+
+
+def set_classical_matcher(fn: ClassicalMatcher | None) -> None:
+    """Install (or clear, with ``None``) an external classical-matcher adapter."""
+    global _CLASSICAL_MATCHER
+    _CLASSICAL_MATCHER = fn
+
+
+def get_classical_anchor(
+    scores: Mapping[str, Any],
+    *,
+    threshold: float = CLASSICAL_ANCHOR_THRESHOLD,
+) -> dict[str, Any]:
+    """Anchor via the installed adapter if any, else the built-in lexical anchor."""
+    if _CLASSICAL_MATCHER is not None:
+        return _CLASSICAL_MATCHER(scores)
+    return classical_anchor(scores, threshold=threshold)

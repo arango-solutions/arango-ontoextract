@@ -111,3 +111,41 @@ class TestScoreCandidate:
     def test_all_signals_empty_combined_zero(self) -> None:
         res = score_candidate({}, {})
         assert res["combined"] == 0.0
+
+
+class TestClassicalAnchor:
+    def test_anchored_when_lexical_meets_threshold(self):
+        from app.services.matching import classical_anchor
+
+        a = classical_anchor({"label": 0.8, "embedding": 0.99}, threshold=0.6)
+        assert a["anchored"] is True
+        assert a["anchor_score"] == 0.8  # embedding excluded from the anchor
+
+    def test_not_anchored_when_only_embedding_high(self):
+        from app.services.matching import classical_anchor
+
+        # high embedding but weak lexical/structural -> NOT a classical anchor
+        a = classical_anchor({"label": 0.2, "description": 0.1, "embedding": 0.97}, threshold=0.6)
+        assert a["anchored"] is False
+        assert a["anchor_score"] == 0.2
+
+    def test_structural_counts_as_anchor(self):
+        from app.services.matching import classical_anchor
+
+        a = classical_anchor({"label": 0.1, "structural": 0.9}, threshold=0.6)
+        assert a["anchored"] is True
+
+    def test_pluggable_matcher_hook_overrides(self):
+        from app.services import matching as m
+
+        m.set_classical_matcher(
+            lambda scores: {"anchored": True, "anchor_score": 1.0, "src": "logmap"}
+        )
+        try:
+            out = m.get_classical_anchor({"label": 0.0})
+            assert out["anchored"] is True
+            assert out["src"] == "logmap"
+        finally:
+            m.set_classical_matcher(None)
+        # after reset, built-in lexical anchor is used again
+        assert m.get_classical_anchor({"label": 0.0})["anchored"] is False

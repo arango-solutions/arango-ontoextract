@@ -307,7 +307,15 @@ class TestAdjudicateSession:
         ):
             out = await al.adjudicate_session(db, session_id="S1", auto_accept_band=0.92)
 
-        assert out == {"session_id": "S1", "adjudicated": 2, "llm_calls": 1}
+        # c2's mock scores carry no lexical signal -> ungrounded LLM match ->
+        # hallucination-flagged + disagreement (AL-PR8 ensemble).
+        assert out == {
+            "session_id": "S1",
+            "adjudicated": 2,
+            "llm_calls": 1,
+            "hallucination_flagged": 1,
+            "disagreements": 1,
+        }
         adj.assert_awaited_once()  # only the borderline c2 hit the LLM
         # c1 auto-accepted via score; c2 llm-adjudicated to rdfs:subClassOf
         by_key = {call.args[1]: call for call in setadj.call_args_list}
@@ -315,3 +323,48 @@ class TestAdjudicateSession:
         assert by_key["c1"].args[2]["recommendation"] == "accept"
         assert by_key["c2"].args[2]["method"] == "llm"
         assert by_key["c2"].kwargs["correspondence_type"] == "rdfs:subClassOf"
+        # ungrounded LLM correspondence is never auto-accepted (FR-17.10)
+        assert by_key["c2"].args[2]["recommendation"] == "review"
+        assert by_key["c2"].args[2]["hallucination"] is True
+
+
+class TestEnsembleAdjudicate:
+    def _verdict(self, v="equivalent", conf=0.9):
+        return {"verdict": v, "confidence": conf, "rationale": "r"}
+
+    def test_grounded_match_recommends_accept(self) -> None:
+        # strong lexical anchor + LLM says equivalent -> agree -> accept
+        out = al.ensemble_adjudicate(self._verdict(), {"label": 0.95}, anchor_threshold=0.6)
+        assert out["grounded"] is True
+        assert out["hallucination"] is False
+        assert out["disagreement"] is False
+        assert out["recommendation"] == "accept"
+        assert out["review_priority"] == 0
+
+    def test_ungrounded_llm_match_is_hallucination_and_review(self) -> None:
+        # LLM says equivalent but no lexical anchor -> hallucination -> review (FR-17.10)
+        out = al.ensemble_adjudicate(self._verdict(), {"label": 0.1}, anchor_threshold=0.6)
+        assert out["grounded"] is False
+        assert out["hallucination"] is True
+        assert out["recommendation"] == "review"
+        assert out["review_priority"] == 2
+
+    def test_classical_anchor_but_llm_rejects_is_disagreement(self) -> None:
+        # strong anchor but LLM says none -> disagreement -> review (FR-17.9)
+        out = al.ensemble_adjudicate(
+            self._verdict(v="none", conf=0.9), {"label": 0.95}, anchor_threshold=0.6
+        )
+        assert out["grounded"] is True
+        assert out["hallucination"] is False
+        assert out["disagreement"] is True
+        assert out["recommendation"] == "review"
+        assert out["review_priority"] == 1
+
+    def test_both_negative_agree_reject(self) -> None:
+        # no anchor + LLM says none -> agree (both negative) -> reject, not flagged
+        out = al.ensemble_adjudicate(
+            self._verdict(v="none", conf=0.9), {"label": 0.1}, anchor_threshold=0.6
+        )
+        assert out["disagreement"] is False
+        assert out["hallucination"] is False
+        assert out["recommendation"] == "reject"
