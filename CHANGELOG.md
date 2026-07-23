@@ -8,6 +8,38 @@ The backend version is the single source of truth in `backend/app/__init__.py`.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-07-23
+
+Completes the multi-source ontology alignment stream (Stream 20) with its P2/P3
+depth — coherence repair, a classical ensemble with hallucination control, an
+evaluation harness, and iterative refinement. All additive and flag-gated where it
+changes behavior; the P1 flow is unchanged.
+
+### Added
+
+- **Incoherence detection + minimally-destructive repair (AL-PR7, FR-17.5):** before
+  materializing a master, `alignment_repair` detects clusters that merge a declared
+  `disjoint_with` pair (unsatisfiable) and removes the single lowest-confidence
+  correspondence on the connecting path, iterating until coherent. Every removal is
+  reported (result + durable `repair_removals` on the master). Flag
+  `alignment_repair_enabled` (default on; no-op when no disjointness is declared).
+- **Classical-anchor ensemble + hallucination control (AL-PR8, FR-17.9/17.10):**
+  `matching.classical_anchor` scores a non-LLM, non-embedding lexical/structural
+  anchor (pluggable LogMap/AML adapter via `set_classical_matcher`);
+  `alignment.ensemble_adjudicate` never recommends an LLM correspondence that lacks a
+  grounded anchor (routed to review, `review_priority=2`) and prioritizes
+  LLM-vs-classical disagreements. `adjudicate_session` reports `hallucination_flagged`
+  + `disagreements`. Flag `alignment_classical_anchor_threshold`.
+- **Evaluation harness (AL-PR9, FR-17.11):** `alignment_eval` provides precision/
+  recall/F1 vs a reference alignment and the OAEI-Interactive interaction-count-vs-
+  F-measure curve (human-effort efficiency + `interactions_to_target`); runnable via
+  `python -m benchmarks.operations.bench_alignment` over a seeded fixture.
+- **Iterative refinement (AL-PR10, RE-3):** `alignment.refresh_alignment` re-aligns
+  only the subset affected by a source-ontology change (`generate_candidates(scope=)`),
+  preserving untouched correspondences + curation and reporting invalidated decisions;
+  `refresh_sessions_for_ontology` cascades to every dependent session.
+  `POST /alignment/sessions/{id}/refresh`.
+
 ## [1.6.0] - 2026-07-22
 
 Closes the use-case-driven requirements loop (Stream 22) and completes the
