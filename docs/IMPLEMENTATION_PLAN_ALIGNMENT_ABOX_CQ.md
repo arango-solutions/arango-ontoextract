@@ -304,10 +304,20 @@ lose the "CQs scope everything" benefit until S22 lands, so prefer the parallel 
   both-negative-reject), and the `adjudicate_session` integration. ✅
 
 ### Sprint 20C — P3 (eval + scale)
-**AL-PR9 · Evaluation harness**
-- **Files:** `benchmarks/operations/bench_alignment.py` — P/R/F1 vs a reference alignment +
-  interaction-count-vs-F-measure curve (OAEI-Interactive style); seeded fixture.
-- **Deps:** AL-PR6. **Acceptance (FR-17.11):** metrics + human-effort curve reported.
+**AL-PR9 · Evaluation harness** — DONE
+- **Files:** reusable metric functions in `app/services/alignment_eval.py`
+  (`norm_pair`/`pair_from_correspondence`, `prf1`, `interaction_curve`,
+  `interactions_to_target`) so they run under the backend gate; runner + seeded fixture
+  + CLI in `benchmarks/operations/bench_alignment.py`
+  (`python -m benchmarks.operations.bench_alignment`).
+- **Deps:** AL-PR6. **Acceptance (FR-17.11):** P/R/F1 vs a reference alignment; the
+  OAEI-Interactive interaction-count-vs-F-measure curve (high-confidence auto-accept at zero
+  interactions — false positives persist and drag precision, as in a real run — then a human
+  oracle confirms borderline candidates in ranked order, F1 recorded per interaction); and the
+  headline `interactions_to_target` efficiency number. Seeded fixture: 6 gold + 2 FPs → baseline
+  F1 0.444 rising to 0.923, reaching 0.9 in 5 confirmations. **Tests:** prf1 (perfect/partial/
+  empty), curve (baseline + rising + reject + precision cap + priority-key ordering),
+  interactions-to-target, and a deterministic bench-fixture pin. ✅
 
 **AL-PR10 · Iterative refinement (RE-3)**
 - **Files:** re-align on source change; dependency-directed cascade (overlaps belief-management
