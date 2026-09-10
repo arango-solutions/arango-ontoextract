@@ -197,18 +197,20 @@ setup-branch-protection: ## Tier C: apply GitHub branch protection on `main` (re
 	bash scripts/setup-branch-protection.sh
 
 # ---------------------------------------------------------------------------
-# Dual-repo workflow (personal fork = active, org repo = release artifact)
+# Dual-repo workflow (org repo = primary, personal fork = mirror)
 # See docs/git-hygiene.md "Solo-dev workflow" for the full picture.
 # ---------------------------------------------------------------------------
-# These targets assume the remote layout produced by setup-dual-push-remotes:
-#   origin     -> personal fork  (default for `git push`, daily work)
-#   upstream   -> org repo        (release pushes only, gated by hook)
+# Remote layout as of 2026-09-08 (org repo promoted to primary):
+#   origin  -> arango-solutions for FETCH, and pushes to BOTH
+#              arango-solutions and the ArthurKeen fork (two push URLs)
+#   fork    -> ArthurKeen only (explicit pushes / fetches)
+# So a plain `git push` lands on both repos, and `main` tracks origin.
 # Override remote names via env if your setup differs:
 ORIGIN_REMOTE   ?= origin
-UPSTREAM_REMOTE ?= upstream
+UPSTREAM_REMOTE ?= origin
 RELEASE_BRANCH  ?= main
 
-setup-dual-push-remotes: ## One-shot: fix dual-push misconfig and rename arango-solutions -> upstream
+setup-dual-push-remotes: ## One-shot: point origin at arango-solutions and dual-push to the fork
 	bash scripts/setup-dual-push-remotes.sh
 
 # `make release-to-org TAG=v0.4.0` is the ONLY supported way to land code

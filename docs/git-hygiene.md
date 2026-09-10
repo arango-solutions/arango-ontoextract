@@ -119,25 +119,33 @@ These names must match the `name:` fields of the jobs in
 ## Solo-dev workflow
 
 When you're the only developer on a repo, the PR-based flow is overhead
-without a payoff (you're reviewing your own code). The solo-dev workflow
-splits the world into two remotes and uses Tier B as the real gate:
+without a payoff (you're reviewing your own code). Tier B is the real gate,
+and the two remotes exist so the org repo and a personal mirror stay in step:
 
-| Remote | Role | Push frequency |
+| Remote | Role | What it receives |
 | --- | --- | --- |
-| `origin` (your personal fork) | Active development scratchpad | Every commit |
-| `upstream` (org/release repo) | Release artifact, externally visible | Only on tagged releases |
+| `origin` (`arango-solutions`) | **Primary** — fetch/pull source | Every push (first of two push URLs) |
+| `fork` (`ArthurKeen`) | Mirror | Every push (second push URL on `origin`) |
 
-Daily commits flow to `origin` only. The org repo stays clean — it sees
-your code only when you cut a release with `make release-to-org`.
+`origin` carries **two push URLs**, so one `git push` lands on both repos, and
+`main` tracks `origin/main`.
+
+> **Changed 2026-09-08.** This is the reverse of the earlier layout, where
+> `origin` was the personal fork, `upstream` was the org repo, and daily commits
+> deliberately never reached arango-solutions — it saw code only at a tagged
+> release. The `protect-upstream-push` pre-push hook that enforced that is now
+> unwired; the block is kept, commented out, in `.pre-commit-config.yaml`.
+> Restoring it means also pointing `main` back at the fork, or every push of
+> `main` gets refused.
 
 ### One-shot setup
 
 ```bash
-# 1) Reconfigure remotes so `git push` only ever hits the personal fork.
+# 1) Reconfigure remotes: origin -> org repo (fetch) and dual-push to the fork.
 make setup-dual-push-remotes
-#    Detects the dual-push misconfig (origin with two push URLs) and the
-#    arango-solutions remote, fixes both. Renames arango-solutions ->
-#    upstream by GitHub fork-workflow convention.
+#    Promotes an existing `upstream` / `arango-solutions` remote to `origin`,
+#    demotes the old fork-flavoured `origin` to `fork`, gives `origin` both
+#    push URLs, and repoints `main` at `origin/main`. Idempotent.
 
 # 2) Apply the minimal branch-protection profile on the org repo.
 scripts/setup-branch-protection.sh        # PROFILE=solo by default
@@ -147,10 +155,12 @@ scripts/setup-branch-protection.sh        # PROFILE=solo by default
 
 ```bash
 git commit -m "wip: trying a thing"
-git push                                  # → origin (personal fork) only
+git push                                  # → arango-solutions AND the fork
+git push fork my-branch                   # → the fork only, when you want that
 ```
 
-That's it. `upstream` sees nothing.
+Both repos now move together; the org repo is no longer held back between
+releases.
 
 ### Cutting a release
 
@@ -162,30 +172,28 @@ make release-to-org TAG=v0.4.0
 
 1. Refuses unless `TAG` matches `vX.Y.Z`.
 2. Refuses unless on `main` with a clean working tree.
-3. Refuses unless local `main` is a fast-forward of `upstream/main`
+3. Refuses unless local `main` is a fast-forward of the org remote's `main`
    (run `make sync-from-org` first if not).
 4. Runs `make pre-commit-run-all` (Tier A) and `make pre-commit-run-pre-push`
    (Tier B: jest + tsc + pytest + mypy + smoke).
 5. Creates the annotated tag (or reuses an existing one at HEAD).
-6. Pushes `main` and the tag to `upstream` in a single command.
+6. Pushes `main` and the tag in a single command.
 
-The local `protect-upstream-push` pre-push hook then verifies that the
-ref being pushed is either a non-protected branch, a release-shaped tag,
-or `main` with HEAD pointing at a release tag. Any other push to
-`upstream` is refused.
+Since the org repo now tracks `main` continuously, step 6 usually only adds
+the tag — the branch is already there. The tag is what marks the milestone;
+it no longer gates whether the code may land.
 
-### Pulling someone else's changes from upstream
+### Pulling someone else's changes
 
-If a collaborator merges a PR on the org repo (rare in solo mode, but
-possible), pull it into your fork:
+If a collaborator merges a PR on the org repo:
 
 ```bash
 make sync-from-org
 ```
 
-This fetches `upstream/main`, fast-forwards your local `main`, and pushes
-the result to `origin`. Refuses non-fast-forward merges so you notice
-divergence instead of papering over it.
+This fetches the org remote's `main`, fast-forwards your local `main`, and
+pushes the result (which, with dual-push, refreshes the fork too). Refuses
+non-fast-forward merges so you notice divergence instead of papering over it.
 
 ### Escape hatch
 

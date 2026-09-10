@@ -1,41 +1,47 @@
 #!/usr/bin/env bash
 # setup-dual-push-remotes.sh — one-shot reconfiguration of git remotes for
-# the "personal fork = active dev, org repo = release artifact" workflow.
+# the "org repo = primary, personal fork = mirror" workflow.
 #
 # Reconfigures the local clone's remotes so that:
-#   origin    -> personal fork           (default for `git push`)
-#   upstream  -> org/release repo        (explicit pushes only)
+#   origin  -> FETCHES from the org repo, and PUSHES to BOTH the org repo
+#              and the personal fork (two push URLs)
+#   fork    -> personal fork only (explicit fetches / pushes)
 #
-# Detects and fixes the common dual-push misconfiguration where origin has
-# multiple push URLs (one for fork, one for org). After this script runs,
-# `git push` only ever hits the personal fork.
+# Net effect: `git pull` and `git status` read from the org repo, and a
+# single `git push` lands on both repos.
+#
+# History (2026-09-08): this script previously enforced the opposite layout
+# — origin = personal fork, upstream = org repo, and it actively STRIPPED
+# extra push URLs so `git push` only ever hit the fork. The org repo was
+# then reached only through `make release-to-org TAG=vX.Y.Z`, gated by
+# scripts/githooks/protect-upstream-push.sh. That gate is now unwired (see
+# .pre-commit-config.yaml) because the org repo is the primary.
 #
 # Idempotent: rerun safely.
 #
 # Configuration (env vars; sane defaults for arango-ontoextract):
-#   ORIGIN_URL       URL the personal fork (origin) should fetch+push to.
-#                    Default: derived from current origin's fetch URL if
-#                    it already points at a personal fork pattern; else
-#                    error and ask user to set explicitly.
-#   UPSTREAM_URL     URL the org/release remote should fetch+push to.
-#                    Default: discovered by scanning existing remotes for
-#                    one matching UPSTREAM_PROTECTED_URL_PATTERN; else
-#                    error and ask user to set explicitly.
-#   UPSTREAM_PROTECTED_URL_PATTERN
-#                    Substring used both for discovery and as the value
-#                    saved into the protect-upstream-push.sh hook config.
+#   ORG_URL          URL of the primary/org repo. Default: discovered by
+#                    scanning existing remotes for ORG_URL_PATTERN.
+#                    (UPSTREAM_URL is accepted as a legacy alias.)
+#   FORK_URL         URL of the personal fork. Default: discovered as the
+#                    first non-org remote URL.
+#                    (ORIGIN_URL is accepted as a legacy alias.)
+#   ORG_URL_PATTERN  Substring identifying the org repo among the remotes.
 #                    Default: "arango-solutions/"
-#   UPSTREAM_REMOTE_NAME
-#                    What to name the protected remote.
-#                    Default: "upstream" (GitHub fork-workflow convention)
-#   DROP_REMOTES     Space-separated list of remote names to remove if
-#                    present (cleanup of legacy remotes).
+#                    (UPSTREAM_PROTECTED_URL_PATTERN is a legacy alias.)
+#   ORG_REMOTE_NAME  What to name the primary remote.  Default: "origin"
+#   FORK_REMOTE_NAME What to name the fork remote.     Default: "fork"
+#   TRACK_BRANCH     Branch to repoint at the org remote. Default: "main"
+#                    Set to "" to skip retargeting entirely.
+#   DROP_REMOTES     Space-separated remote names to remove if present.
 #                    Default: "" (don't remove anything)
 
 set -euo pipefail
 
-PATTERN="${UPSTREAM_PROTECTED_URL_PATTERN:-arango-solutions/}"
-UPSTREAM_REMOTE_NAME="${UPSTREAM_REMOTE_NAME:-upstream}"
+PATTERN="${ORG_URL_PATTERN:-${UPSTREAM_PROTECTED_URL_PATTERN:-arango-solutions/}}"
+ORG_REMOTE_NAME="${ORG_REMOTE_NAME:-origin}"
+FORK_REMOTE_NAME="${FORK_REMOTE_NAME:-fork}"
+TRACK_BRANCH="${TRACK_BRANCH-main}"
 
 cyan() { printf '\033[36m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
@@ -50,127 +56,176 @@ cyan "==> Current remotes:"
 git remote -v | sed 's/^/    /'
 echo
 
-# Discover URLs from existing config when not explicitly provided.
-discovered_origin_fetch="$(git remote get-url origin 2>/dev/null || true)"
-discovered_upstream=""
-while IFS=$'\t' read -r name url_and_kind; do
-	url="${url_and_kind% *}"
-	kind="${url_and_kind##* }"
-	[[ "${kind}" != "(fetch)" ]] && continue
-	if grep -q -- "${PATTERN}" <<<"${url}"; then
-		discovered_upstream="${url}"
-	fi
-done < <(git remote -v | awk '{print $1"\t"$2" "$3}')
+# --- Discover the two URLs from whatever layout we're starting in --------
+# Note: no `mapfile` / associative arrays anywhere in this script. macOS
+# ships bash 3.2 and the end-to-end test in
+# tests/unit/test_setup_dual_push_remotes.py runs it under /bin/bash, so a
+# bash-4-only construct fails CI on macOS runners.
+url_of() { git remote get-url "$1" 2>/dev/null || true; }
+matches_org() { grep -q -- "${PATTERN}" <<<"$1"; }
 
-ORIGIN_URL_FINAL="${ORIGIN_URL:-${discovered_origin_fetch}}"
-UPSTREAM_URL_FINAL="${UPSTREAM_URL:-${discovered_upstream}}"
-
-if [[ -z "${ORIGIN_URL_FINAL}" ]]; then
-	red "setup-dual-push-remotes: cannot determine ORIGIN_URL."
-	red "  Set it explicitly: ORIGIN_URL=https://github.com/<you>/<repo>.git $0"
-	exit 1
-fi
-
-if [[ -z "${UPSTREAM_URL_FINAL}" ]]; then
-	red "setup-dual-push-remotes: no remote URL matching '${PATTERN}' found."
-	red "  Set it explicitly: UPSTREAM_URL=https://github.com/<org>/<repo>.git $0"
-	red "  (or change UPSTREAM_PROTECTED_URL_PATTERN to match your org URL)"
-	exit 1
-fi
-
-if [[ "${ORIGIN_URL_FINAL}" == "${UPSTREAM_URL_FINAL}" ]]; then
-	red "setup-dual-push-remotes: ORIGIN_URL and UPSTREAM_URL must differ."
-	red "  ORIGIN_URL=${ORIGIN_URL_FINAL}"
-	red "  UPSTREAM_URL=${UPSTREAM_URL_FINAL}"
-	exit 1
-fi
-
-cyan "==> Target layout:"
-echo "    origin                            ${ORIGIN_URL_FINAL}"
-echo "    ${UPSTREAM_REMOTE_NAME}$(printf '%*s' $((34 - ${#UPSTREAM_REMOTE_NAME})) '')${UPSTREAM_URL_FINAL}"
-echo
-
-# 1) Repoint origin (single fetch + single push URL = the personal fork).
-if [[ "$(git remote get-url origin 2>/dev/null || true)" != "${ORIGIN_URL_FINAL}" ]]; then
-	cyan "==> Updating origin fetch URL"
-	git remote set-url origin "${ORIGIN_URL_FINAL}"
-fi
-
-# Strip any extra push URLs on origin (this is the dual-push misconfig).
-# `git remote set-url --delete --push origin <url>` removes one URL at a
-# time; loop until only the canonical one remains.
-#
-# We avoid `mapfile` here: it's bash 4+ only, and macOS ships bash 3.2
-# (rebuilds via Homebrew but the system bash is still 3.2). Use a portable
-# while-read idiom instead. The integration test in
-# tests/unit/test_setup_dual_push_remotes.py exercises this loop end-to-end
-# against a real git clone with the dual-push misconfig, so any regression
-# to bash-4-only constructs will fail CI on macOS runners.
-while true; do
-	push_urls=()
-	while IFS= read -r line; do
-		[[ -z "${line}" ]] && continue
-		push_urls+=("${line}")
-	done < <(git remote get-url --push --all origin 2>/dev/null || true)
-
-	# If there's exactly one push URL and it equals ORIGIN_URL_FINAL, done.
-	if [[ "${#push_urls[@]}" -le 1 ]] && [[ "${push_urls[0]:-${ORIGIN_URL_FINAL}}" == "${ORIGIN_URL_FINAL}" ]]; then
+# The org repo: prefer a remote already carrying the target name, then the
+# names used by the previous layout, then any remote whose URL matches.
+discovered_org=""
+for cand in "${ORG_REMOTE_NAME}" upstream arango-solutions; do
+	u="$(url_of "${cand}")"
+	if [[ -n "${u}" ]] && matches_org "${u}"; then
+		discovered_org="${u}"
 		break
 	fi
-	stripped=0
-	for url in "${push_urls[@]}"; do
-		if [[ "${url}" != "${ORIGIN_URL_FINAL}" ]]; then
-			cyan "==> Removing extra push URL from origin: ${url}"
-			git remote set-url --delete --push origin "${url}"
-			stripped=1
+done
+if [[ -z "${discovered_org}" ]]; then
+	while IFS=$'\t' read -r name url_and_kind; do
+		url="${url_and_kind% *}"
+		kind="${url_and_kind##* }"
+		[[ "${kind}" != "(fetch)" ]] && continue
+		if matches_org "${url}"; then
+			discovered_org="${url}"
 			break
 		fi
-	done
-	# Belt-and-suspenders: if every push URL matches but there are still
-	# multiple entries (dupes), force-set to the canonical one.
-	if [[ "${stripped}" -eq 0 ]]; then
-		cyan "==> Collapsing duplicate origin push URLs to canonical"
-		git remote set-url --push origin "${ORIGIN_URL_FINAL}"
+	done < <(git remote -v | awk '{print $1"\t"$2" "$3}')
+fi
+
+# The fork: whichever of `fork` / `origin` does NOT match the org pattern.
+# Deliberately NOT "the first other remote" — that happily adopts an
+# unrelated remote as the mirror, which is a genuinely bad outcome (you
+# start force-feeding your commits to somebody else's repo). If neither
+# candidate fits we bail and ask for FORK_URL explicitly.
+discovered_fork=""
+for cand in "${FORK_REMOTE_NAME}" "${ORG_REMOTE_NAME}"; do
+	u="$(url_of "${cand}")"
+	if [[ -n "${u}" ]] && ! matches_org "${u}"; then
+		discovered_fork="${u}"
 		break
 	fi
 done
 
-# 2) Ensure upstream exists with the right URL. If a remote with the
-# UPSTREAM_REMOTE_NAME already exists pointing somewhere else, repoint it.
-# If a different remote (e.g. literal "arango-solutions") already points at
-# UPSTREAM_URL_FINAL, rename it to UPSTREAM_REMOTE_NAME.
-if git remote get-url "${UPSTREAM_REMOTE_NAME}" >/dev/null 2>&1; then
-	current="$(git remote get-url "${UPSTREAM_REMOTE_NAME}")"
-	if [[ "${current}" != "${UPSTREAM_URL_FINAL}" ]]; then
-		cyan "==> Repointing ${UPSTREAM_REMOTE_NAME} from ${current} to ${UPSTREAM_URL_FINAL}"
-		git remote set-url "${UPSTREAM_REMOTE_NAME}" "${UPSTREAM_URL_FINAL}"
+ORG_URL_FINAL="${ORG_URL:-${UPSTREAM_URL:-${discovered_org}}}"
+FORK_URL_FINAL="${FORK_URL:-${ORIGIN_URL:-${discovered_fork}}}"
+
+if [[ -z "${ORG_URL_FINAL}" ]]; then
+	red "setup-dual-push-remotes: no remote URL matching '${PATTERN}' found."
+	red "  Set it explicitly: ORG_URL=https://github.com/<org>/<repo>.git $0"
+	red "  (or change ORG_URL_PATTERN to match your org URL)"
+	exit 1
+fi
+
+if [[ -z "${FORK_URL_FINAL}" ]]; then
+	red "setup-dual-push-remotes: cannot determine FORK_URL."
+	red "  Neither '${FORK_REMOTE_NAME}' nor '${ORG_REMOTE_NAME}' points at a non-org repo,"
+	red "  and guessing from the other remotes risks mirroring to the wrong place."
+	red "  Set it explicitly: FORK_URL=https://github.com/<you>/<repo>.git $0"
+	exit 1
+fi
+
+if [[ "${ORG_URL_FINAL}" == "${FORK_URL_FINAL}" ]]; then
+	red "setup-dual-push-remotes: ORG_URL and FORK_URL must differ."
+	red "  ORG_URL=${ORG_URL_FINAL}"
+	red "  FORK_URL=${FORK_URL_FINAL}"
+	exit 1
+fi
+
+cyan "==> Target layout:"
+echo "    ${ORG_REMOTE_NAME} (fetch)   ${ORG_URL_FINAL}"
+echo "    ${ORG_REMOTE_NAME} (push)    ${ORG_URL_FINAL}"
+echo "    ${ORG_REMOTE_NAME} (push)    ${FORK_URL_FINAL}"
+echo "    ${FORK_REMOTE_NAME}          ${FORK_URL_FINAL}"
+echo
+
+# --- 1) Claim the name ORG_REMOTE_NAME for the org repo ------------------
+# Whatever currently holds that name may be the fork (the old layout), in
+# which case it has to move out of the way first.
+if git remote get-url "${ORG_REMOTE_NAME}" >/dev/null 2>&1; then
+	current="$(git remote get-url "${ORG_REMOTE_NAME}")"
+	if [[ "${current}" != "${ORG_URL_FINAL}" ]]; then
+		if [[ "${current}" == "${FORK_URL_FINAL}" ]] &&
+			! git remote get-url "${FORK_REMOTE_NAME}" >/dev/null 2>&1; then
+			cyan "==> '${ORG_REMOTE_NAME}' currently points at the fork; renaming to '${FORK_REMOTE_NAME}'"
+			git remote rename "${ORG_REMOTE_NAME}" "${FORK_REMOTE_NAME}"
+		else
+			cyan "==> Repointing ${ORG_REMOTE_NAME} fetch URL to the org repo"
+			git remote set-url "${ORG_REMOTE_NAME}" "${ORG_URL_FINAL}"
+		fi
 	fi
-else
-	# Find any remote (other than origin) whose URL matches.
+fi
+
+if ! git remote get-url "${ORG_REMOTE_NAME}" >/dev/null 2>&1; then
+	# Adopt an existing remote that already points at the org repo
+	# (e.g. "upstream" from the old layout, or a literal "arango-solutions").
 	existing_name=""
 	while IFS=$'\t' read -r name url_and_kind; do
-		[[ "${name}" == "origin" ]] && continue
 		url="${url_and_kind% *}"
-		if [[ "${url}" == "${UPSTREAM_URL_FINAL}" ]]; then
+		if [[ "${url}" == "${ORG_URL_FINAL}" ]]; then
 			existing_name="${name}"
 			break
 		fi
 	done < <(git remote -v | awk '{print $1"\t"$2" "$3}')
 
 	if [[ -n "${existing_name}" ]]; then
-		cyan "==> Renaming '${existing_name}' -> '${UPSTREAM_REMOTE_NAME}'"
-		git remote rename "${existing_name}" "${UPSTREAM_REMOTE_NAME}"
+		cyan "==> Renaming '${existing_name}' -> '${ORG_REMOTE_NAME}'"
+		git remote rename "${existing_name}" "${ORG_REMOTE_NAME}"
 	else
-		cyan "==> Adding remote '${UPSTREAM_REMOTE_NAME}' -> ${UPSTREAM_URL_FINAL}"
-		git remote add "${UPSTREAM_REMOTE_NAME}" "${UPSTREAM_URL_FINAL}"
+		cyan "==> Adding remote '${ORG_REMOTE_NAME}' -> ${ORG_URL_FINAL}"
+		git remote add "${ORG_REMOTE_NAME}" "${ORG_URL_FINAL}"
 	fi
 fi
 
-# Make sure upstream's push URL is the canonical one too (no dual-push
-# weirdness left over from a previous configuration).
-git remote set-url --push "${UPSTREAM_REMOTE_NAME}" "${UPSTREAM_URL_FINAL}"
+git remote set-url "${ORG_REMOTE_NAME}" "${ORG_URL_FINAL}"
 
-# 3) Optional: drop legacy/extra remotes.
+# --- 2) Give ORG_REMOTE_NAME exactly two push URLs: org, then fork -------
+# `git remote set-url --push <remote> <url>` does NOT replace a multi-value
+# list — with more than one pushurl already configured it aborts with
+#   warning: remote.<name>.pushurl has multiple values
+#   fatal: could not set 'remote.<name>.pushurl'
+# so clear the list at the config level first, then append both. Doing it
+# unconditionally keeps this idempotent no matter what we started from.
+cyan "==> Setting ${ORG_REMOTE_NAME} to dual-push (org + fork)"
+git config --unset-all "remote.${ORG_REMOTE_NAME}.pushurl" 2>/dev/null || true
+git remote set-url --add --push "${ORG_REMOTE_NAME}" "${ORG_URL_FINAL}"
+git remote set-url --add --push "${ORG_REMOTE_NAME}" "${FORK_URL_FINAL}"
+
+# --- 3) Ensure the fork remote exists and is single-homed ----------------
+if git remote get-url "${FORK_REMOTE_NAME}" >/dev/null 2>&1; then
+	if [[ "$(git remote get-url "${FORK_REMOTE_NAME}")" != "${FORK_URL_FINAL}" ]]; then
+		cyan "==> Repointing ${FORK_REMOTE_NAME} to ${FORK_URL_FINAL}"
+		git remote set-url "${FORK_REMOTE_NAME}" "${FORK_URL_FINAL}"
+	fi
+else
+	existing_name=""
+	while IFS=$'\t' read -r name url_and_kind; do
+		[[ "${name}" == "${ORG_REMOTE_NAME}" ]] && continue
+		url="${url_and_kind% *}"
+		if [[ "${url}" == "${FORK_URL_FINAL}" ]]; then
+			existing_name="${name}"
+			break
+		fi
+	done < <(git remote -v | awk '{print $1"\t"$2" "$3}')
+
+	if [[ -n "${existing_name}" ]]; then
+		cyan "==> Renaming '${existing_name}' -> '${FORK_REMOTE_NAME}'"
+		git remote rename "${existing_name}" "${FORK_REMOTE_NAME}"
+	else
+		cyan "==> Adding remote '${FORK_REMOTE_NAME}' -> ${FORK_URL_FINAL}"
+		git remote add "${FORK_REMOTE_NAME}" "${FORK_URL_FINAL}"
+	fi
+fi
+# Same multi-value caveat as above: a `fork` renamed out of the old
+# dual-pushing `origin` inherits BOTH push URLs, so clear before setting.
+git config --unset-all "remote.${FORK_REMOTE_NAME}.pushurl" 2>/dev/null || true
+git remote set-url --add --push "${FORK_REMOTE_NAME}" "${FORK_URL_FINAL}"
+
+# --- 4) Point the working branch at the org remote -----------------------
+if [[ -n "${TRACK_BRANCH}" ]] && git rev-parse --verify "${TRACK_BRANCH}" >/dev/null 2>&1; then
+	if git ls-remote --exit-code --heads "${ORG_REMOTE_NAME}" "${TRACK_BRANCH}" >/dev/null 2>&1; then
+		cyan "==> Pointing '${TRACK_BRANCH}' at ${ORG_REMOTE_NAME}/${TRACK_BRANCH}"
+		git fetch --quiet "${ORG_REMOTE_NAME}" "${TRACK_BRANCH}" || true
+		git branch --set-upstream-to="${ORG_REMOTE_NAME}/${TRACK_BRANCH}" "${TRACK_BRANCH}" >/dev/null
+	else
+		yellow "==> Skipping upstream retarget: ${ORG_REMOTE_NAME}/${TRACK_BRANCH} not found"
+	fi
+fi
+
+# --- 5) Optional: drop legacy/extra remotes ------------------------------
 if [[ -n "${DROP_REMOTES:-}" ]]; then
 	for r in ${DROP_REMOTES}; do
 		if git remote get-url "${r}" >/dev/null 2>&1; then
@@ -187,10 +242,15 @@ git remote -v | sed 's/^/    /'
 cat <<EOF
 
 ==> Setup complete. Daily workflow:
-    git push                          # → origin (your personal fork only)
-    make release-to-org TAG=vX.Y.Z    # → ${UPSTREAM_REMOTE_NAME}/main + tag (release)
-    make sync-from-org                # ← pull merged commits from ${UPSTREAM_REMOTE_NAME}/main
+    git push                          # → BOTH the org repo and the fork
+    git pull                          # ← ${ORG_REMOTE_NAME} (the org repo)
+    git push ${FORK_REMOTE_NAME} <ref>$(printf '%*s' $((23 - ${#FORK_REMOTE_NAME})) '')# → the fork only
+    make release-to-org TAG=vX.Y.Z    # tag a release and push branch + tag
+    make sync-from-org                # ← pull org main into local main
 
-The protect-upstream-push pre-push hook will refuse direct pushes of
-'main' to '${UPSTREAM_REMOTE_NAME}' unless HEAD is at an annotated release tag.
+'${TRACK_BRANCH:-main}' tracks ${ORG_REMOTE_NAME}/${TRACK_BRANCH:-main}, so pulls and status read from
+the org repo. The protect-upstream-push pre-push gate is deliberately
+unwired (see .pre-commit-config.yaml): ordinary pushes of '${TRACK_BRANCH:-main}' are
+MEANT to reach the org repo now. Re-add that hook block if you want to go
+back to milestone-only releases.
 EOF

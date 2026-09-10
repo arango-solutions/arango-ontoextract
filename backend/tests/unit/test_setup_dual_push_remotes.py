@@ -5,11 +5,20 @@ originally used `mapfile -t`, which is bash 4+. macOS ships bash 3.2,
 so the script aborted with `mapfile: command not found` on the very
 first user invocation after PR #9 merged. Syntax-only checks (`bash -n`)
 did not catch this — the parser accepts the token; the runtime doesn't.
+That regression guard is `test_runs_under_system_bash_without_bash4_features`
+and it must keep running under the SYSTEM bash, not whatever bash is
+first on PATH.
 
-The tests construct a real git clone with the dual-push misconfig
-(origin pushing to two URLs, plus a stray legacy remote), invoke the
-script via the SYSTEM bash (not whatever bash happens to be first on
-PATH), and assert the post-state matches the documented contract.
+CONTRACT CHANGE (2026-09-08): the org repo is now the PRIMARY. The script
+used to enforce `origin = personal fork` and strip every extra push URL so
+`git push` could only reach the fork, with the org repo gated behind
+`make release-to-org`. It now enforces the opposite:
+
+    origin  fetch -> org repo
+    origin  push  -> org repo AND personal fork  (two push URLs)
+    fork          -> personal fork only
+
+so one `git push` lands on both. These tests assert that layout.
 
 Each test sets up its own throwaway directory of bare repos so they
 neither depend on each other nor leave state behind.
@@ -32,6 +41,10 @@ SCRIPT = REPO_ROOT / "scripts/setup-dual-push-remotes.sh"
 # on Linux it's whatever the distro ships (usually bash 5+, which is fine
 # — these tests must pass under both).
 SYSTEM_BASH = "/bin/bash"
+
+# The fixture's org repo is `org-repo.git`; point discovery at it rather
+# than the real "arango-solutions/" default.
+PATTERN_ENV = {"ORG_URL_PATTERN": "org-repo.git"}
 
 
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -63,17 +76,17 @@ def _push_urls(cwd: Path, remote: str) -> list[str]:
 
 @pytest.fixture
 def workspace(tmp_path: Path) -> Iterator[dict[str, Path]]:
-    """Build three bare repos + a clone with the dual-push misconfig.
+    """Build three bare repos + a clone in the OLD layout.
 
     Layout:
       personal-fork.git   stand-in for ArthurKeen/<repo>
       org-repo.git        stand-in for arango-solutions/<repo>
       legacy-remote.git   unrelated remote we want DROP_REMOTES to clean up
 
-    The clone (`work`) starts in the broken state we observed on the
-    user's machine: origin's fetch URL points at the personal fork, but
-    origin has TWO push URLs (fork + org), AND there's a separately-named
-    `arango-solutions` remote that the script is expected to rename.
+    The clone (`work`) starts in the pre-2026-09-08 state: origin points
+    at the personal fork (with a stray second push URL), and the org repo
+    hangs off a separately-named `arango-solutions` remote. The script has
+    to promote the org repo to `origin` and demote the fork to `fork`.
     """
     personal = tmp_path / "personal-fork.git"
     org = tmp_path / "org-repo.git"
@@ -85,12 +98,9 @@ def workspace(tmp_path: Path) -> Iterator[dict[str, Path]]:
     work = tmp_path / "work"
     subprocess.run(["git", "clone", "-q", str(personal), str(work)], check=True)
 
-    # Reproduce the dual-push misconfig: origin with TWO explicit push
-    # URLs (fork + org). Note: a single `set-url --add --push` REPLACES
-    # the implicit pushurl (which equals the fetch URL); to truly get
-    # two URLs you have to add both explicitly. This mirrors how the
-    # broken state actually arises in the wild — somebody runs `--add
-    # --push` twice with different URLs over time, or a tool does it.
+    # origin with TWO explicit push URLs. Note: a single `set-url --add
+    # --push` REPLACES the implicit pushurl (which equals the fetch URL);
+    # to truly get two you have to add both explicitly.
     _git(["remote", "set-url", "--add", "--push", "origin", str(personal)], work)
     _git(["remote", "set-url", "--add", "--push", "origin", str(org)], work)
     # Plus a separately-named arango-solutions remote.
@@ -114,7 +124,7 @@ def _run_script(
     code path on macOS the same way the user does."""
     import os
 
-    env = {**os.environ, **(env_overrides or {})}
+    env = {**os.environ, **PATTERN_ENV, **(env_overrides or {})}
     return subprocess.run(
         [SYSTEM_BASH, str(SCRIPT)],
         cwd=str(cwd),
@@ -134,73 +144,69 @@ def test_runs_under_system_bash_without_bash4_features(workspace: dict[str, Path
     if not Path(SYSTEM_BASH).exists():
         pytest.skip(f"system bash at {SYSTEM_BASH} not found")
 
-    result = _run_script(
-        workspace["work"],
-        {
-            "UPSTREAM_PROTECTED_URL_PATTERN": "org-repo.git",
-        },
-    )
+    result = _run_script(workspace["work"])
     assert result.returncode == 0, (
         f"script failed under system bash:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
     # If we ever regress to using mapfile / declare -A / ${var^^} / etc,
-    # bash 3.2 will surface the failure here. Pin a clear error fragment
-    # check too so a passing test guarantees the right fix path was taken.
+    # bash 3.2 will surface the failure here.
     assert "command not found" not in result.stdout
     assert "command not found" not in result.stderr
 
 
-def test_strips_extra_push_url_from_origin(workspace: dict[str, Path]) -> None:
-    """The headline misconfig: origin with two push URLs."""
+def test_origin_dual_pushes_to_org_then_fork(workspace: dict[str, Path]) -> None:
+    """The headline behaviour: one `git push` must reach both repos.
+
+    Order matters for readability of push output (org first), so this
+    asserts the exact list rather than a set.
+    """
     work = workspace["work"]
-
-    before = _push_urls(work, "origin")
-    assert len(before) == 2, f"fixture sanity: origin should start with 2 push URLs, got {before}"
-
-    result = _run_script(work, {"UPSTREAM_PROTECTED_URL_PATTERN": "org-repo.git"})
+    result = _run_script(work)
     assert result.returncode == 0, result.stderr
 
-    after = _push_urls(work, "origin")
-    assert len(after) == 1, f"origin should have exactly 1 push URL after, got {after}"
-    assert after[0] == str(workspace["personal"]), (
-        "origin's single push URL must be the personal fork, not the org repo"
+    assert _push_urls(work, "origin") == [str(workspace["org"]), str(workspace["personal"])], (
+        "origin must push to the org repo first, then the personal fork"
     )
 
 
-def test_renames_arango_solutions_to_upstream(workspace: dict[str, Path]) -> None:
-    """A remote named arango-solutions should be renamed to upstream
-    (the GitHub fork-workflow convention)."""
+def test_origin_fetches_from_the_org_repo(workspace: dict[str, Path]) -> None:
+    """Pulls and `git status` must read from the org repo, not the fork."""
     work = workspace["work"]
-    result = _run_script(work, {"UPSTREAM_PROTECTED_URL_PATTERN": "org-repo.git"})
+    result = _run_script(work)
+    assert result.returncode == 0, result.stderr
+
+    assert _git(["remote", "get-url", "origin"], work).stdout.strip() == str(workspace["org"])
+
+
+def test_fork_remote_is_single_homed_to_the_personal_fork(workspace: dict[str, Path]) -> None:
+    """`fork` exists as the secondary and never points at the org repo."""
+    work = workspace["work"]
+    result = _run_script(work)
+    assert result.returncode == 0, result.stderr
+
+    assert _git(["remote", "get-url", "fork"], work).stdout.strip() == str(workspace["personal"])
+    assert _push_urls(work, "fork") == [str(workspace["personal"])], (
+        "fork must not inherit the org push URL when it is renamed out of origin"
+    )
+
+
+def test_absorbs_a_separately_named_org_remote(workspace: dict[str, Path]) -> None:
+    """A leftover `arango-solutions` remote is promoted to `origin`."""
+    work = workspace["work"]
+    result = _run_script(work)
     assert result.returncode == 0, result.stderr
 
     remotes = {name for name, _url, _kind in _remotes(work)}
-    assert "upstream" in remotes
+    assert "origin" in remotes
+    assert "fork" in remotes
     assert "arango-solutions" not in remotes
-
-
-def test_upstream_points_at_org_repo(workspace: dict[str, Path]) -> None:
-    """Both fetch and push URLs of `upstream` must equal the org repo URL."""
-    work = workspace["work"]
-    result = _run_script(work, {"UPSTREAM_PROTECTED_URL_PATTERN": "org-repo.git"})
-    assert result.returncode == 0, result.stderr
-
-    fetch = _git(["remote", "get-url", "upstream"], work).stdout.strip()
-    push_urls = _push_urls(work, "upstream")
-    assert fetch == str(workspace["org"])
-    assert push_urls == [str(workspace["org"])]
+    assert "upstream" not in remotes, "the old `upstream` name must not come back"
 
 
 def test_drop_remotes_removes_listed_remotes(workspace: dict[str, Path]) -> None:
     """The DROP_REMOTES env var must remove the listed legacy remotes."""
     work = workspace["work"]
-    result = _run_script(
-        work,
-        {
-            "UPSTREAM_PROTECTED_URL_PATTERN": "org-repo.git",
-            "DROP_REMOTES": "legacy-remote",
-        },
-    )
+    result = _run_script(work, {"DROP_REMOTES": "legacy-remote"})
     assert result.returncode == 0, result.stderr
 
     remotes = {name for name, _url, _kind in _remotes(work)}
@@ -208,30 +214,28 @@ def test_drop_remotes_removes_listed_remotes(workspace: dict[str, Path]) -> None
 
 
 def test_idempotent_when_already_in_target_state(workspace: dict[str, Path]) -> None:
-    """Running the script twice must produce the same result (no errors,
-    no duplicate URLs)."""
+    """Running the script twice must produce the same result — in
+    particular it must not keep appending push URLs to origin."""
     work = workspace["work"]
 
-    first = _run_script(work, {"UPSTREAM_PROTECTED_URL_PATTERN": "org-repo.git"})
+    first = _run_script(work)
     assert first.returncode == 0, first.stderr
     after_first = sorted(_remotes(work))
+    push_after_first = _push_urls(work, "origin")
 
-    second = _run_script(work, {"UPSTREAM_PROTECTED_URL_PATTERN": "org-repo.git"})
+    second = _run_script(work)
     assert second.returncode == 0, second.stderr
-    after_second = sorted(_remotes(work))
 
-    assert after_first == after_second, (
-        "script should be idempotent — running twice changes nothing"
+    assert sorted(_remotes(work)) == after_first, "script should be idempotent"
+    assert _push_urls(work, "origin") == push_after_first, (
+        "re-running must not duplicate origin's push URLs"
     )
 
 
 def test_explicit_url_overrides_take_precedence(workspace: dict[str, Path], tmp_path: Path) -> None:
-    """Explicit ORIGIN_URL / UPSTREAM_URL env vars must win over the
-    discovery heuristics so users can force a specific layout."""
+    """Explicit ORG_URL / FORK_URL env vars must win over discovery."""
     work = workspace["work"]
 
-    # Build a second pair of URLs the script will discover by env, not
-    # by introspection.
     alt_personal = tmp_path / "alt-personal.git"
     alt_org = tmp_path / "alt-org.git"
     for p in (alt_personal, alt_org):
@@ -241,51 +245,63 @@ def test_explicit_url_overrides_take_precedence(workspace: dict[str, Path], tmp_
     result = _run_script(
         work,
         {
-            "ORIGIN_URL": str(alt_personal),
-            "UPSTREAM_URL": str(alt_org),
-            "UPSTREAM_PROTECTED_URL_PATTERN": "alt-org.git",
+            "FORK_URL": str(alt_personal),
+            "ORG_URL": str(alt_org),
+            "ORG_URL_PATTERN": "alt-org.git",
         },
     )
     assert result.returncode == 0, result.stderr
 
-    origin_fetch = _git(["remote", "get-url", "origin"], work).stdout.strip()
-    upstream_fetch = _git(["remote", "get-url", "upstream"], work).stdout.strip()
-    assert origin_fetch == str(alt_personal)
-    assert upstream_fetch == str(alt_org)
+    assert _git(["remote", "get-url", "origin"], work).stdout.strip() == str(alt_org)
+    assert _git(["remote", "get-url", "fork"], work).stdout.strip() == str(alt_personal)
 
 
-def test_refuses_when_origin_and_upstream_urls_collide(workspace: dict[str, Path]) -> None:
-    """If the explicit overrides pick the same URL for both remotes, the
-    script must refuse — that misconfig is the very thing we're fixing."""
+def test_legacy_env_var_names_still_work(workspace: dict[str, Path], tmp_path: Path) -> None:
+    """ORIGIN_URL / UPSTREAM_URL were the pre-2026-09-08 names.
+
+    They are kept as aliases so an old invocation in someone's shell
+    history does not silently configure the wrong thing: UPSTREAM_URL is
+    the org repo, ORIGIN_URL is the fork.
+    """
     work = workspace["work"]
-    same_url = str(workspace["org"])
+
+    alt_personal = tmp_path / "legacy-personal.git"
+    alt_org = tmp_path / "legacy-org.git"
+    for p in (alt_personal, alt_org):
+        p.mkdir()
+        subprocess.run(["git", "init", "--bare", "-q", str(p)], check=True)
+
     result = _run_script(
         work,
         {
-            "ORIGIN_URL": same_url,
-            "UPSTREAM_URL": same_url,
-            "UPSTREAM_PROTECTED_URL_PATTERN": "org-repo.git",
+            "ORIGIN_URL": str(alt_personal),
+            "UPSTREAM_URL": str(alt_org),
+            "ORG_URL_PATTERN": "legacy-org.git",
         },
     )
+    assert result.returncode == 0, result.stderr
+
+    assert _git(["remote", "get-url", "origin"], work).stdout.strip() == str(alt_org)
+    assert _push_urls(work, "origin") == [str(alt_org), str(alt_personal)]
+
+
+def test_refuses_when_org_and_fork_urls_collide(workspace: dict[str, Path]) -> None:
+    """If the overrides pick the same URL for both, the script must refuse."""
+    work = workspace["work"]
+    same_url = str(workspace["org"])
+    result = _run_script(work, {"ORG_URL": same_url, "FORK_URL": same_url})
     assert result.returncode == 1
     assert "must differ" in result.stderr
 
 
 def test_prints_clean_final_layout(workspace: dict[str, Path]) -> None:
-    """Output should include a 'Final remote layout' summary the user
-    can sanity-check."""
+    """Output should include a summary the user can sanity-check."""
     work = workspace["work"]
-    result = _run_script(
-        work,
-        {
-            "UPSTREAM_PROTECTED_URL_PATTERN": "org-repo.git",
-            "DROP_REMOTES": "legacy-remote",
-        },
-    )
+    result = _run_script(work, {"DROP_REMOTES": "legacy-remote"})
     assert result.returncode == 0
     assert "Final remote layout" in result.stdout
     assert "Setup complete" in result.stdout
-    assert "make release-to-org" in result.stdout
+    assert "BOTH the org repo and the fork" in result.stdout
 
 
 def test_real_script_path_is_executable() -> None:

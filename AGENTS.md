@@ -158,32 +158,35 @@ Arango brand palette — live in `frontend/AGENTS.md`.
 > protocol) is already covered for Claude by `CLAUDE.md` and its hooks, so
 > mirroring it would create a third copy.
 
-## Releasing to the org remote (milestones)
+## Remotes: the org repo is primary (changed 2026-09-08)
 
-Two remotes, two different jobs:
-
-| Remote | URL | What lands there |
+| Remote | URL | Role |
 |---|---|---|
-| `origin` | `ArthurKeen/arango-ontoextract` | every commit and every feature branch |
-| `upstream` | `arango-solutions/arango-ontoextract` | **only tagged releases on `main`** |
+| `origin` | `arango-solutions/arango-ontoextract` | **primary** — fetch/pull source, and the first of two push URLs |
+| `fork` | `ArthurKeen/arango-ontoextract` | mirror — second push URL on `origin`, plus a remote of its own |
 
-`origin` has a single push URL — pushing to both remotes takes two commands, and
-`git push upstream <feature-branch>` is allowed and is *not* an error to work
-around. Only `main` is protected.
+`origin` is configured with **two push URLs**, so a single `git push` lands on the
+org repo *and* the fork. `main` tracks `origin/main`, so `git pull` and `git status`
+read from arango-solutions. Run `bash scripts/setup-dual-push-remotes.sh` to
+(re)establish this layout; it is idempotent.
 
-**A project milestone means: cut a release.** The one supported way to land `main`
-on arango-solutions is
+> **This reverses the previous model.** Until 2026-09-08 `origin` was the personal
+> fork, `upstream` was the org repo, and a `protect-upstream-push` pre-push hook
+> refused any push of `main` to arango-solutions unless HEAD sat on a `vX.Y.Z` tag —
+> so the org repo only ever saw tagged milestones. That hook is now **unwired** (the
+> block is kept, commented, in `.pre-commit-config.yaml`) because ordinary pushes are
+> now *meant* to reach the org repo. If you restore it, also point `main` back at the
+> fork or every push of `main` will be refused.
 
-```bash
-make release-to-org TAG=vX.Y.Z      # e.g. make release-to-org TAG=v1.9.0
-```
+### Cutting a release
 
-which refuses unless `TAG` matches `vX.Y.Z`, you are on a clean `main`, and local
-`main` is a fast-forward of `upstream/main` (`make sync-from-org` first if not);
+Releases are still tagged, and `make release-to-org TAG=vX.Y.Z` is still the way to
+do it — it refuses unless `TAG` matches `vX.Y.Z`, you are on a clean `main`, and
+local `main` is a fast-forward of the org remote (`make sync-from-org` first if not);
 then runs the full Tier A + Tier B gates (ruff, eslint, jest, tsc, pytest, mypy,
-Docker smoke), tags HEAD, and pushes `main` + tag in one command. Between releases
-`arango-solutions/main` stays pinned at the last release tag — that is by design,
-not drift.
+Docker smoke), tags HEAD, and pushes `main` + tag together. What has changed is that
+the org repo no longer *waits* for that: it now tracks `main` continuously, and the
+tag marks the milestone rather than gating the push.
 
 Before tagging: bump `backend/app/__init__.py` (the single source of truth for the
 version) and move the `CHANGELOG.md` `[Unreleased]` block under the new version.
